@@ -1,0 +1,52 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# 基盤地図情報の生データ（1メッシュ90MB超。変換後の GeoJSON だけ追跡する）
+/raw/
+*.zip
+
+# ---------------------------------------------------------------- データベースの定義（公開版）
+#
+# 表・行ごとの決まり（RLS）・関数の SQL は、守りの仕組みそのものなので公開しない。
+# 手元の base/ に置いて、ここでは追跡しない。ほかの場所の .sql も入れない。
+/base/
+*.sql
