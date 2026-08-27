@@ -29,7 +29,18 @@ import { ROLE_LABEL, ROLE_SHORT, canViewCampusInfo, type Role } from "@/lib/auth
 import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, buildSteps, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
-import { metersBetween } from "@/lib/geo";
+import { metersBetween, metersToRing } from "@/lib/geo";
+
+/**
+ * ここまでを「このアプリの守備範囲」とする距離（メートル）。
+ *
+ * 敷地のへりから測る。案内できるのは構内だけだが、
+ * 駅や周りの停留所から歩いてくる人もいるので、少し外まで見せる。
+ *
+ * ・現在地は、この中にいるときだけ出す
+ * ・地図も、この外へは動かせない
+ */
+const RANGE_M = 1000;
 
 /** 精度の扱い。推測で決めず3段階に分ける */
 const ACC_TRUST = 20;
@@ -719,14 +730,8 @@ export default function Guide() {
      以前ここにもう一つ同じ処理があり、駅を含む広い枠に一度合わせてから
      すぐ組み直していた。二重なので消した。 */
 
-  /** 現在地が取れたら一度だけ寄せる。やめたら false に戻す */
+  /** 現在地へ一度だけ寄せたかの記録。寄せる処理は圏内判定のあとに置いてある */
   const centered = centeredRef;
-  useEffect(() => {
-    if (fix && !centered.current) {
-      centered.current = true;
-      mapRef.current?.easeTo({ center: [fix.pos[0], fix.pos[1]], zoom: 18 });
-    }
-  }, [fix]);
 
   /**
    * 起動したら、構内の建物がひととおり入るところまで引く。
@@ -780,15 +785,97 @@ export default function Guide() {
 
   /* ---------------- 圏内判定 ---------------- */
 
-  const inCampus = useMemo(() => {
-    if (!data || !fix) return null;
-    // 敷地は一面とはかぎらない。どれかに入っていれば圏内とする
-    const polys = data.campus.features
-      .map((f) => f.geometry.coordinates[0])
-      .filter((p) => p && p.length > 2);
-    if (polys.length === 0) return null;
-    return polys.some((poly) => inRing(poly, fix.pos));
-  }, [data, fix]);
+  /** 敷地の外周。内外の判定にも、地図を動かせる範囲にも使う */
+  const campusRings = useMemo(
+    () =>
+      (data?.campus.features ?? [])
+        .map((f) => f.geometry.coordinates[0])
+        .filter((p) => p && p.length > 2),
+    [data],
+  );
+
+  /**
+   * 敷地のへりから現在地までの距離（メートル）。中にいれば 0。
+   * 位置が無い、または敷地が読めていなければ null。
+   */
+  const distFromCampus = useMemo(() => {
+    if (!fix || campusRings.length === 0) return null;
+    // 敷地は一面とはかぎらない。どれかに入っていれば中とみなす
+    if (campusRings.some((ring) => inRing(ring, fix.pos))) return 0;
+    return Math.min(...campusRings.map((ring) => metersToRing(ring, fix.pos)));
+  }, [campusRings, fix]);
+
+  const inCampus = distFromCampus == null ? null : distFromCampus === 0;
+
+  /**
+   * 守備範囲の外にいるか。
+   *
+   * ここに当たる人には現在地を出さない。敷地から 1km 以上離れていれば、
+   * この地図に写っている場所には居ないので、点を打っても意味が無い。
+   *
+   * ただし、誤差そのものが 1km を超えている測り方のときは「遠い」と決めない。
+   * 端末が基地局から大まかに割り出した位置は数km ずれることがあり、
+   * 構内にいる人を構外と言い切ってしまうため。
+   * 衛星に切り替われば誤差は数十mに落ちるので、そこで正しく判定される。
+   */
+  const tooFar =
+    distFromCampus != null &&
+    fix != null &&
+    fix.accuracy <= RANGE_M &&
+    distFromCampus > RANGE_M;
+
+  /**
+   * 現在地が取れたら一度だけ寄せる。やめたら false に戻す。
+   *
+   * 遠くにいるあいだは寄せない。構内から 1km 以上離れた場所へ
+   * 地図を飛ばしても写るものが無いうえ、動かせる範囲の外なので
+   * 端に張り付いたまま戻れなくなる。
+   */
+  useEffect(() => {
+    if (!fix || centered.current) return;
+    // 敷地がまだ読めていないうちは、遠いかどうかを決められない。次の位置で見直す
+    if (distFromCampus == null || tooFar) return;
+    centered.current = true;
+    mapRef.current?.easeTo({ center: [fix.pos[0], fix.pos[1]], zoom: 18 });
+  }, [fix, distFromCampus, tooFar, centered]);
+
+  /**
+   * 地図を動かせる範囲を、敷地から 1km までに閉じる。
+   *
+   * これまでは日本中どこへでも流れていけた。指が滑って構内を見失うと
+   * 戻り方が分からなくなるうえ、遠くを写しても案内には使えない。
+   *
+   * MapLibre が受け取れるのは四角形なので、敷地を囲む四角を
+   * 四方へ 1km ずつ広げたものを渡す。角は 1km より少し外まで入るが、
+   * 「構内の周りだけ」という目的は満たせる。
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || campusRings.length === 0) return;
+
+    let w = Infinity,
+      s = Infinity,
+      e = -Infinity,
+      n = -Infinity;
+    for (const ring of campusRings) {
+      for (const [lon, lat] of ring) {
+        if (lon < w) w = lon;
+        if (lon > e) e = lon;
+        if (lat < s) s = lat;
+        if (lat > n) n = lat;
+      }
+    }
+
+    // 1km を緯度経度の差に直す。経度は緯度が上がるほど詰まる
+    const midLat = ((s + n) / 2) * (Math.PI / 180);
+    const dLat = RANGE_M / 111_320;
+    const dLon = RANGE_M / (111_320 * Math.cos(midLat));
+
+    map.setMaxBounds([
+      [w - dLon, s - dLat],
+      [e + dLon, n + dLat],
+    ]);
+  }, [ready, campusRings]);
 
   /* ---------------- 経路 ---------------- */
 
@@ -1199,10 +1286,12 @@ export default function Guide() {
       goal: route && !("error" in route) ? p(route.goal.geometry.coordinates) : null,
       start:
         route && !("error" in route) && graph ? p(graph.pos.get(route.startId)!) : null,
-      me: fix ? p(fix.pos) : null,
-      meR: fix ? radiusPx(map, fix.pos, fix.accuracy) : 0,
+      // 守備範囲より遠くにいる人の点は打たない。
+      // 地図に写っていない場所なので、出しても地図の端に張り付くだけになる
+      me: fix && !tooFar ? p(fix.pos) : null,
+      meR: fix && !tooFar ? radiusPx(map, fix.pos, fix.accuracy) : 0,
     };
-  }, [ready, data, tick, route, graph, fix, highlight, areaOf]);
+  }, [ready, data, tick, route, graph, fix, tooFar, highlight, areaOf]);
 
   /* 押されたときに見る値を、毎回の描画で入れ直す */
   fitHomeRef.current = () => fitHome(500);
@@ -1499,10 +1588,27 @@ export default function Guide() {
               {geoState === "on" ? "🛰" : "📶"} ±{Math.round(fix?.accuracy ?? 0)}m
             </span>
           )}
-          {/* 右上のログイン表示と重なるので、短く「圏外」だけにする */}
-          {geoState === "on" && inCampus === false && (
-            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-500 shadow-sm">
-              {lang === "en" ? "Off campus" : "圏外"}
+          {/* 敷地の外。右上のログイン表示と重なるので短く出す。
+              1km より遠いときは現在地そのものを出していないので、
+              点が消えている理由が分かるよう「遠い」と添える */}
+          {(geoState === "on" || geoState === "rough") && inCampus === false && (
+            <span
+              className={`rounded-full bg-white px-2.5 py-1 text-[11px] font-bold shadow-sm ${
+                tooFar ? "text-rose-600" : "text-slate-500"
+              }`}
+              title={
+                tooFar
+                  ? T("構内から 1km 以上離れています。この範囲では現在地を出しません")
+                  : T("構内の外にいます")
+              }
+            >
+              {tooFar
+                ? lang === "en"
+                  ? "Off campus · far"
+                  : "キャンパス外・遠い"
+                : lang === "en"
+                  ? "Off campus"
+                  : "圏外"}
             </span>
           )}
         </div>

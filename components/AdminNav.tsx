@@ -14,7 +14,7 @@
 import Link from "next/link";
 import { canManage, canManageCafeteria, type Role } from "@/lib/auth";
 
-export type AdminPageId = "approve" | "rooms" | "schedule" | "cafeteria";
+export type AdminPageId = "approve" | "rooms" | "schedule" | "cafeteria" | "edit";
 
 type Entry = {
   id: AdminPageId;
@@ -57,6 +57,14 @@ const ENTRIES: Entry[] = [
     label: "食堂のメニュー",
     sub: "その日の提供状況と品名",
     allowed: canManageCafeteria,
+  },
+  {
+    id: "edit",
+    href: "/edit",
+    icon: "✏️",
+    label: "作図ツール",
+    sub: "建物・出入口・通路を描き直す",
+    allowed: (r) => r === "admin_l3",
   },
 ];
 

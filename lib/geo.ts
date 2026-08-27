@@ -18,6 +18,48 @@ export function metersBetween(a: Position, b: Position): number {
   return Math.hypot(dx, dy);
 }
 
+/**
+ * 点から、閉じた図形の「へり」までの距離（メートル）。
+ *
+ * 頂点だけでなく、辺の途中までの距離も見る。
+ * 頂点どうしが 100m 離れていることもあり、頂点だけで測ると
+ * 辺のすぐ横に立っていても遠いと判定されてしまうため。
+ *
+ * 中に入っているかどうかは見ない。内外の判定は呼ぶ側で行う。
+ */
+export function metersToRing(ring: Position[], pt: Position): number {
+  let best = Infinity;
+  for (let i = 1; i < ring.length; i++) {
+    const d = metersToSegment(ring[i - 1], ring[i], pt);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** 点から線分までの距離（メートル）。線分に下ろした足が外なら端点までの距離 */
+function metersToSegment(a: Position, b: Position, pt: Position): number {
+  // 緯度経度のままでは縦横の縮尺が違う。この場の平面に直してから測る
+  const lat = pt[1] * (Math.PI / 180);
+  const kx = M_PER_DEG_LAT * Math.cos(lat);
+  const ax = a[0] * kx,
+    ay = a[1] * M_PER_DEG_LAT;
+  const bx = b[0] * kx,
+    by = b[1] * M_PER_DEG_LAT;
+  const px = pt[0] * kx,
+    py = pt[1] * M_PER_DEG_LAT;
+
+  const dx = bx - ax,
+    dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  // 長さゼロの辺。端点までの距離をそのまま返す
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+
+  // 辺のどこに垂線が落ちるか。0〜1 の外なら端点で止める
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
 /** 線の長さ（メートル） */
 export function lineLength(coords: Position[]): number {
   let sum = 0;

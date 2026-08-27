@@ -59,6 +59,7 @@ import {
   type PathFeature,
   type PathProps,
 } from "@/lib/features";
+import { loadAppData } from "@/lib/appdata";
 import {
   checkGraph,
   circlePolygon,
@@ -238,8 +239,45 @@ export default function MapEditor() {
 
   /* ---------------- 初期化 ---------------- */
 
+  /**
+   * 作業中の下書きを読む。無ければ、いま公開している地図を土台にする。
+   *
+   * これまでは下書きが無いと真っさらな地図から始まっていた。
+   * 開いても何も写らず、まず4つのファイルを手で読み込ませないと
+   * 作業を始められないため、道具として使える状態ではなかった。
+   *
+   * 下書きがあるときは触らない。作りかけを公開中のもので
+   * 上書きしてしまうと、やり直しがきかないため。
+   */
   useEffect(() => {
-    setData(loadData());
+    const saved = loadData();
+    if (saved !== EMPTY_DATA) {
+      setData(saved);
+      return;
+    }
+
+    let alive = true;
+    void loadAppData().then((live) => {
+      // 取れなければ空のまま。読み込みボタンから手で入れられる
+      if (!alive || live.buildings.features.length === 0) return;
+      setData({
+        campus: live.campus,
+        buildings: live.buildings,
+        // 通路の下書き線は公開していない。作図はCPと接続で行う。
+        // EMPTY_DATA を使い回すと定数を共有してしまうので、毎回作る
+        paths: { type: "FeatureCollection", features: [] },
+        checkpoints: live.checkpoints,
+        links: live.links,
+        rooms: [],
+      });
+      setNotice({
+        kind: "ok",
+        text: `公開中の地図を読み込みました（場所 ${live.buildings.features.length} / CP ${live.checkpoints.features.length} / 接続 ${live.links.length}）`,
+      });
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -1912,7 +1950,7 @@ export default function MapEditor() {
     return {
       step: 6,
       title: "ファイルを書き出す",
-      hint: "campus / buildings / checkpoints / links を書き出して web/public/data/ に置けば完了です。区切りごとに書き出してください。",
+      hint: "campus / buildings / checkpoints / links を書き出して public/data/ に置けば完了です。区切りごとに書き出してください。",
     };
   }, [
     mode,
@@ -2157,7 +2195,16 @@ export default function MapEditor() {
       {/* 作図パネル */}
       <div className="absolute bottom-8 left-3 top-3 z-10 flex w-80 flex-col gap-3 overflow-y-auto rounded-lg bg-white/95 p-3 shadow-xl ring-1 ring-slate-300">
         <div>
-          <h1 className="text-sm font-bold text-slate-900">KIT MAP — 作図ツール</h1>
+          {/* 戻る道を必ず置く。管理画面から来るので、行き止まりにしない */}
+          <div className="flex items-start justify-between gap-2">
+            <h1 className="text-sm font-bold text-slate-900">KIT MAP — 作図ツール</h1>
+            <a
+              href="/"
+              className="shrink-0 rounded-full bg-slate-900 px-3 py-1.5 text-[10px] font-bold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
+            >
+              地図へ
+            </a>
+          </div>
 
           {/* 今やることを1つだけ大きく出す。手順の前後関係が画面から読み取れないと迷うため */}
           <div className="mt-2 rounded-md bg-slate-900 p-2.5 text-slate-100">
