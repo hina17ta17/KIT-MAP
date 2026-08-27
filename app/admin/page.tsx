@@ -29,6 +29,8 @@ type Row = {
   class_code: string;
   group_no: number;
   verified: boolean;
+  mail_verified: boolean;
+  mail_verified_by: string | null;
   created_at: string;
 };
 
@@ -82,6 +84,31 @@ export default function AdminPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * メールが届かない人を、管理者が代わりに確認済みにする。
+   *
+   * 本人がアドレスの持ち主だと確かめる手順を飛ばす操作なので、
+   * 誰が誰に対して行ったかはデータベースに残る（mail_verified_by）。
+   */
+  const markMail = async (id: string, mail: string) => {
+    const ok = window.confirm(
+      `${mail} を、メール確認済みとして扱います。\n本人だと確かめたうえで行ってください。`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("mark_mail_verified", { target: id });
+      if (error) throw error;
+      await load();
+      setMsg({ kind: "ok", text: mail + " を確認済みにしました" });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const news = useMemo(() => rows.filter((r) => r.role === "pending"), [rows]);
   const existing = useMemo(() => rows.filter((r) => r.role !== "pending"), [rows]);
@@ -226,9 +253,19 @@ export default function AdminPage() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-slate-900">
                     {r.full_name || "（氏名未記入）"}
+                    {!r.mail_verified && (
+                      <span className="ml-1.5 rounded bg-orange-100 px-1 py-0.5 text-[9px] font-bold text-orange-700">
+                        メール未確認
+                      </span>
+                    )}
                     {!r.verified && (
                       <span className="ml-1.5 rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold text-red-700">
-                        本人確認まだ
+                        認証アプリまだ
+                      </span>
+                    )}
+                    {r.mail_verified_by && (
+                      <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-600">
+                        代理で確認
                       </span>
                     )}
                   </span>
@@ -242,6 +279,20 @@ export default function AdminPage() {
                   </span>
                 </span>
               </button>
+
+              {/*
+                メールが届かない人のための逃げ道。
+                本人確認を飛ばす操作なので、誰が行ったかは記録に残る。
+              */}
+              {!r.mail_verified && (
+                <button
+                  onClick={() => void markMail(r.id, r.email)}
+                  disabled={busy}
+                  className="mt-1 w-full rounded-lg bg-orange-600 px-2 py-1.5 text-[10px] font-bold text-white transition hover:bg-orange-700 active:scale-95 disabled:bg-slate-300"
+                >
+                  メールが届かない人を、代わりに確認済みにする
+                </button>
+              )}
             </li>
           );
         })}
