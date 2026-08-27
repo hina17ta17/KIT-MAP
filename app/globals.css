@@ -94,12 +94,91 @@ body {
 }
 
 /*
- * 夜の見え方。
+ * ダークモード。
  *
- * 地理院タイルに夜間の航空写真は無いため、昼の写真を暗く落として作る。
- * かけるのは地図の絵だけにする。出典表示や操作ボタンまで暗くすると
- * 読めなくなるうえ、出典の明示は地理院タイルの利用条件で必須のため。
+ * 地図（航空写真）はそのまま。地図の上に重ねているボタンや一覧だけを黒くする。
+ * 写真そのものを暗く落とすと、何が写っているのか分からなくなり
+ * 地図として使えなくなるため。
+ *
+ * ここでは Tailwind の色クラスを、暗い側の色で上書きしている。
+ * 画面の一つ一つに条件を書き足すより、まとめて切り替えるほうが
+ * 塗り忘れが出ない。クラスが2つ重なるので、元の指定より強く効く。
+ *
+ * 地図に置く名前は対象外。あちらは本人が選んだ色を直接指定しているので、
+ * ここでの上書きより強く、そのまま残る。
  */
-.kit-night .maplibregl-canvas {
-  filter: brightness(0.5) saturate(0.6) contrast(1.12) hue-rotate(200deg);
+
+/* 浮いている面 */
+.kit-dark .bg-white,
+.kit-dark .bg-white\/95 {
+  background-color: rgba(15, 23, 42, 0.94);
+  color: #e2e8f0;
+}
+.kit-dark .bg-slate-50,
+.kit-dark .bg-slate-100 {
+  background-color: #1e293b;
+  color: #e2e8f0;
+}
+.kit-dark .bg-slate-200,
+.kit-dark .bg-slate-300 {
+  background-color: #334155;
+  color: #e2e8f0;
+}
+
+/* 文字 */
+.kit-dark .text-slate-900,
+.kit-dark .text-slate-800,
+.kit-dark .text-slate-700,
+.kit-dark .text-slate-600 {
+  color: #e2e8f0;
+}
+.kit-dark .text-slate-500,
+.kit-dark .text-slate-400,
+.kit-dark .text-slate-300 {
+  color: #94a3b8;
+}
+
+/* 区切り線 */
+.kit-dark .border-slate-200,
+.kit-dark .border-slate-100 {
+  border-color: #334155;
+}
+.kit-dark .ring-slate-200,
+.kit-dark .ring-slate-300 {
+  --tw-ring-color: #334155;
+}
+
+/*
+ * 目立たせるボタン（もとは濃紺に白文字）。
+ * 暗い面の上ではそのままだと沈むので、明暗を入れ替える。
+ */
+.kit-dark .bg-slate-900,
+.kit-dark .bg-slate-800,
+.kit-dark .hover\:bg-slate-800:hover {
+  background-color: #e2e8f0;
+  color: #0f172a;
+}
+
+/* 地図の操作系（拡大縮小・向きを戻す）も合わせる */
+.kit-dark .maplibregl-ctrl-group {
+  background: rgba(15, 23, 42, 0.94);
+}
+.kit-dark .maplibregl-ctrl-group button + button {
+  border-top-color: #334155;
+}
+.kit-dark .maplibregl-ctrl-group button span {
+  filter: invert(1);
+}
+.kit-dark .maplibregl-ctrl-scale {
+  background: rgba(15, 23, 42, 0.94);
+  color: #e2e8f0;
+  border-color: #94a3b8;
+}
+/* 出典の明示は利用条件で必須。暗くしても必ず読める濃さにする */
+.kit-dark .maplibregl-ctrl-attrib {
+  background: rgba(15, 23, 42, 0.94);
+  color: #e2e8f0;
+}
+.kit-dark .maplibregl-ctrl-attrib a {
+  color: #cbd5e1;
 }

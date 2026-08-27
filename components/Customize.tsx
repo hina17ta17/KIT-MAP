@@ -124,24 +124,25 @@ export default function Customize({ open, onClose, data, value, onChange }: Prop
           <section className="mt-4 border-t border-slate-200 pt-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="text-xs font-bold text-slate-900">夜の見え方</h3>
+                <h3 className="text-xs font-bold text-slate-900">ダークモード</h3>
                 <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
-                  航空写真を暗く落として、夜でも見やすくします。
+                  ボタンや一覧など、地図の上に重ねている部分を黒くします。
                   <span className="block text-slate-400">
-                    地理院タイルに夜間の写真は無いため、昼の写真を暗くしたものです。
+                    地図（航空写真）はそのままです。写真を暗くすると何が写っているか
+                    分からなくなり、地図として使えなくなるためです。
                   </span>
                 </p>
               </div>
               <button
-                onClick={() => onChange({ ...value, night: !value.night })}
-                aria-pressed={value.night}
+                onClick={() => onChange({ ...value, dark: !value.dark })}
+                aria-pressed={value.dark}
                 className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-                  value.night ? "bg-indigo-600" : "bg-slate-300"
+                  value.dark ? "bg-indigo-600" : "bg-slate-300"
                 }`}
               >
                 <span
                   className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                    value.night ? "left-6" : "left-1"
+                    value.dark ? "left-6" : "left-1"
                   }`}
                 />
               </button>

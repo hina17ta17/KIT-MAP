@@ -258,7 +258,12 @@ function MapOverlayInner({
       .filter(
         (x) =>
           x.text &&
-          (zoom >= zoomOnlyAt || !zoomOnlyNames.has(x.f.properties.name ?? "")) &&
+          /*
+           * 構内から離れた場所（駅・バス停）は、ふだんは寄ったときだけ出す。
+           * ただしお気に入りにしたものは別で、号館と同じように常に出す。
+           * 自分で選んだ場所が、縮尺を下げたとたん消えては使えないため。
+           */
+          (x.fav || zoom >= zoomOnlyAt || !zoomOnlyNames.has(x.f.properties.name ?? "")) &&
           x.c.x > -80 &&
           x.c.y > -40 &&
           x.c.x < W + 80 &&

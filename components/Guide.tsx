@@ -1337,7 +1337,7 @@ export default function Guide() {
 
   return (
     <div
-      className={`kit-map relative w-full select-none ${custom.night ? "kit-night" : ""} ${email ? "kit-signed" : ""}`}
+      className={`kit-map relative w-full select-none ${custom.dark ? "kit-dark" : ""} ${email ? "kit-signed" : ""}`}
       style={{ height: "100dvh" }}
     >
       <div ref={boxRef} style={{ position: "absolute", inset: 0 }} />

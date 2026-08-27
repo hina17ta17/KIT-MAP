@@ -47,23 +47,30 @@ export function colorOf(id: string): LabelColor {
 export type Custom = {
   /** 名前の色 */
   color: string;
-  /** 夜の見え方にするか */
-  night: boolean;
+  /**
+   * 画面まわりを黒くするか。
+   *
+   * 地図（航空写真）はそのまま。ボタンや一覧など、地図の上に
+   * 重ねている部分だけを暗くする。写真を暗く落とすと、
+   * 何が写っているのか分からなくなり地図として使えなくなるため。
+   */
+  dark: boolean;
   /** 名前の付け替え。建物の tempId → 付けた名前 */
   names: Record<string, string>;
 };
 
-export const EMPTY_CUSTOM: Custom = { color: DEFAULT_COLOR.id, night: false, names: {} };
+export const EMPTY_CUSTOM: Custom = { color: DEFAULT_COLOR.id, dark: false, names: {} };
 
 export function loadCustom(): Custom {
   if (typeof window === "undefined") return EMPTY_CUSTOM;
   try {
     const raw = window.localStorage.getItem(CUSTOM_KEY);
     if (!raw) return EMPTY_CUSTOM;
-    const v = JSON.parse(raw) as Partial<Custom>;
+    // night は以前の呼び名。すでに入れている人の設定を引き継ぐ
+    const v = JSON.parse(raw) as Partial<Custom> & { night?: boolean };
     return {
       color: typeof v.color === "string" ? v.color : DEFAULT_COLOR.id,
-      night: v.night === true,
+      dark: v.dark === true || v.night === true,
       names: v.names && typeof v.names === "object" ? v.names : {},
     };
   } catch {
