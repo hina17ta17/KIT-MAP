@@ -16,7 +16,7 @@ import { Map as MlMap, NavigationControl, ScaleControl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Position } from "geojson";
 import { BASES, GSI_ATTRIBUTION, INITIAL_VIEW } from "@/lib/gsi";
-import { categoryOf, type CheckpointFeature } from "@/lib/features";
+import { type CheckpointFeature } from "@/lib/features";
 import {
   loadAppData,
   loadRooms,
@@ -29,6 +29,7 @@ import { ROLE_LABEL, ROLE_SHORT, canViewCampusInfo, type Role } from "@/lib/auth
 import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, buildSteps, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
+import MapOverlay, { type LabelHit } from "./MapOverlay";
 import { metersBetween, metersToRing } from "@/lib/geo";
 
 /**
@@ -71,6 +72,15 @@ const FAV_KEY = "kitmap.favorites";
 const TAP_NEAR = 30;
 
 /**
+ * 名前の四角から、どれだけ外まで押したとみなすか（画面の点）。
+ *
+ * 指の腹は太い。文字のふちぴったりを狙わせると外れるので、
+ * まわりに少し余裕を持たせる。広げすぎると隣を誤って選ぶため、
+ * 重なったときは中心がより近いほうを選ぶ。
+ */
+const TAP_PAD = 10;
+
+/**
  * 起動時に画面へ収めるときの余白（画面上の点）。
  *
  * 地図の中心と画面の中心は一致しない。上にボタンの列、下に建物一覧の帯が
@@ -78,32 +88,6 @@ const TAP_NEAR = 30;
  */
 const HOME_PAD = { top: 140, bottom: 80, left: 24, right: 24 };
 
-/** 画面の上での名前の置き場所。左上を起点にした四角 */
-type LabelBox = { x: number; y: number; w: number; h: number };
-
-/**
- * 名前がどれだけの場所を取るかの見積もり。
- *
- * 本当の幅は描いてみないと分からないが、毎回測ると描き直しが増える。
- * 11px の太字なら、全角はほぼ文字の高さ分、半角はその6割ほどの幅になる。
- * 左右の余白 16px を足したものを、その名前の占める幅とみなす。
- */
-function labelBox(text: string, x: number, y: number): LabelBox {
-  let w = 16;
-  for (const ch of text) w += /[ -~｡-ﾟ]/.test(ch) ? 6.6 : 11;
-  const h = 19;
-  return { x: x - w / 2, y: y - h / 2, w, h };
-}
-
-/** 二つの名前がぶつかるか。詰まって見えないよう少し隙間を見込む */
-function overlaps(a: LabelBox, b: LabelBox, gap = 3): boolean {
-  return (
-    a.x < b.x + b.w + gap &&
-    b.x < a.x + a.w + gap &&
-    a.y < b.y + b.h + gap &&
-    b.y < a.y + a.h + gap
-  );
-}
 
 /** 右上の狭い場所に出す用の、短い権限名 */
 const SHORT_ROLE = ROLE_SHORT;
@@ -180,7 +164,6 @@ export default function Guide() {
   const boxRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
-  const [tick, setTick] = useState(0);
 
   const [data, setData] = useState<AppData | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -266,6 +249,15 @@ export default function Guide() {
         // 引ききった先で二本指を動かすと、地図が受け取らなくなった指の動きを
         // ブラウザがページの拡大とみなしてしまうため、行き止まりを作らない
         minZoom: 15,
+        /*
+         * 押したとみなす、指のぶれ幅（画面の点）。既定は 3。
+         *
+         * 3px はマウスを想定した値で、指には狭すぎる。押したつもりでも
+         * わずかに滑ると「動かした」と判断され、click そのものが出ない。
+         * ラベルを押しても無反応なことがあったのは、これが一因。
+         * 8px なら多少ぶれても押したと受け取れ、地図を動かす操作とも混ざらない。
+         */
+        clickTolerance: 8,
         // 既定の出典表示は畳まれて「ⓘ」ボタンになる。
         // ボタンを消したいが出典表示は地理院タイルの利用条件で必須なので、
         // 自前で「畳まない」ものを付け直して、小さな文字として常時出す。
@@ -298,48 +290,52 @@ export default function Guide() {
     // 押されたときの中身は毎回の描画で入れ直すので、常に最新が動く
     map.addControl(new ResetView(() => fitHomeRef.current()), "top-right");
 
-    /*
-     * 描き直しの合図。1フレームに1回までにまとめる。
-     *
-     * 指で拡大縮小しているあいだ、MapLibre は move と zoom を
-     * どちらも毎フレーム出す。そのまま受けると1フレームに2回、
-     * 画面全体を組み直すことになる。組み直しは指の操作と同じ流れで
-     * 起きるので、指を動かしているあいだじゅう処理が詰まり、
-     * 固まったように見えていた。
-     *
-     * 合図が何回来ても、次に描くときの1回にまとめる。
-     */
-    let raf = 0;
-    const bump = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        setTick((v) => v + 1);
-      });
-    };
-    for (const ev of ["move", "zoom", "rotate", "resize", "load"] as const) map.on(ev, bump);
+    /* 描き直しの合図は MapOverlay が自分で受け取る。
+       ここで受けると、地図を動かすたびに画面ぜんぶを組み直すことになる */
     map.on("load", () => setReady(true));
 
     /*
      * ラベルを押した判定。
      *
      * ラベル自身に押させると、その指が地図に届かなくなる。
-     * 二本指の片方が乗っただけでピンチが崩れるので、受け取るのは地図にして、
-     * 押された場所からいちばん近い名前を選ぶ形にした。
+     * 二本指の片方が乗っただけでピンチが崩れるので、受け取るのは地図にする。
      * 地図は指を滑らせたときには click を出さないので、
      * 地図を動かしたのか押したのかは向こうが見分けてくれる。
+     *
+     * 名前の「四角」で判定する。以前は中心からの距離だけを見ていたので、
+     * 「金沢工業大学前バス停」（幅126px）のような長い名前は、
+     * 見えている文字を押しても中心から63px 離れていて届かなかった。
+     * 42件のうち11件が、押せない部分を持っていた。
      */
     map.on("click", (ev) => {
       const { x, y } = ev.point;
-      let best: (typeof hitRef.current)[number] | null = null;
-      let bestD = TAP_NEAR;
+      let best: LabelHit | null = null;
+      let bestD = Infinity;
+
+      // ① 名前の四角の中（指の太さぶん外まで）。重なっていたら中心が近いほう
       for (const h of hitRef.current) {
-        const d = Math.hypot(h.x - x, h.y - y);
+        const dx = Math.abs(x - h.x) - h.w / 2;
+        const dy = Math.abs(y - h.y) - h.h / 2;
+        if (dx > TAP_PAD || dy > TAP_PAD) continue;
+        const d = Math.hypot(x - h.x, y - h.y);
         if (d < bestD) {
           bestD = d;
           best = h;
         }
       }
+
+      // ② どれにも当たらなければ、近いものを少しだけ拾う
+      if (!best) {
+        bestD = TAP_NEAR;
+        for (const h of hitRef.current) {
+          const d = Math.hypot(x - h.x, y - h.y);
+          if (d < bestD) {
+            bestD = d;
+            best = h;
+          }
+        }
+      }
+
       if (best) tapLabelRef.current(best.id, best.label, best.ring);
     });
 
@@ -351,9 +347,9 @@ export default function Guide() {
      * 実際の高さが食い違い、canvas が画面の半分のまま残ることがある。
      * 取りこぼしを無くすため、複数の合図で測り直す。
      */
+    // resize() は "resize" の合図を出すので、重ね描きはそれで作り直される
     const fit = () => {
       map.resize();
-      bump();
     };
 
     /*
@@ -391,7 +387,6 @@ export default function Guide() {
       window.removeEventListener("orientationchange", fit);
       window.visualViewport?.removeEventListener("resize", fit);
       timers.forEach(clearTimeout);
-      if (raf) cancelAnimationFrame(raf);
       map.remove();
       mapRef.current = null;
     };
@@ -422,8 +417,8 @@ export default function Guide() {
   useEffect(() => {
     if (splash !== "done") return;
     const t = window.setTimeout(() => {
+      // resize() が合図を出すので、重ね描きはそれで作り直される
       mapRef.current?.resize();
-      setTick((v) => v + 1);
     }, 60);
     return () => clearTimeout(t);
   }, [splash]);
@@ -626,7 +621,6 @@ export default function Guide() {
     // 押した時点で描画面を測り直す。
     // 許可ダイアログでアドレスバーの高さが変わり、地図が半分のまま残るのを防ぐ
     mapRef.current?.resize();
-    setTick((v) => v + 1);
     // 向きの許可も、このタップと同じ流れで求める
     startCompass();
 
@@ -1280,97 +1274,14 @@ export default function Guide() {
    * 地図の合図は一度しか登録しないので、その中から見える値は古いままになる。
    * 毎回の描画で入れ直して、押されたときには最新を見られるようにする。
    */
-  const hitRef = useRef<
-    { id: string; label: string; ring: Position[]; x: number; y: number }[]
-  >([]);
+  const hitRef = useRef<LabelHit[]>([]);
   const tapLabelRef = useRef<(id: string, label: string, ring: Position[]) => void>(() => {});
-
-  const view = useMemo(() => {
-    const map = mapRef.current;
-    if (!map || !ready || !data) return null;
-    void tick;
-    const p = (c: Position) => {
-      const q = map.project([c[0], c[1]]);
-      return { x: q.x, y: q.y };
-    };
-    /*
-     * 建物は枠線を描かず、名前だけ地図に置く。
-     * 形のデータは検索と経路に使うので、画面に出さないだけ。
-     *
-     * 縮尺を下げると、離れた建物の名前どうしが画面の上で重なって読めなくなる。
-     * そこで大事なものから順に場所を取っていき、すでに置いた名前と
-     * ぶつかるものは出さない。出せなかった名前は、拡大すれば場所が空いて出てくる。
-     */
-    const canvas = map.getContainer();
-    const W = canvas.clientWidth;
-    const H = canvas.clientHeight;
-    const zoom = map.getZoom();
-
-    const taken: LabelBox[] = [];
-    const buildings: { f: (typeof data.buildings.features)[number]; c: { x: number; y: number } }[] =
-      [];
-
-    const cands = data.buildings.features
-      .map((f) => ({
-        f,
-        c: p(centroid(f.geometry.coordinates[0])),
-        text: f.properties.name || f.properties.code || "",
-      }))
-      // 画面の外は判定にも描画にも要らない。少しはみ出す分だけ余裕を持たせる。
-      // 構内から離れた場所は、寄ったときだけ出す
-      .filter(
-        (x) =>
-          x.text &&
-          (zoom >= ZOOM_ONLY_AT || !ZOOM_ONLY_NAMES.has(x.f.properties.name ?? "")) &&
-          x.c.x > -80 &&
-          x.c.y > -40 &&
-          x.c.x < W + 80 &&
-          x.c.y < H + 40,
-      )
-      .sort((a, b) => {
-        // 選んでいる建物と経路の両端は、何を押したか分からなくなるので必ず出す
-        const ah = highlight.has(a.f.properties.tempId) ? 1 : 0;
-        const bh = highlight.has(b.f.properties.tempId) ? 1 : 0;
-        if (ah !== bh) return bh - ah;
-        // あとは大きい建物から。小さな小屋より号館の方が目印になる
-        return (areaOf.get(b.f.properties.tempId) ?? 0) - (areaOf.get(a.f.properties.tempId) ?? 0);
-      });
-
-    for (const x of cands) {
-      const r = labelBox(x.text, x.c.x, x.c.y);
-      if (taken.some((t) => overlaps(t, r))) continue;
-      taken.push(r);
-      buildings.push({ f: x.f, c: x.c });
-    }
-
-    return {
-      buildings,
-      routePts: route && !("error" in route) ? route.path.map((id) => p(graph!.pos.get(id)!)) : [],
-      goal: route && !("error" in route) ? p(route.goal.geometry.coordinates) : null,
-      start:
-        route && !("error" in route) && graph ? p(graph.pos.get(route.startId)!) : null,
-      // 守備範囲より遠くにいる人の点は打たない。
-      // 地図に写っていない場所なので、出しても地図の端に張り付くだけになる
-      me: fix && !tooFar ? p(fix.pos) : null,
-      meR: fix && !tooFar ? radiusPx(map, fix.pos, fix.accuracy) : 0,
-    };
-  }, [ready, data, tick, route, graph, fix, tooFar, highlight, areaOf]);
 
   /* 押されたときに見る値を、毎回の描画で入れ直す */
   fitHomeRef.current = () => fitHome(500);
-  hitRef.current =
-    view?.buildings.map(({ f, c }) => ({
-      id: f.properties.tempId,
-      label: f.properties.name || f.properties.code,
-      ring: f.geometry.coordinates[0],
-      x: c.x,
-      y: c.y,
-    })) ?? [];
   tapLabelRef.current = tapLabel;
 
   /* ---------------- 表示 ---------------- */
-
-  const routeLine = view?.routePts.map((q) => `${q.x},${q.y}`).join(" ") ?? "";
 
   return (
     <div className="relative w-full select-none" style={{ height: "100dvh" }}>
@@ -1431,131 +1342,26 @@ export default function Guide() {
         </div>
       )}
 
-      {/* 建物・経路・現在地。建物名は出さない */}
-      {view && (
-        <svg
-          className="pointer-events-none absolute inset-0"
-          style={{ zIndex: 5 }}
-          width="100%"
-          height="100%"
-        >
-          {/* 経路。薄い青を4枚重ねて、光っているように見せる */}
-          {view.routePts.length > 1 && (
-            <>
-              <polyline points={routeLine} fill="none" stroke="#7dd3fc" strokeWidth={30} strokeOpacity={0.18} strokeLinecap="round" strokeLinejoin="round" />
-              <polyline points={routeLine} fill="none" stroke="#7dd3fc" strokeWidth={20} strokeOpacity={0.3} strokeLinecap="round" strokeLinejoin="round" />
-              <polyline points={routeLine} fill="none" stroke="#bae6fd" strokeWidth={12} strokeOpacity={0.65} strokeLinecap="round" strokeLinejoin="round" />
-              <polyline points={routeLine} fill="none" stroke="#38bdf8" strokeWidth={6} strokeOpacity={0.95} strokeLinecap="round" strokeLinejoin="round" />
-            </>
-          )}
-
-          {view.start && (
-            <circle cx={view.start.x} cy={view.start.y} r={8} fill="#ffffff" stroke="#38bdf8" strokeWidth={4} />
-          )}
-          {view.me && (
-            <>
-              <circle cx={view.me.x} cy={view.me.y} r={view.meR} fill="#38bdf8" fillOpacity={0.12} />
-              <circle
-                cx={view.me.x}
-                cy={view.me.y}
-                r={9}
-                fill="#38bdf8"
-                stroke="#ffffff"
-                strokeWidth={3.5}
-                opacity={fix && fix.accuracy <= ACC_TRUST ? 1 : 0.55}
-              />
-
-              {/* 向いている方角。丸の上にとがった先を重ねる。
-                  地図を回していても正しい方角を指すよう、地図の向きを差し引く */}
-              {heading != null && (
-                <g
-                  transform={`translate(${view.me.x},${view.me.y}) rotate(${
-                    heading - (mapRef.current?.getBearing() ?? 0)
-                  })`}
-                >
-                  {/* 進む先へ広がる薄い光。どちらを向いているか遠目にも分かる */}
-                  <path
-                    d="M -13 -16 A 20 20 0 0 1 13 -16 L 0 -40 Z"
-                    fill="#38bdf8"
-                    opacity={0.22}
-                  />
-                  {/* とがった先 */}
-                  <path
-                    d="M 0 -20 L 7 -8 L 0 -11 L -7 -8 Z"
-                    fill="#38bdf8"
-                    stroke="#ffffff"
-                    strokeWidth={2}
-                    strokeLinejoin="round"
-                  />
-                </g>
-              )}
-            </>
-          )}
-
-          {/* 目的地。ひと目で分かるよう、赤いピンを大きく立てる。
-              現在地より手前に描いて隠れないようにする */}
-          {view.goal && (
-            <g transform={`translate(${view.goal.x},${view.goal.y})`}>
-              {/* 地面の影。浮いて見えると場所が曖昧になる */}
-              <ellipse cx={0} cy={1} rx={10} ry={4} fill="#0f172a" opacity={0.28} />
-              {/* しずく形。とがった先が目的地を指す */}
-              <path
-                d="M0 0 C -7 -13, -18 -22, -18 -34 A 18 18 0 1 1 18 -34 C 18 -22, 7 -13, 0 0 Z"
-                fill="#ef4444"
-                stroke="#ffffff"
-                strokeWidth={3.5}
-                strokeLinejoin="round"
-              />
-              <circle cx={0} cy={-34} r={6.5} fill="#ffffff" />
-            </g>
-          )}
-        </svg>
-      )}
-
-      {/*
-        建物名。枠線は描かず、名前だけ置く。
-
-        ■ 押せる部品にしていない理由
-        この層は地図とは別の要素として上に重なっている。ここで指を受け取ると、
-        その指は地図に一切届かない。二本指の片方がラベルに乗っただけで
-        ピンチが片手扱いになり、拡大縮小がガタついていた。
-        名前は見せるだけにして、押した判定は地図の click から距離で行う。
-
-        ■ 位置を transform で動かす理由
-        left/top を書き換えると、そのたびに配置の計算がやり直される。
-        指で動かしているあいだ、42個ぶんそれが毎フレーム起きていた。
-        transform なら合成だけで済み、配置の計算は起きない。
-      */}
-      {view && (
-        <div className="pointer-events-none absolute inset-0" style={{ zIndex: 6 }}>
-          {view.buildings.map(({ f, c }) => {
-            const on = highlight.has(f.properties.tempId);
-            const cat = categoryOf(f.properties.category);
-            const label = f.properties.name || f.properties.code;
-            if (!label) return null;
-            const from = pickedFrom?.buildingId === f.properties.tempId;
-            return (
-              <div
-                key={f.properties.tempId}
-                className={`absolute left-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold shadow-sm ${
-                  from
-                    ? "bg-blue-600 text-white ring-2 ring-blue-300"
-                    : on
-                      ? "bg-orange-500 text-white"
-                      : "bg-white/85 text-slate-800"
-                }`}
-                style={{
-                  transform: `translate3d(${c.x}px, ${c.y}px, 0) translate(-50%, -50%)`,
-                  borderColor: cat.lineColor,
-                }}
-              >
-                {from && <span className="mr-1 opacity-80">{T("出発")}</span>}
-                {P(label)}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {/* 建物の名前・経路・現在地。
+          地図が動くたびの組み直しは、この中だけで起きる */}
+      <MapOverlay
+        map={mapRef.current}
+        ready={ready}
+        data={data}
+        route={route}
+        graph={graph}
+        fix={fix}
+        tooFar={tooFar}
+        heading={heading}
+        highlight={highlight}
+        areaOf={areaOf}
+        pickedFrom={pickedFrom}
+        zoomOnlyAt={ZOOM_ONLY_AT}
+        zoomOnlyNames={ZOOM_ONLY_NAMES}
+        placeName={P}
+        t={T}
+        hitRef={hitRef}
+      />
 
       {/* 右上に、いま誰で入っているかを出す。押すと自分の状態と
           ログアウトを見られる画面へ行く */}
@@ -2422,16 +2228,3 @@ export { GROUP_LABEL };
 
 /* ---------------- 補助 ---------------- */
 
-/** リングの平均座標。ラベルの置き場所に使う（厳密な重心でなくてよい） */
-function centroid(ring: Position[]): Position {
-  const pts = ring.slice(0, -1);
-  const s = pts.reduce<[number, number]>((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]);
-  return [s[0] / pts.length, s[1] / pts.length];
-}
-
-/** メートルを画面上のピクセル半径に直す */
-function radiusPx(map: MlMap, at: Position, meters: number): number {
-  const a = map.project([at[0], at[1]]);
-  const b = map.project([at[0], at[1] + meters / 111320]);
-  return Math.abs(a.y - b.y);
-}
