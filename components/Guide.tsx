@@ -785,13 +785,20 @@ export default function Guide() {
 
   /* ---------------- 圏内判定 ---------------- */
 
-  /** 敷地の外周。内外の判定にも、地図を動かせる範囲にも使う */
+  /**
+   * 敷地の外周。内外の判定にも、地図を動かせる範囲にも使う。
+   *
+   * 見るのは campus だけにする。data 全体を見ていると、
+   * 教室を読み終えて data を差し替えたときにも作り直しになり、
+   * 地図の範囲設定まで無駄にやり直していた。
+   */
+  const campusFc = data?.campus;
   const campusRings = useMemo(
     () =>
-      (data?.campus.features ?? [])
+      (campusFc?.features ?? [])
         .map((f) => f.geometry.coordinates[0])
         .filter((p) => p && p.length > 2),
-    [data],
+    [campusFc],
   );
 
   /**
@@ -870,11 +877,67 @@ export default function Guide() {
     const midLat = ((s + n) / 2) * (Math.PI / 180);
     const dLat = RANGE_M / 111_320;
     const dLon = RANGE_M / (111_320 * Math.cos(midLat));
+    const west = w - dLon,
+      south = s - dLat,
+      east = e + dLon,
+      north = n + dLat;
 
     map.setMaxBounds([
-      [w - dLon, s - dLat],
-      [e + dLon, n + dLat],
+      [west, south],
+      [east, north],
     ]);
+
+    /*
+     * 引ける下限を、範囲がちょうど画面を覆いきる縮尺まで引き上げる。
+     *
+     * ■ なぜ要るか
+     *   MapLibre は「動かせる範囲が画面より小さい」と気づくと、
+     *   中心を範囲の真ん中へ寄せたうえで、縮尺を強制的に押し戻す。
+     *
+     *     if (maxX - minX < screenWidth) scaleX = screenWidth / (maxX - minX);
+     *     if (scale) { center = 範囲の中心; zoom += scaleZoom(scale); }
+     *
+     *   指で引くたびに押し返されるので、動かなくなったように見える。
+     *   押し返しは毎フレーム起きるため、そのたびに画面も組み直していた。
+     *
+     *   範囲は 2.9km × 2.7km。縮尺15 では画面上の 1521 × 1408px にあたる。
+     *   横に広い画面（1920px級）だと覆いきれず、この押し返しに入っていた。
+     *
+     * ■ どう直すか
+     *   覆いきれる縮尺より引けなくする。そうすれば押し返しは一度も起きず、
+     *   端では中心をずらすだけの軽い処理で済む。
+     */
+    // 世界全体を1としたときの、範囲の幅と高さ
+    const mercY = (lat: number) =>
+      (180 - (180 / Math.PI) * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))) / 360;
+    const fx = (east - west) / 360;
+    const fy = mercY(south) - mercY(north);
+    /** MapLibre が世界の大きさを測る単位（worldSize = 512 × 2^縮尺） */
+    const TILE = 512;
+
+    const relimit = () => {
+      const box = map.getContainer();
+      /*
+       * 画面より 1px だけ大きく覆えることを求める。
+       *
+       * ちょうど同じ大きさを狙うと、小数の丸めで「1px 足りない」側に
+       * 転ぶことがある。MapLibre は 1px でも足りなければ押し返すので、
+       * 余白を持たせて確実に覆いきる。
+       */
+      const need = Math.log2(
+        Math.max((box.clientWidth + 1) / (fx * TILE), (box.clientHeight + 1) / (fy * TILE)),
+      );
+      // 15 はもとからの下限。これ以上引かせない
+      const lo = Math.max(15, need);
+      // 同じ値で呼び直すと、そのたびに縮尺の判定が走る
+      if (Math.abs(map.getMinZoom() - lo) > 0.01) map.setMinZoom(lo);
+    };
+    relimit();
+    // 画面が変われば覆えるかどうかも変わる（回転、アドレスバーの出入り）
+    map.on("resize", relimit);
+    return () => {
+      map.off("resize", relimit);
+    };
   }, [ready, campusRings]);
 
   /* ---------------- 経路 ---------------- */
