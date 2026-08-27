@@ -376,7 +376,23 @@ export const EMPTY_DATA: MapData = {
   rooms: [],
 };
 
-const STORAGE_KEY = "kitmap.draft.v1";
+/**
+ * 下書きの保管場所。作業する組ごとに分ける。
+ *
+ * ひとつしか無いと、公開中の地図を触ったあとに土台を開いたとき、
+ * 先に作りかけていたほうが消えてしまう。別々に覚えておけば、
+ * 行き来しても互いの作業が残る。
+ */
+export const DRAFT_KEYS = {
+  /** 公開中の地図をそのまま直すとき */
+  live: "kitmap.draft.v1",
+  /** 通過点と接続を外した土台から、道すじを引き直すとき */
+  base: "kitmap.draft.base.v1",
+} as const;
+
+export type DraftKey = (typeof DRAFT_KEYS)[keyof typeof DRAFT_KEYS];
+
+const STORAGE_KEY: DraftKey = DRAFT_KEYS.live;
 
 /** 基盤地図情報の建物種別。取り込み時に note へ入る */
 const FGD_TYPES = ["普通建物", "堅ろう建物", "普通無壁舎", "堅ろう無壁舎", "高層建物"];
@@ -433,10 +449,10 @@ function migrate(data: MapData): MapData {
   };
 }
 
-export function loadData(): MapData {
+export function loadData(key: DraftKey = STORAGE_KEY): MapData {
   if (typeof window === "undefined") return EMPTY_DATA;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return EMPTY_DATA;
     const parsed = JSON.parse(raw) as MapData;
     if (!parsed.campus || !parsed.buildings) return EMPTY_DATA;
@@ -446,9 +462,15 @@ export function loadData(): MapData {
   }
 }
 
-export function saveData(data: MapData) {
+export function saveData(data: MapData, key: DraftKey = STORAGE_KEY) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  window.localStorage.setItem(key, JSON.stringify(data));
+}
+
+/** 下書きを捨てる。取り込み直して最初からやり直したいとき */
+export function clearData(key: DraftKey = STORAGE_KEY) {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(key);
 }
 
 /** 既存の仮IDと重ならない次の番号を返す（削除後の再採番はしない） */

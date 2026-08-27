@@ -33,6 +33,8 @@ import {
   downloadJson,
   isNamed,
   loadData,
+  clearData,
+  DRAFT_KEYS,
   nextTempId,
   saveData,
   type BuildingFeature,
@@ -192,7 +194,18 @@ function padBbox(b: Bbox, pad: number): Bbox {
   return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
 }
 
-export default function MapEditor() {
+/**
+ * どの組を編集するか。
+ *
+ *   live … 公開中の地図をそのまま直す（/edit）
+ *   base … 通過点と接続を外した土台から、道すじを引き直す（/edit/base）
+ *
+ * 経路ごとに分けてある。URL の後ろに付ける形だと、サーバー側では
+ * どちらか分からないまま先に描いてしまい、画面が一瞬入れ替わる。
+ */
+export type EditorSource = "live" | "base";
+
+export default function MapEditor({ source = "live" }: { source?: EditorSource }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
@@ -254,6 +267,15 @@ export default function MapEditor() {
   const childParentRef = useRef<string | null>(null);
   childParentRef.current = childParent;
 
+  /* ---------------- どの組を編集しているか ---------------- */
+
+  const isBase = source === "base";
+  /** 取り込み元 */
+  const SRC_DIR = isBase ? "/data/base" : "/data";
+  /** 下書きの保管場所 */
+  const DRAFT = isBase ? DRAFT_KEYS.base : DRAFT_KEYS.live;
+  const SRC_LABEL = isBase ? "経路なしの土台" : "公開中の地図";
+
   /* ---------------- 初期化 ---------------- */
 
   /**
@@ -267,7 +289,7 @@ export default function MapEditor() {
    * 何か描いてあるときは触らない。作りかけを上書きするとやり直せない。
    */
   useEffect(() => {
-    const saved = loadData();
+    const saved = loadData(DRAFT);
     const drawn =
       saved.buildings.features.length +
       saved.checkpoints.features.length +
@@ -275,23 +297,27 @@ export default function MapEditor() {
       saved.links.length;
     if (drawn > 0) {
       setData(saved);
+      setNotice({
+        kind: "ok",
+        text: `${SRC_LABEL}の作りかけを開きました（場所 ${saved.buildings.features.length} / CP ${saved.checkpoints.features.length} / 接続 ${saved.links.length}）`,
+      });
       return;
     }
 
     let alive = true;
-    void loadAppData().then((live) => {
+    void loadAppData(SRC_DIR).then((live) => {
       // 取れなければ空のまま。読み込みボタンから手で入れられる
       if (!alive || live.buildings.features.length === 0) return;
       setData(fromLive(live));
       setNotice({
         kind: "ok",
-        text: `公開中の地図を読み込みました（場所 ${live.buildings.features.length} / CP ${live.checkpoints.features.length} / 接続 ${live.links.length}）`,
+        text: `${SRC_LABEL}を読み込みました（場所 ${live.buildings.features.length} / CP ${live.checkpoints.features.length} / 接続 ${live.links.length}）`,
       });
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [DRAFT, SRC_DIR, SRC_LABEL]);
 
   /**
    * 出来合いの地図を取り込んで、いまの内容と入れ替える。
@@ -301,11 +327,12 @@ export default function MapEditor() {
    *                敷地・建物・出入口は残るので、道すじだけ引き直せる
    */
   const importFrom = useCallback(
-    (dir: string, label: string) => {
+    (dir: string, label: string, skipConfirm = false) => {
       // 何か描いてあるなら、消してよいか必ず訊く
       const drawn =
         dataRef.current.buildings.features.length + dataRef.current.checkpoints.features.length;
       if (
+        !skipConfirm &&
         drawn > 0 &&
         !window.confirm(`いま画面にあるものを「${label}」で置き換えます。作りかけは消えます。よろしいですか。`)
       )
@@ -1363,9 +1390,10 @@ export default function MapEditor() {
    */
   useEffect(() => {
     if (data === EMPTY_DATA) return;
-    saveData(data);
+    // 作業している組ごとに分けて覚える。行き来しても互いを消さない
+    saveData(data, DRAFT);
     setSavedAt(new Date());
-  }, [data]);
+  }, [data, DRAFT]);
 
   /* ---------------- 作図中の表示 ---------------- */
 
@@ -2332,6 +2360,53 @@ export default function MapEditor() {
             >
               地図へ
             </a>
+          </div>
+
+          {/* いま何を編集しているか。2つの作業台を行き来できるようにする。
+              下書きは別々に覚えるので、切り替えても作りかけは残る */}
+          <div
+            className={`mt-2 rounded-md px-2.5 py-2 ring-1 ${
+              isBase ? "bg-violet-50 ring-violet-300" : "bg-slate-50 ring-slate-300"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className={`text-[11px] font-bold ${isBase ? "text-violet-800" : "text-slate-800"}`}
+              >
+                {isBase ? "✏️ 経路なしの土台" : "🗺 公開中の地図"}
+              </span>
+              <a
+                href={isBase ? "/edit" : "/edit/base"}
+                className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100"
+              >
+                {isBase ? "公開中の地図へ" : "土台へ"}
+              </a>
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-600">
+              {isBase
+                ? "通過点と接続を外した状態。敷地・建物・出入口は残っているので、歩く道すじだけを引き直せます。"
+                : "いま公開している地図をそのまま直す作業台です。"}
+            </p>
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-[10px] text-slate-500">
+                下書きの保管先 <code className="text-slate-400">{DRAFT}</code>
+              </span>
+              <button
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      `「${SRC_LABEL}」の作りかけを捨てて、取り込んだ直後の状態に戻します。よろしいですか。`,
+                    )
+                  )
+                    return;
+                  clearData(DRAFT);
+                  importFrom(SRC_DIR, SRC_LABEL, true);
+                }}
+                className="ml-auto shrink-0 text-[10px] text-slate-500 underline hover:text-slate-800"
+              >
+                最初から
+              </button>
+            </div>
           </div>
 
           {/* 今やることを1つだけ大きく出す。手順の前後関係が画面から読み取れないと迷うため */}

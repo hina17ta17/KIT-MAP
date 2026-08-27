@@ -19,7 +19,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { platform } from "node:os";
 
 const PORT = 3100;
-const URL = `http://localhost:${PORT}/edit`;
+/*
+ * 開いた時点で「経路なしの土台」の作業台に入る。
+ * 通過点と接続を外した状態から、道すじを引き直すための場所。
+ * 公開中の地図をそのまま直したいときは、画面右上の「公開中の地図へ」で移れる。
+ */
+const URL = `http://localhost:${PORT}/edit/base`;
 
 /* 1. 土台データを作り直す。元の public/data/ には触らない */
 const make = spawnSync(process.execPath, ["scripts/make-base-data.mjs"], {
