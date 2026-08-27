@@ -307,37 +307,50 @@ export default function Guide() {
      * 見えている文字を押しても中心から63px 離れていて届かなかった。
      * 42件のうち11件が、押せない部分を持っていた。
      */
-    map.on("click", (ev) => {
-      const { x, y } = ev.point;
+    const pickLabel = (x: number, y: number) => {
       let best: LabelHit | null = null;
       let bestD = Infinity;
 
+      /*
+       * 名前の位置は、押されたその時に緯度経度から画面の点へ直す。
+       *
+       * 一つ前の描画のときの点をそのまま使うと、地図が動いている
+       * あいだ（建物を押して寄っている最中、現在地へ寄せている最中など）に
+       * 位置がずれ、押しても何も選ばれない。「他の操作中に押せない」の正体。
+       */
+      const at = hitRef.current.map((h) => {
+        const q = map.project([h.at[0], h.at[1]]);
+        return { h, x: q.x, y: q.y };
+      });
+
       // ① 名前の四角の中（指の太さぶん外まで）。重なっていたら中心が近いほう
-      for (const h of hitRef.current) {
-        const dx = Math.abs(x - h.x) - h.w / 2;
-        const dy = Math.abs(y - h.y) - h.h / 2;
+      for (const a of at) {
+        const dx = Math.abs(x - a.x) - a.h.w / 2;
+        const dy = Math.abs(y - a.y) - a.h.h / 2;
         if (dx > TAP_PAD || dy > TAP_PAD) continue;
-        const d = Math.hypot(x - h.x, y - h.y);
+        const d = Math.hypot(x - a.x, y - a.y);
         if (d < bestD) {
           bestD = d;
-          best = h;
+          best = a.h;
         }
       }
 
       // ② どれにも当たらなければ、近いものを少しだけ拾う
       if (!best) {
         bestD = TAP_NEAR;
-        for (const h of hitRef.current) {
-          const d = Math.hypot(x - h.x, y - h.y);
+        for (const a of at) {
+          const d = Math.hypot(x - a.x, y - a.y);
           if (d < bestD) {
             bestD = d;
-            best = h;
+            best = a.h;
           }
         }
       }
 
       if (best) tapLabelRef.current(best.id, best.label, best.ring);
-    });
+    };
+
+    map.on("click", (ev) => pickLabel(ev.point.x, ev.point.y));
 
     /**
      * 描画面の大きさを測り直す。
@@ -618,6 +631,9 @@ export default function Guide() {
       return;
     }
 
+    // 自分から押したのだから、また知らせてよい
+    setGeoMuted(false);
+
     // 押した時点で描画面を測り直す。
     // 許可ダイアログでアドレスバーの高さが変わり、地図が半分のまま残るのを防ぐ
     mapRef.current?.resize();
@@ -697,14 +713,34 @@ export default function Guide() {
     }, 32_000);
   }, [fix, geoState, accept, startCompass, stopWatch]);
 
+  /**
+   * 現在地を使わないと決めたか。
+   *
+   * 拒否のままだと知らせが出続け、地図の左上を占め続ける。
+   * 「使わない」と決めた人には二度と出さない。
+   * 現在地のボタンを押せば、また試せる。
+   */
+  const [geoMuted, setGeoMuted] = useState(false);
+  /** 直し方を開いているか。既定は畳む（開いたままだと地図が隠れる） */
+  const [geoHelp, setGeoHelp] = useState(false);
+  const geoMutedRef = useRef(false);
+  geoMutedRef.current = geoMuted;
+
+  /** 知らせを閉じ、位置を取りにいくのもやめる */
+  const muteGeo = useCallback(() => {
+    setGeoMuted(true);
+    stopWatch();
+  }, [stopWatch]);
+
   /** 許可の状態を先に調べて、拒否されているなら押す前に伝える */
   useEffect(() => {
     void navigator.permissions
       ?.query({ name: "geolocation" as PermissionName })
       .then((s) => {
-        if (s.state === "denied") setGeoState("denied");
+        // 使わないと決めた人には、蒸し返さない
+        if (s.state === "denied" && !geoMutedRef.current) setGeoState("denied");
         s.onchange = () => {
-          if (s.state === "denied") setGeoState("denied");
+          if (s.state === "denied" && !geoMutedRef.current) setGeoState("denied");
         };
       })
       .catch(() => {
@@ -1546,53 +1582,62 @@ export default function Guide() {
 
         {/* うまくいかないときだけ、原因と次の手を詳しく出す。
             順調なあいだは現在地の横の短い表示だけで足りる */}
-        {(geoState === "denied" ||
-          geoState === "timeout" ||
-          geoState === "unavailable" ||
-          geoState === "insecure") && (
-          <div className="max-w-[16rem] rounded-2xl bg-white px-3 py-1.5 text-[11px] font-medium leading-relaxed text-slate-600 shadow-sm">
-            {geoState === "denied" && (
-              <>
-                現在地が拒否されています
-                <span className="block text-[10px] text-slate-400">
-                  iPhone：設定 → プライバシー → 位置情報サービス → Safari を「確認」か「許可」に
+        {!geoMuted &&
+          (geoState === "denied" ||
+            geoState === "timeout" ||
+            geoState === "unavailable" ||
+            geoState === "insecure") && (
+            <div className="flex max-w-[15rem] items-start gap-1.5 rounded-2xl bg-white py-1.5 pl-3 pr-1.5 text-[11px] font-medium leading-snug text-slate-600 shadow-sm">
+              <div className="min-w-0 flex-1">
+                {geoState === "denied" && "現在地が拒否されています"}
+                {geoState === "timeout" && "測位できませんでした"}
+                {geoState === "unavailable" && "現在地を取得できませんでした"}
+                {geoState === "insecure" && "この接続では現在地を使えません"}
+
+                {/* 詳しい説明は畳んでおく。開いたままだと地図が見えなくなる */}
+                {geoHelp && (
+                  <span className="mt-1 block text-[10px] leading-relaxed text-slate-400">
+                    {geoState === "denied" &&
+                      "iPhone：設定 → プライバシー → 位置情報サービス → Safari を「確認」か「許可」に"}
+                    {geoState === "timeout" &&
+                      "屋内では取得しにくくなります。窓際か屋外でお試しください"}
+                    {geoState === "insecure" &&
+                      "Safari などは HTTPS でないと位置情報を許可しません。公開URL（https://）から開いてください"}
+                    {geoState === "unavailable" &&
+                      "この端末では位置情報を扱えないようです。建物一覧から目的地を選べます"}
+                  </span>
+                )}
+
+                <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {geoState !== "insecure" && geoState !== "unavailable" && (
+                    <button
+                      onClick={startWatch}
+                      className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white active:scale-95"
+                    >
+                      {geoState === "denied" ? "許可し直したら押す" : "もう一度試す"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setGeoHelp((v) => !v)}
+                    className="text-[10px] text-slate-400 underline active:scale-95"
+                  >
+                    {geoHelp ? "閉じる" : "直し方"}
+                  </button>
                 </span>
-              </>
-            )}
-            {geoState === "timeout" && (
-              <>
-                測位できませんでした
-                <button
-                  onClick={startWatch}
-                  className="mt-1 block rounded-full bg-slate-900 px-3 py-1 text-[10px] font-bold text-white"
-                >
-                  もう一度試す
-                </button>
-                <span className="mt-1 block text-[10px] text-slate-400">
-                  屋内では取得しにくくなります。窓際か屋外でお試しください
-                </span>
-              </>
-            )}
-            {geoState === "denied" && (
+              </div>
+
+              {/* 現在地はもう要らない、という人のための×。
+                  押すと知らせを消し、取りにいくのもやめる */}
               <button
-                onClick={startWatch}
-                className="mt-1 block rounded-full bg-slate-900 px-3 py-1 text-[10px] font-bold text-white"
+                onClick={muteGeo}
+                aria-label="現在地を使わない"
+                title="現在地を使わない"
+                className="-mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[13px] font-bold leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
               >
-                許可し直したら押す
+                ×
               </button>
-            )}
-            {geoState === "unavailable" && "現在地を取得できませんでした"}
-            {geoState === "insecure" && (
-              <>
-                この接続では現在地を使えません
-                <span className="block text-[10px] text-slate-400">
-                  Safari などは HTTPS でないと位置情報を許可しません。
-                  公開URL（https://）から開いてください
-                </span>
-              </>
-            )}
-          </div>
-        )}
+            </div>
+          )}
       </div>
 
       {/* ログイン。フェーズ2で実際に動くようにする */}

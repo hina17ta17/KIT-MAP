@@ -75,17 +75,22 @@ function radiusPx(map: MlMap, at: Position, meters: number): number {
 }
 
 /**
- * 押されたときに見る、画面上の名前の位置と大きさ。
+ * 押されたときに見る、名前の位置と大きさ。
  *
- * 中心だけでなく幅と高さも持つ。中心からの距離だけで見ていたころは、
+ * 位置は画面の点ではなく緯度経度で持つ。画面の点で持つと、
+ * 地図が動いているあいだ（建物を押して寄っている最中など）に
+ * 一つ前の描画のときの位置が残り、押した先がずれる。
+ * 押された時点で緯度経度から画面の点へ直せば、必ず今の位置になる。
+ *
+ * 幅と高さも持つ。中心からの距離だけで見ていたころは、
  * 「金沢工業大学前バス停」のような長い名前の端を押しても届かなかった。
  */
 export type LabelHit = {
   id: string;
   label: string;
   ring: Position[];
-  x: number;
-  y: number;
+  /** 名前を置いている場所（緯度経度） */
+  at: Position;
   w: number;
   h: number;
 };
@@ -192,15 +197,20 @@ function MapOverlayInner({
     const buildings: {
       f: NonNullable<AppData["buildings"]["features"][number]>;
       c: { x: number; y: number };
+      at: Position;
       box: LabelBox;
     }[] = [];
 
     const cands = data.buildings.features
-      .map((f) => ({
-        f,
-        c: p(centroid(f.geometry.coordinates[0])),
-        text: f.properties.name || f.properties.code || "",
-      }))
+      .map((f) => {
+        const at = centroid(f.geometry.coordinates[0]);
+        return {
+          f,
+          at,
+          c: p(at),
+          text: f.properties.name || f.properties.code || "",
+        };
+      })
       // 画面の外は判定にも描画にも要らない。少しはみ出す分だけ余裕を持たせる
       .filter(
         (x) =>
@@ -224,7 +234,7 @@ function MapOverlayInner({
       const box = labelBox(x.text, x.c.x, x.c.y);
       if (taken.some((tk) => overlaps(tk, box))) continue;
       taken.push(box);
-      buildings.push({ f: x.f, c: x.c, box });
+      buildings.push({ f: x.f, c: x.c, at: x.at, box });
     }
 
     const drawn = route && !("error" in route) ? route : null;
@@ -241,12 +251,11 @@ function MapOverlayInner({
 
   /* 押されたときに見る値を、毎回の描画で入れ直す */
   hitRef.current =
-    view?.buildings.map(({ f, c, box }) => ({
+    view?.buildings.map(({ f, at, box }) => ({
       id: f.properties.tempId,
       label: f.properties.name || f.properties.code,
       ring: f.geometry.coordinates[0],
-      x: c.x,
-      y: c.y,
+      at,
       w: box.w,
       h: box.h,
     })) ?? [];
