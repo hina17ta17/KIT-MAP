@@ -80,6 +80,104 @@ const EN: Record<string, string> = {
   "閲覧には管理者の承認が必要です。": "Requires administrator approval.",
   "日にちを押すと、その日の情報が開きます": "Tap a date to open that day",
   "金沢工業大学 扇が丘キャンパス": "Kanazawa Institute of Technology, Ogigaoka Campus",
+
+  /* 表示のカスタマイズ */
+  "表示のカスタマイズ": "Appearance",
+  "名前の色": "Label color",
+  "地図に出る名前の色です。どれも薄い色にしてあります。航空写真の上でも文字が読めるようにするためです。":
+    "The color of the place names on the map. All are pale so the text stays readable over the aerial photo.",
+  "いま選んでいるのは": "Selected:",
+  "です。お気に入りは色に関わらず黄色く光ります。":
+    "Favorites always glow amber, whatever color you pick.",
+  "ダークモード": "Dark mode",
+  "ボタンや一覧など、地図の上に重ねている部分を黒くします。":
+    "Darkens the buttons and lists layered over the map.",
+  "地図（航空写真）はそのままです。写真を暗くすると何が写っているか分からなくなり、地図として使えなくなるためです。":
+    "The aerial photo itself is left alone — darkening it would make the map unreadable.",
+  "名前の付け替え": "Rename places",
+  "自分に分かりやすい呼び方に変えられます。地図にはその名前だけが出ます。もとの名前はこの画面で確かめられます。":
+    "Give places your own names. Only your name shows on the map; the original is kept here.",
+  "変えたもの": "Renamed",
+  "件": "",
+  "すべてもとの名前に戻す": "Reset all names",
+  "名前で絞り込む": "Filter by name",
+  "もとに戻す": "Undo",
+  "見つかりませんでした": "No matches",
+
+  /* 名前の色（薄い色に塗るが、選ぶときの呼び名は分かりやすくする） */
+  白: "White",
+  赤: "Red",
+  橙: "Orange",
+  黄: "Yellow",
+  緑: "Green",
+  青緑: "Teal",
+  水色: "Sky",
+  青: "Blue",
+  紫: "Purple",
+  桃: "Pink",
+
+  /* ログインと申請 */
+  ログアウト: "Log out",
+  "地図へ戻る": "Back to map",
+  "利用を申請": "Apply",
+  "メールアドレス": "Email",
+  氏名: "Full name",
+  学年: "Year",
+  クラス: "Class",
+  組: "Group",
+  "処理中…": "Working…",
+  "送信中…": "Sending…",
+  "確認中…": "Checking…",
+  "準備中…": "Preparing…",
+  "読み込み中…": "Loading…",
+  "でログイン中": "signed in",
+  "認証アプリ": "Authenticator",
+  "認証アプリで本人確認": "Verify with Authenticator",
+  "認証アプリ（Authenticator）で本人確認": "Verify with an authenticator app",
+  "認証アプリを登録する": "Register authenticator",
+  "認証アプリで読み取るQR": "QR code for your authenticator app",
+  "読み取れない場合は、この文字列を手で入れてください":
+    "If the QR will not scan, type this key instead",
+  "アプリに出た6桁": "6-digit code",
+  "本人確認をする": "Verify",
+  "申請を完了する": "Submit application",
+  "本人確認ができました。最後に所属を入れてください。":
+    "Verified. Last step: tell us where you belong.",
+  "続けて、認証アプリで本人確認をしてください。": "Next, verify with your authenticator app.",
+  "これができたら、所属の記入に進めます。": "After this you can enter your details.",
+  "スマートフォンに Google Authenticator などを入れておいてください。":
+    "Install an app such as Google Authenticator on your phone first.",
+  "申請しました。管理者の承認をお待ちください。":
+    "Application sent. Please wait for an administrator to approve it.",
+  "申請は受け付けています。管理者が承認すると学内情報が見られるようになります。":
+    "Your application is in. Campus information opens once an administrator approves it.",
+  "承認済みです。下のボタンから使えます。": "Approved. Use the button below.",
+  "メールアドレスと氏名の両方が要ります": "Both email and full name are required",
+  "このメールアドレスでは申請できません": "This email address cannot be used",
+  "このメールアドレスは登録済みです。［ログイン］から入ってください":
+    "This address is already registered. Please use Log in.",
+  "すでに登録済みです。アプリに出ている6桁を入れてください":
+    "Already registered. Enter the 6-digit code from your app.",
+  "メールアドレスかパスワードが違います": "Wrong email or password",
+  "パスワードの条件を満たしていません": "Password does not meet the requirement",
+  "学年・クラス・組をすべて選んでください": "Please choose year, class and group",
+  "所属を入れてください": "Please enter your details",
+  "6桁の数字を入れてください": "Enter the 6-digit code",
+  "6桁の数字が合いません。アプリの表示を確かめて、もう一度入れてください":
+    "That code did not match. Check your app and try again.",
+  "認証アプリの登録に失敗しました。もう一度お試しください":
+    "Could not register the authenticator app. Please try again.",
+  "メールの送信上限に達しています。しばらく待ってからお試しください":
+    "Email sending limit reached. Please wait a while and try again.",
+  "サーバーに接続できません。": "Cannot reach the server.",
+  "1号館": "Bldg. 1",
+  パスワード: "Password",
+  "［START］のあと、認証アプリ（Authenticator）で本人確認をします。":
+    "After START you will verify with an authenticator app.",
+  "スマートフォンの認証アプリでQRを読み取り、出てきた6桁を入れてください。Google Authenticator や Microsoft Authenticator が使えます。":
+    "Scan the QR with your authenticator app and enter the 6-digit code. Google Authenticator and Microsoft Authenticator both work.",
+  "接続先が設定されていないため、ログインと申請を受け付けられません。":
+    "The server is not configured, so log in and applications are unavailable.",
 };
 
 /** 建物の名前のうち、号館ではないもの */

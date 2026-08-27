@@ -1351,6 +1351,7 @@ export default function Guide() {
       </button>
 
       <Customize
+        t={T}
         open={customOpen}
         onClose={() => setCustomOpen(false)}
         data={data}

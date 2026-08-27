@@ -23,6 +23,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminMenu } from "@/components/AdminNav";
+import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
 import {
   CLASS_CODES,
   GRADES,
@@ -58,6 +59,20 @@ type Me = {
 };
 
 export default function LoginPage() {
+  /*
+   * 表示の言葉。案内画面で切り替えたものを引き継ぐ。
+   * 英語にしている人が、ログインだけ日本語に戻るのは分かりにくいため。
+   */
+  const [lang, setLang] = useState<Lang>("ja");
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(LANG_KEY) === "en") setLang("en");
+    } catch {
+      // 読めなくても日本語で動く
+    }
+  }, []);
+  const T = useCallback((ja: string) => tr(lang, ja), [lang]);
+
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
@@ -162,7 +177,7 @@ export default function LoginPage() {
         if (/already registered|already been registered/i.test(error.message)) {
           setMsg({
             kind: "err",
-            text: "このメールアドレスは登録済みです。［ログイン］から入ってください",
+            text: T("このメールアドレスは登録済みです。［ログイン］から入ってください"),
           });
           return;
         }
@@ -171,9 +186,9 @@ export default function LoginPage() {
 
       await reload();
       setStep("mfa");
-      setMsg({ kind: "info", text: "続けて、認証アプリで本人確認をしてください。" });
+      setMsg({ kind: "info", text: T("続けて、認証アプリで本人確認をしてください。") });
     } catch (e) {
-      setMsg({ kind: "err", text: translate(e) });
+      setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
       setBusy(false);
     }
@@ -198,7 +213,7 @@ export default function LoginPage() {
       if (error) throw error;
       setMfa({ id: data.id, qr: data.totp.qr_code, secret: data.totp.secret });
     } catch (e) {
-      setMsg({ kind: "err", text: translate(e) });
+      setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
       setBusy(false);
     }
@@ -208,7 +223,7 @@ export default function LoginPage() {
     setMsg(null);
     if (!mfa) return;
     if (!/^\d{6}$/.test(code)) {
-      setMsg({ kind: "err", text: "6桁の数字を入れてください" });
+      setMsg({ kind: "err", text: T("6桁の数字を入れてください") });
       return;
     }
     setBusy(true);
@@ -231,9 +246,9 @@ export default function LoginPage() {
 
       setCode("");
       setStep("detail");
-      setMsg({ kind: "ok", text: "本人確認ができました。最後に所属を入れてください。" });
+      setMsg({ kind: "ok", text: T("本人確認ができました。最後に所属を入れてください。") });
     } catch (e) {
-      setMsg({ kind: "err", text: translate(e) });
+      setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
       setBusy(false);
     }
@@ -244,7 +259,7 @@ export default function LoginPage() {
   const finish = async () => {
     setMsg(null);
     if (!grade || !classCode || !groupNo) {
-      setMsg({ kind: "err", text: "学年・クラス・組をすべて選んでください" });
+      setMsg({ kind: "err", text: T("学年・クラス・組をすべて選んでください") });
       return;
     }
     const pwErr = checkPassword(pw);
@@ -274,9 +289,9 @@ export default function LoginPage() {
       setPw("");
       setStep("done");
       await reload();
-      setMsg({ kind: "ok", text: "申請しました。管理者の承認をお待ちください。" });
+      setMsg({ kind: "ok", text: T("申請しました。管理者の承認をお待ちください。") });
     } catch (e) {
-      setMsg({ kind: "err", text: translate(e) });
+      setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
       setBusy(false);
     }
@@ -287,7 +302,7 @@ export default function LoginPage() {
   const signIn = async () => {
     setMsg(null);
     if (!isAllowedEmail(email)) {
-      setMsg({ kind: "err", text: "メールアドレスかパスワードが違います" });
+      setMsg({ kind: "err", text: T("メールアドレスかパスワードが違います") });
       return;
     }
     setBusy(true);
@@ -296,7 +311,7 @@ export default function LoginPage() {
       if (error) throw error;
       location.href = "/";
     } catch (e) {
-      setMsg({ kind: "err", text: translate(e) });
+      setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
       setBusy(false);
     }
@@ -309,17 +324,17 @@ export default function LoginPage() {
 
   /* ---------------- 表示 ---------------- */
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!supabaseReady)
     return (
       <Shell>
         <p className="rounded-xl bg-red-50 p-3 text-xs leading-relaxed text-red-800">
-          <b>サーバーに接続できません。</b>
+          <b>{T("サーバーに接続できません。")}</b>
           <br />
-          接続先が設定されていないため、ログインと申請を受け付けられません。
+          {T("接続先が設定されていないため、ログインと申請を受け付けられません。")}
         </p>
-        <Back />
+        <Back t={T} />
       </Shell>
     );
 
@@ -329,19 +344,20 @@ export default function LoginPage() {
       <Shell>
         <Title />
         <p className="mt-4 text-sm text-slate-700">
-          <b>{me.email}</b> でログイン中
+          <b>{me.email}</b> {T("でログイン中")}
         </p>
         <p className="mt-1 text-xs text-slate-500">{ROLE_LABEL[me.role]}</p>
 
         {/* 権限がある人には、まずどこへ行けるかを見せる */}
         {me.role !== "pending" && (
           <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-xs leading-relaxed text-emerald-900">
-            承認済みです。下のボタンから使えます。
+            {T("承認済みです。下のボタンから使えます。")}
           </p>
         )}
 
         {step !== "done" ? (
           <Wizard
+            t={T}
             step={step}
             me={me}
             {...{
@@ -367,7 +383,7 @@ export default function LoginPage() {
         ) : (
           me.role === "pending" && (
             <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
-              申請は受け付けています。管理者が承認すると学内情報が見られるようになります。
+              {T("申請は受け付けています。管理者が承認すると学内情報が見られるようになります。")}
             </p>
           )
         )}
@@ -377,12 +393,12 @@ export default function LoginPage() {
         <div className="mt-4">
           <AdminMenu role={me.role} />
         </div>
-        <Back />
+        <Back t={T} />
         <button
           onClick={signOut}
           className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
         >
-          ログアウト
+          {T("ログアウト")}
         </button>
       </Shell>
     );
@@ -405,7 +421,7 @@ export default function LoginPage() {
               mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
             }`}
           >
-            {m === "login" ? "ログイン" : "利用を申請"}
+            {m === "login" ? T("ログイン") : T("利用を申請")}
           </button>
         ))}
       </div>
@@ -415,7 +431,7 @@ export default function LoginPage() {
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="メールアドレス"
+            placeholder={T("メールアドレス")}
             autoComplete="email"
             className={inputCls}
           />
@@ -432,7 +448,7 @@ export default function LoginPage() {
             disabled={busy}
             className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
           >
-            {busy ? "処理中…" : "ログイン"}
+            {busy ? T("処理中…") : T("ログイン")}
           </button>
         </>
       ) : (
@@ -445,7 +461,7 @@ export default function LoginPage() {
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="メールアドレス"
+            placeholder={T("メールアドレス")}
             autoComplete="email"
             className={`${inputCls} mt-2`}
           />
@@ -454,13 +470,13 @@ export default function LoginPage() {
               条件に合わない、とだけ伝える */}
           {email.length > 0 && !domainOk && (
             <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">
-              このメールアドレスでは申請できません
+              {T("このメールアドレスでは申請できません")}
             </p>
           )}
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="氏名"
+            placeholder={T("氏名")}
             autoComplete="name"
             className={`${inputCls} mt-2`}
           />
@@ -469,22 +485,23 @@ export default function LoginPage() {
             disabled={!canStart || busy}
             className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold tracking-widest text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
           >
-            {busy ? "送信中…" : "START"}
+            {busy ? T("送信中…") : "START"}
           </button>
           {!canStart && (
             <p className="mt-1 text-center text-[10px] text-slate-400">
-              メールアドレスと氏名の両方が要ります
+              {T("メールアドレスと氏名の両方が要ります")}
             </p>
           )}
           <p className="mt-3 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
-            ［START］のあと、<b>認証アプリ（Authenticator）で本人確認</b>をします。
-            スマートフォンに Google Authenticator などを入れておいてください。
+            {T("［START］のあと、認証アプリ（Authenticator）で本人確認をします。")}
+            <br />
+            {T("スマートフォンに Google Authenticator などを入れておいてください。")}
           </p>
         </>
       )}
 
       {msg && <Msg msg={msg} />}
-      <Back />
+      <Back t={T} />
     </Shell>
   );
 }
@@ -492,6 +509,8 @@ export default function LoginPage() {
 /* ================= 申請の続き ================= */
 
 function Wizard(props: {
+  /** 言葉の言い換え */
+  t: (ja: string) => string;
   step: Step;
   me: Me;
   mfa: { id: string; qr: string; secret: string } | null;
@@ -512,17 +531,16 @@ function Wizard(props: {
   finish: () => Promise<void>;
   busy: boolean;
 }) {
-  const { step, mfa, code, setCode, enroll, verifyMfa, busy } = props;
+  const { t: T, step, mfa, code, setCode, enroll, verifyMfa, busy } = props;
 
   if (step === "mfa") {
     return (
       <div className="mt-4">
-        <Head n={2} total={3} text="認証アプリで本人確認" />
+        <Head n={2} total={3} text={T("認証アプリで本人確認")} />
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          スマートフォンの<b>認証アプリ</b>でQRを読み取り、出てきた6桁を入れてください。
-          Google Authenticator や Microsoft Authenticator が使えます。
+          {T("スマートフォンの認証アプリでQRを読み取り、出てきた6桁を入れてください。Google Authenticator や Microsoft Authenticator が使えます。")}
           <br />
-          これができたら、所属の記入に進めます。
+          {T("これができたら、所属の記入に進めます。")}
         </p>
 
         {!mfa ? (
@@ -531,17 +549,17 @@ function Wizard(props: {
             disabled={busy}
             className="mt-3 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-300"
           >
-            {busy ? "準備中…" : "認証アプリを登録する"}
+            {busy ? T("準備中…") : T("認証アプリを登録する")}
           </button>
         ) : (
           <>
             <div className="mt-3 flex justify-center rounded-xl bg-white p-3 ring-1 ring-slate-200">
               {/* Supabase が返す QR は画像そのもの */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={mfa.qr} alt="認証アプリで読み取るQR" className="h-44 w-44" />
+              <img src={mfa.qr} alt={T("認証アプリで読み取るQR")} className="h-44 w-44" />
             </div>
             <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-              読み取れない場合は、この文字列を手で入れてください
+              {T("読み取れない場合は、この文字列を手で入れてください")}
               <br />
               <code className="mt-1 block break-all rounded bg-slate-100 p-2 font-mono text-[10px]">
                 {mfa.secret}
@@ -551,7 +569,7 @@ function Wizard(props: {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               inputMode="numeric"
-              placeholder="アプリに出た6桁"
+              placeholder={T("アプリに出た6桁")}
               className={`${inputCls} mt-3 text-center text-lg tracking-[0.4em]`}
             />
             <button
@@ -559,7 +577,7 @@ function Wizard(props: {
               disabled={busy || code.length !== 6}
               className="mt-2 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
             >
-              {busy ? "確認中…" : "本人確認をする"}
+              {busy ? T("確認中…") : T("本人確認をする")}
             </button>
           </>
         )}
@@ -573,12 +591,12 @@ function Wizard(props: {
 
   return (
     <div className="mt-4">
-      <Head n={3} total={3} text="所属を入れてください" />
+      <Head n={3} total={3} text={T("所属を入れてください")} />
 
-      <Label>氏名</Label>
+      <Label>{T("氏名")}</Label>
       <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
 
-      <Label>学年</Label>
+      <Label>{T("学年")}</Label>
       <div className="grid grid-cols-4 gap-1.5">
         {GRADES.map((g) => (
           <Pick key={g} on={grade === g} onClick={() => setGrade(g)}>
@@ -587,7 +605,7 @@ function Wizard(props: {
         ))}
       </div>
 
-      <Label>クラス</Label>
+      <Label>{T("クラス")}</Label>
       <div className="grid grid-cols-4 gap-1.5">
         {CLASS_CODES.map((c) => (
           <Pick key={c.code} on={classCode === c.code} onClick={() => setClassCode(c.code)} title={c.name}>
@@ -601,7 +619,7 @@ function Wizard(props: {
         </p>
       )}
 
-      <Label>組</Label>
+      <Label>{T("組")}</Label>
       <div className="grid grid-cols-7 gap-1.5">
         {GROUPS.map((g) => (
           <Pick key={g} on={groupNo === g} onClick={() => setGroupNo(g)}>
@@ -610,7 +628,7 @@ function Wizard(props: {
         ))}
       </div>
 
-      <Label>パスワード（半角{PASSWORD_LENGTH}桁）</Label>
+      <Label>{T("パスワード")}（{PASSWORD_LENGTH}）</Label>
       <input
         value={pw}
         onChange={(e) => setPw(e.target.value)}
@@ -627,7 +645,7 @@ function Wizard(props: {
         disabled={busy}
         className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-300"
       >
-        {busy ? "送信中…" : "申請を完了する"}
+        {busy ? T("送信中…") : T("申請を完了する")}
       </button>
     </div>
   );
@@ -701,13 +719,13 @@ function Title() {
   );
 }
 
-function Back() {
+function Back({ t: T }: { t: (ja: string) => string }) {
   return (
     <Link
       href="/"
       className="mt-2 block w-full rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-bold text-slate-700"
     >
-      地図へ戻る
+      {T("地図へ戻る")}
     </Link>
   );
 }
