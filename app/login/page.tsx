@@ -69,6 +69,25 @@ export default function LoginPage() {
   }, []);
   const T = useCallback((ja: string) => tr(lang, ja), [lang]);
 
+  /**
+   * 言葉を切り替える。
+   *
+   * 案内画面を通らずにこの画面へ来る人がいる（共有された URL など）。
+   * その人が日本語のまま動けなくならないよう、ここにも口を置く。
+   * 選んだ言葉は案内画面と同じ場所に覚えるので、行き来しても揃う。
+   */
+  const toggleLang = useCallback(() => {
+    setLang((prev) => {
+      const next = prev === "ja" ? "en" : "ja";
+      try {
+        localStorage.setItem(LANG_KEY, next);
+      } catch {
+        // 保存できなくても、この画面では切り替わる
+      }
+      return next;
+    });
+  }, []);
+
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
@@ -331,7 +350,7 @@ export default function LoginPage() {
     }
     const pwErr = checkPassword(pw);
     if (pwErr) {
-      setMsg({ kind: "err", text: pwErr });
+      setMsg({ kind: "err", text: T(pwErr) });
       return;
     }
     setBusy(true);
@@ -391,11 +410,11 @@ export default function LoginPage() {
 
   /* ---------------- 表示 ---------------- */
 
-  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
+  if (loading) return <Shell lang={lang} onToggleLang={toggleLang}>{T("読み込み中…")}</Shell>;
 
   if (!supabaseReady)
     return (
-      <Shell>
+      <Shell lang={lang} onToggleLang={toggleLang}>
         <p className="rounded-xl bg-red-50 p-3 text-xs leading-relaxed text-red-800">
           <b>{T("サーバーに接続できません。")}</b>
           <br />
@@ -408,7 +427,7 @@ export default function LoginPage() {
   /* 申請の途中、またはログイン済み */
   if (me) {
     return (
-      <Shell>
+      <Shell lang={lang} onToggleLang={toggleLang}>
         <Title />
         <p className="mt-4 text-sm text-slate-700">
           <b>{me.email}</b> {T("でログイン中")}
@@ -425,6 +444,7 @@ export default function LoginPage() {
         {step !== "done" ? (
           <Wizard
             t={T}
+            lang={lang}
             step={step}
             me={me}
             {...{
@@ -478,7 +498,7 @@ export default function LoginPage() {
 
   /* 未ログイン */
   return (
-    <Shell>
+    <Shell lang={lang} onToggleLang={toggleLang}>
       <Title />
 
       <div className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1">
@@ -511,7 +531,7 @@ export default function LoginPage() {
             value={pw}
             onChange={(e) => setPw(e.target.value)}
             type="password"
-            placeholder={`パスワード（半角${PASSWORD_LENGTH}桁）`}
+            placeholder={`${T("パスワード")}（${PASSWORD_LENGTH}）`}
             autoComplete="current-password"
             className={`${inputCls} mt-2`}
           />
@@ -527,8 +547,7 @@ export default function LoginPage() {
         <>
           {/* ① メールと氏名 → START */}
           <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            大学から配られたメールアドレスと氏名を入れて［START］を押すと、
-            本人確認のメールが届きます。
+            {T("大学から配られたメールアドレスと氏名を入れて［START］を押すと、本人確認のメールが届きます。")}
           </p>
           <input
             value={email}
@@ -583,6 +602,8 @@ export default function LoginPage() {
 function Wizard(props: {
   /** 言葉の言い換え */
   t: (ja: string) => string;
+  /** いまの言葉。年の書き方など、言い換えだけでは足りないところに使う */
+  lang: Lang;
   step: Step;
   mailCode: string;
   setMailCode: (v: string) => void;
@@ -609,7 +630,7 @@ function Wizard(props: {
   finish: () => Promise<void>;
   busy: boolean;
 }) {
-  const { t: T, step, mfa, code, setCode, enroll, verifyMfa, busy } = props;
+  const { t: T, lang, step, mfa, code, setCode, enroll, verifyMfa, busy } = props;
   const { mailCode, setMailCode, verifyMail, resendMail, waitLeft } = props;
 
   /* ---------------- ② メールに届いた6桁 ---------------- */
@@ -722,7 +743,7 @@ function Wizard(props: {
       <div className="grid grid-cols-4 gap-1.5">
         {GRADES.map((g) => (
           <Pick key={g} on={grade === g} onClick={() => setGrade(g)}>
-            {g}年
+            {lang === "en" ? `Y${g}` : `${g}年`}
           </Pick>
         ))}
       </div>
@@ -852,9 +873,30 @@ function Back({ t: T }: { t: (ja: string) => string }) {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({
+  children,
+  lang,
+  onToggleLang,
+}: {
+  children: React.ReactNode;
+  lang?: Lang;
+  onToggleLang?: () => void;
+}) {
   return (
-    <main className="flex h-[100dvh] items-center justify-center overflow-y-auto bg-slate-950 p-4">
+    <main className="relative flex h-[100dvh] items-center justify-center overflow-y-auto bg-slate-950 p-4">
+      {onToggleLang && (
+        <button
+          onClick={onToggleLang}
+          aria-label={lang === "ja" ? "Switch to English" : "日本語に切り替え"}
+          className={`absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-xl text-[11px] font-bold shadow-md transition active:scale-95 ${
+            lang === "en"
+              ? "bg-blue-600 text-white ring-2 ring-blue-300"
+              : "bg-white/95 text-slate-700 hover:bg-white"
+          }`}
+        >
+          {lang === "en" ? "EN" : "あ"}
+        </button>
+      )}
       <div className="my-auto w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">{children}</div>
     </main>
   );

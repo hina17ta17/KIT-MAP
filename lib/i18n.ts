@@ -183,6 +183,10 @@ const EN: Record<string, string> = {
   "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
     "Still nothing? Contact an administrator — they can verify you instead.",
   パスワード: "Password",
+  "大学から配られたメールアドレスと氏名を入れて［START］を押すと、本人確認のメールが届きます。":
+    "Enter the email address the university gave you and your name, then press START. A verification email will arrive.",
+  "パスワードは8桁ちょうどにしてください": "The password must be exactly 8 characters",
+  "半角の英数字・記号だけで入力してください": "Use single-byte letters, numbers and symbols only",
   "［START］のあと、認証アプリ（Authenticator）で本人確認をします。":
     "After START you will verify with an authenticator app.",
   "スマートフォンの認証アプリでQRを読み取り、出てきた6桁を入れてください。Google Authenticator や Microsoft Authenticator が使えます。":
