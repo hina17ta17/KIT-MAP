@@ -149,6 +149,28 @@ export default function LoginPage() {
       p = await read();
     }
 
+    /*
+     * メールの持ち主だと分かった扱いにする。
+     *
+     * ここに来ている＝すでに入れている、ということ。
+     * 申請の途中で入れるようになる道は、そのアドレスに届いた
+     * 6桁を入れたか、届いたリンクを開いたかの二つしかない。
+     * どちらもアドレスを受け取れる人にしかできないので、
+     * この時点で持ち主だと分かっている。
+     *
+     * パスワードで入る道は、④でパスワードを決めたあとにしか使えない。
+     * つまり、確認を飛ばしてここへ来ることはできない。
+     *
+     * こうしておくと、メールの文面が6桁でもリンクでも同じように通る。
+     */
+    if (p && !p.mail_verified) {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ mail_verified: true })
+        .eq("id", data.user!.id);
+      if (!error) p = { ...p, mail_verified: true };
+    }
+
     if (p) {
       setMe(p);
       // 途中で閉じた人が続きから進められるようにする
@@ -193,7 +215,17 @@ export default function LoginPage() {
        */
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { shouldCreateUser: true, data: { full_name: name.trim() } },
+        options: {
+          shouldCreateUser: true,
+          data: { full_name: name.trim() },
+          /*
+           * リンクを開いた人が、申請の続きへ戻ってこられるようにする。
+           * 指定しないとサイトの入口（地図）へ戻され、
+           * 何をすればよいのか分からなくなる。
+           */
+          emailRedirectTo:
+            typeof window !== "undefined" ? window.location.origin + "/login" : undefined,
+        },
       });
       if (error) throw error;
 
@@ -233,7 +265,17 @@ export default function LoginPage() {
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { shouldCreateUser: true, data: { full_name: name.trim() } },
+        options: {
+          shouldCreateUser: true,
+          data: { full_name: name.trim() },
+          /*
+           * リンクを開いた人が、申請の続きへ戻ってこられるようにする。
+           * 指定しないとサイトの入口（地図）へ戻され、
+           * 何をすればよいのか分からなくなる。
+           */
+          emailRedirectTo:
+            typeof window !== "undefined" ? window.location.origin + "/login" : undefined,
+        },
       });
       if (error) throw error;
       setSentAt(Date.now());
@@ -639,7 +681,9 @@ function Wizard(props: {
       <div className="mt-4">
         <Head n={1} total={4} text={T("メールで本人確認")} />
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          {T("入力したメールアドレスへ6桁の数字を送りました。届いた数字を入れてください。")}
+          {T("入力したメールアドレスへ確認のメールを送りました。届いた6桁の数字を入れてください。")}
+          <br />
+          {T("メールに数字がなくリンクだけのときは、そのリンクを開けば同じように進めます。")}
         </p>
 
         <input

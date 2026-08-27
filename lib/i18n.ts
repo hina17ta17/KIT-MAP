@@ -174,8 +174,10 @@ const EN: Record<string, string> = {
   "メールで本人確認": "Verify by email",
   "メールに届いた6桁": "6-digit code from the email",
   "メールに届いた6桁を入れてください。": "Enter the 6-digit code from the email.",
-  "入力したメールアドレスへ6桁の数字を送りました。届いた数字を入れてください。":
-    "We sent a 6-digit code to that address. Enter it below.",
+  "入力したメールアドレスへ確認のメールを送りました。届いた6桁の数字を入れてください。":
+    "We sent a verification email to that address. Enter the 6-digit code from it.",
+  "メールに数字がなくリンクだけのときは、そのリンクを開けば同じように進めます。":
+    "If the email has a link instead of a code, opening the link works the same way.",
   "送り直す": "Send again",
   "送り直しました。メールを確かめてください。": "Sent again. Please check your inbox.",
   "届かないときは、迷惑メールに入っていないか確かめてください。数分かかることもあります。":
