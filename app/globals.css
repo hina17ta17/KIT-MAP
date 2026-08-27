@@ -149,14 +149,17 @@ body {
 }
 
 /*
- * 目立たせるボタン（もとは濃紺に白文字）。
- * 暗い面の上ではそのままだと沈むので、明暗を入れ替える。
+ * 目立たせるボタン（案内・スタートなど）。
+ *
+ * 暗い側では黒のままにする。まわりの面（#0f172a 前後）と同じ濃さだと
+ * 境目が分からなくなるので、細いふちを付けて輪郭を出す。
  */
 .kit-dark .bg-slate-900,
 .kit-dark .bg-slate-800,
 .kit-dark .hover\:bg-slate-800:hover {
-  background-color: #e2e8f0;
-  color: #0f172a;
+  background-color: #000;
+  color: #f1f5f9;
+  box-shadow: 0 0 0 1px #475569;
 }
 
 /* 地図の操作系（拡大縮小・向きを戻す）も合わせる */

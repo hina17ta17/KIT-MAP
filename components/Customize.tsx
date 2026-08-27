@@ -22,15 +22,34 @@ type Props = {
 export default function Customize({ open, onClose, data, value, onChange }: Props) {
   const [q, setQ] = useState("");
 
-  /** 建物の一覧。もとの名前で並べる */
+  /**
+   * 建物の一覧。号館を数の順に並べ、そのあとにその他を置く。
+   *
+   * 名前の文字どおりに並べると「10号館」が「2号館」より前に来る。
+   * 1号館から順に探せないと、目当ての場所が見つけられない。
+   */
   const places = useMemo(() => {
     const list = (data?.buildings.features ?? [])
-      .map((f) => ({
-        id: f.properties.tempId,
-        original: f.properties.name || f.properties.code || "",
-      }))
+      .map((f) => {
+        const original = f.properties.name || f.properties.code || "";
+        const m = /^(\d+)\s*号館$/.exec(original.trim());
+        return {
+          id: f.properties.tempId,
+          original,
+          /** 号館の番号。号館でなければ null */
+          no: m ? Number(m[1]) : null,
+        };
+      })
       .filter((p) => p.original);
-    return list.sort((a, b) => a.original.localeCompare(b.original, "ja"));
+
+    return list.sort((a, b) => {
+      // 号館が先。番号の小さい順
+      if (a.no !== null && b.no !== null) return a.no - b.no;
+      if (a.no !== null) return -1;
+      if (b.no !== null) return 1;
+      // その他どうしは名前の順
+      return a.original.localeCompare(b.original, "ja");
+    });
   }, [data]);
 
   const changed = useMemo(
