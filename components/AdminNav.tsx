@@ -64,7 +64,9 @@ const ENTRIES: Entry[] = [
     icon: "✏️",
     label: "作図ツール",
     sub: "建物・出入口・通路を描き直す",
-    allowed: (r) => r === "admin_l3",
+    // 手元でだけ動かす道具。公開ビルドには /edit 自体が入らないので、
+    // 出しても行き先が無い。開発中だけ並べる
+    allowed: (r) => r === "admin_l3" && process.env.NODE_ENV === "development",
   },
 ];
 

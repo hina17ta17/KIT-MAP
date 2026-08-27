@@ -31,16 +31,6 @@ const EMPTY: AppData = {
   rooms: [],
 };
 
-async function getJson<T>(path: string, fallback: T): Promise<T> {
-  try {
-    const res = await fetch(path, { cache: "no-store" });
-    if (!res.ok) return fallback;
-    return (await res.json()) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 /**
  * 教室をデータベースから読む。
  *
@@ -73,27 +63,63 @@ export async function loadRooms(): Promise<Room[]> {
 }
 
 /**
- * 地図データだけを読む。
- * 教室は権限で見え方が変わるので、別に読んであとから足す。
+ * 地図データを読み、読めなかったファイルも一緒に返す。
+ *
+ * 案内画面は「読めなければ何も出ない」で構わないが、作図ツールでは
+ * なぜ取り込めなかったのかが分からないと直しようがない。
+ * どのファイルがどう駄目だったかを、そのまま画面に出せるようにする。
+ *
+ * @param dir どの組を読むか。案内画面は既定の `/data`。
+ *            作図ツールは、経路を引き直すための `/data/base` も読む。
  */
-export async function loadAppData(): Promise<AppData> {
+export async function loadMapSet(
+  dir = "/data",
+): Promise<{ data: AppData; missing: string[] }> {
+  const missing: string[] = [];
+
+  const grab = async <T>(name: string, fallback: T): Promise<T> => {
+    const path = `${dir}/${name}.geojson`;
+    try {
+      const res = await fetch(path, { cache: "no-store" });
+      if (!res.ok) {
+        missing.push(`${path}（${res.status}）`);
+        return fallback;
+      }
+      return (await res.json()) as T;
+    } catch {
+      missing.push(`${path}（つながりません）`);
+      return fallback;
+    }
+  };
+
   const [campus, buildings, checkpoints, linkFc] = await Promise.all([
-    getJson("/data/campus.geojson", EMPTY.campus),
-    getJson("/data/buildings.geojson", EMPTY.buildings),
-    getJson("/data/checkpoints.geojson", EMPTY.checkpoints),
-    getJson<FeatureCollection<LineString, LinkProps>>("/data/links.geojson", {
+    grab("campus", EMPTY.campus),
+    grab("buildings", EMPTY.buildings),
+    grab("checkpoints", EMPTY.checkpoints),
+    grab<FeatureCollection<LineString, LinkProps>>("links", {
       type: "FeatureCollection",
       features: [],
     }),
   ]);
 
   return {
-    campus,
-    buildings,
-    checkpoints,
-    links: linkFc.features.map((f) => f.properties),
-    rooms: [],
+    data: {
+      campus,
+      buildings,
+      checkpoints,
+      links: linkFc.features.map((f) => f.properties),
+      rooms: [],
+    },
+    missing,
   };
+}
+
+/**
+ * 地図データだけを読む。
+ * 教室は権限で見え方が変わるので、別に読んであとから足す。
+ */
+export async function loadAppData(dir = "/data"): Promise<AppData> {
+  return (await loadMapSet(dir)).data;
 }
 
 /* ---------------- 検索 ---------------- */

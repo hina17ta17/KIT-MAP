@@ -59,7 +59,24 @@ import {
   type PathFeature,
   type PathProps,
 } from "@/lib/features";
-import { loadAppData } from "@/lib/appdata";
+import { loadAppData, loadMapSet, type AppData } from "@/lib/appdata";
+
+/**
+ * 公開中の地図データを、作図ツールが扱う形にそろえる。
+ *
+ * 通路の下書き線と教室は公開していない。通路はCPと接続で表すので、
+ * 作図の土台としては空で始めてよい。
+ */
+function fromLive(live: AppData): MapData {
+  return {
+    campus: live.campus,
+    buildings: live.buildings,
+    paths: { type: "FeatureCollection", features: [] },
+    checkpoints: live.checkpoints,
+    links: live.links,
+    rooms: [],
+  };
+}
 import {
   checkGraph,
   circlePolygon,
@@ -240,18 +257,23 @@ export default function MapEditor() {
   /* ---------------- 初期化 ---------------- */
 
   /**
-   * 作業中の下書きを読む。無ければ、いま公開している地図を土台にする。
+   * 作業中の下書きを読む。何も描かれていなければ、公開中の地図を土台にする。
    *
-   * これまでは下書きが無いと真っさらな地図から始まっていた。
-   * 開いても何も写らず、まず4つのファイルを手で読み込ませないと
-   * 作業を始められないため、道具として使える状態ではなかった。
+   * 「下書きが無い」だけを見ていては足りない。ブラウザに空の下書きが
+   * 残っていると loadData は中身の無い形を返し、それを下書きありと
+   * みなして公開中の地図を読み込まないため、開いても真っさらなままになる。
+   * 一度でもこの画面を開いていれば、その状態になり得る。
    *
-   * 下書きがあるときは触らない。作りかけを公開中のもので
-   * 上書きしてしまうと、やり直しがきかないため。
+   * 何か描いてあるときは触らない。作りかけを上書きするとやり直せない。
    */
   useEffect(() => {
     const saved = loadData();
-    if (saved !== EMPTY_DATA) {
+    const drawn =
+      saved.buildings.features.length +
+      saved.checkpoints.features.length +
+      saved.paths.features.length +
+      saved.links.length;
+    if (drawn > 0) {
       setData(saved);
       return;
     }
@@ -260,16 +282,7 @@ export default function MapEditor() {
     void loadAppData().then((live) => {
       // 取れなければ空のまま。読み込みボタンから手で入れられる
       if (!alive || live.buildings.features.length === 0) return;
-      setData({
-        campus: live.campus,
-        buildings: live.buildings,
-        // 通路の下書き線は公開していない。作図はCPと接続で行う。
-        // EMPTY_DATA を使い回すと定数を共有してしまうので、毎回作る
-        paths: { type: "FeatureCollection", features: [] },
-        checkpoints: live.checkpoints,
-        links: live.links,
-        rooms: [],
-      });
+      setData(fromLive(live));
       setNotice({
         kind: "ok",
         text: `公開中の地図を読み込みました（場所 ${live.buildings.features.length} / CP ${live.checkpoints.features.length} / 接続 ${live.links.length}）`,
@@ -279,6 +292,58 @@ export default function MapEditor() {
       alive = false;
     };
   }, []);
+
+  /**
+   * 出来合いの地図を取り込んで、いまの内容と入れ替える。
+   *
+   * `/data` … いま公開している地図（通過点と接続を含む、そのまま）
+   * `/data/base` … そこから通過点と接続だけを外した土台。
+   *                敷地・建物・出入口は残るので、道すじだけ引き直せる
+   */
+  const importFrom = useCallback(
+    (dir: string, label: string) => {
+      // 何か描いてあるなら、消してよいか必ず訊く
+      const drawn =
+        dataRef.current.buildings.features.length + dataRef.current.checkpoints.features.length;
+      if (
+        drawn > 0 &&
+        !window.confirm(`いま画面にあるものを「${label}」で置き換えます。作りかけは消えます。よろしいですか。`)
+      )
+        return;
+
+      setBusy(true);
+      void loadMapSet(dir)
+        .then(({ data: live, missing }) => {
+          // どのファイルがどう駄目だったかを、そのまま出す。
+          // 「取得できませんでした」だけでは何を直せばよいか分からない
+          if (missing.length > 0) {
+            setNotice({
+              kind: "warn",
+              text: `${label}が読めません → ${missing.join(" / ")}${
+                dir.endsWith("/base")
+                  ? "。土台がまだ作られていないようです。リポジトリ直下で node scripts/make-base-data.mjs を実行してください"
+                  : ""
+              }`,
+            });
+            return;
+          }
+          if (live.buildings.features.length === 0) {
+            setNotice({ kind: "warn", text: `${label}に建物が1件も入っていません` });
+            return;
+          }
+          setData(fromLive(live));
+          setSelected(null);
+          setLinkFrom(null);
+          setChildParent(null);
+          setNotice({
+            kind: "ok",
+            text: `${label}を取り込みました（建物 ${live.buildings.features.length} / CP ${live.checkpoints.features.length} / 接続 ${live.links.length}）`,
+          });
+        })
+        .finally(() => setBusy(false));
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -988,19 +1053,11 @@ export default function MapEditor() {
       });
     } else {
       cpSrc.setData(cpFc);
-      // 操作している地図が本当に画面に出ているものか確かめる。
-      // 古い地図オブジェクトを掴んでいると、setData は成功するのに何も描かれない。
-      const el = map.getContainer();
-      console.log("[CP] setData", {
-        送った件数: cpFc.features.length,
-        画面にある: typeof document !== "undefined" && document.body.contains(el),
-        canvas: `${map.getCanvas().clientWidth}x${map.getCanvas().clientHeight}`,
-        loaded: map.loaded(),
-        styleLoaded: map.isStyleLoaded(),
-        レイヤ数: map.getStyle()?.layers?.length ?? -1,
-        建物描画数: map.queryRenderedFeatures({ layers: ["buildings-fill"] }).length,
-      });
     }
+    /* 以前ここに、描けているかを数えて記録する仕掛けを置いていた。
+       queryRenderedFeatures は画面に出ているものを毎回数え直すため、
+       点や線が増えるほど重くなる。しかもこの処理は点を1つ置くたびに
+       走るので、作図が進むほど反応が鈍っていた。原因調べは済んだので外す。 */
 
     // 親子関係の線。子から各親へ引く（親が複数ならその数だけ出る）
     (map.getSource("hier") as GeoJSONSource)?.setData({
@@ -1034,35 +1091,10 @@ export default function MapEditor() {
         },
       ];
     });
-    if (data.links.length > 0) {
-      console.log("[LINK] draw", {
-        links: data.links.length,
-        drawn: linkFeatures.length,
-        layer: !!map.getLayer("links-line"),
-      });
-    }
     (map.getSource("links") as GeoJSONSource)?.setData({
       type: "FeatureCollection",
       features: linkFeatures,
     });
-    if (cps.length > 0) {
-      // ソースに入っている数と、実際に描画されている数を比べる。
-      // 前者だけ多いなら描画（paint 定義）の問題、両方0ならデータが届いていない。
-      requestAnimationFrame(() => {
-        try {
-          console.log("[CP] draw", {
-            cps: cps.length,
-            links: data.links.length,
-            cpInSource: map.querySourceFeatures("checkpoints").length,
-            cpRendered: map.queryRenderedFeatures({ layers: ["cp-circle"] }).length,
-            linkInSource: map.querySourceFeatures("links").length,
-            linkRendered: map.queryRenderedFeatures({ layers: ["links-line"] }).length,
-          });
-        } catch (err) {
-          console.log("[CP] draw 失敗", String(err));
-        }
-      });
-    }
     (map.getSource("cp-area") as GeoJSONSource)?.setData({
       type: "FeatureCollection",
       features: cps.map((f) => ({
@@ -1142,49 +1174,158 @@ export default function MapEditor() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    const bump = () => setViewTick((v) => v + 1);
+
+    /*
+     * 描き直しの合図は、1フレームに1回までにまとめる。
+     *
+     * 指で拡大縮小しているあいだ、MapLibre は move と zoom を
+     * どちらも毎フレーム出す。そのまま受けると1フレームに2回、
+     * 点と線を全部描き直すことになる。
+     */
+    let raf = 0;
+    const bump = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setViewTick((v) => v + 1);
+      });
+    };
     for (const ev of ["move", "zoom", "rotate", "resize", "load"] as const) {
       map.on(ev, bump);
     }
     bump();
     return () => {
+      if (raf) cancelAnimationFrame(raf);
       for (const ev of ["move", "zoom", "rotate", "resize", "load"] as const) {
         map.off(ev, bump);
       }
     };
   }, [ready]);
 
-  /** 画面座標に変換したCPと接続。viewTick が変わるたびに作り直す */
+  /**
+   * 画面座標に変換したCPと接続。viewTick が変わるたびに作り直す。
+   *
+   * 画面の外にあるものは省く。以前は持っている点と線を全部描いていたため、
+   * 648点・729本では毎フレーム 2,900 個ほどの図形を組み直していた。
+   * 寄って作業しているときは、そのほとんどが画面の外にある。
+   *
+   * 線は「両端とも画面の外」のときだけ省く。片方でも入っていれば、
+   * 画面をまたぐ線として描く必要がある。
+   */
   const overlay = useMemo(() => {
     const map = mapRef.current;
     if (!map || !ready) return null;
     void viewTick; // 地図が動いたら作り直すための依存
 
-    const cps = data.checkpoints.features as CheckpointFeature[];
+    const box = map.getContainer();
+    // 少しはみ出したところまで描く。端で線が切れて見えないように
+    const M = 200;
+    const W = box.clientWidth + M;
+    const H = box.clientHeight + M;
+    const onScreen = (p: { x: number; y: number }) =>
+      p.x > -M && p.y > -M && p.x < W && p.y < H;
+
+    const all = data.checkpoints.features as CheckpointFeature[];
     const pos = new Map<string, { x: number; y: number }>();
-    for (const c of cps) {
+    const cps: CheckpointFeature[] = [];
+    for (const c of all) {
       const [lon, lat] = c.geometry.coordinates;
-      const p = map.project([lon, lat]);
-      pos.set(c.properties.id, { x: p.x, y: p.y });
+      const q = map.project([lon, lat]);
+      const p = { x: q.x, y: q.y };
+      // 線を引くには画面外の端点の座標も要るので、位置は全部覚えておく
+      pos.set(c.properties.id, p);
+      if (onScreen(p)) cps.push(c);
     }
 
     const lines = data.links.flatMap((l) => {
       const a = pos.get(l.from);
       const b = pos.get(l.to);
       if (!a || !b) return [];
+      if (!onScreen(a) && !onScreen(b)) return [];
       return [{ l, a, b }];
     });
 
-    const hier = cps.flatMap((c) =>
+    const hier = all.flatMap((c) =>
       c.properties.parents.flatMap((pid) => {
         const a = pos.get(pid);
         const b = pos.get(c.properties.id);
-        return a && b ? [{ a, b, key: `${pid}-${c.properties.id}` }] : [];
+        if (!a || !b) return [];
+        if (!onScreen(a) && !onScreen(b)) return [];
+        return [{ a, b, key: `${pid}-${c.properties.id}` }];
       }),
     );
 
     return { cps, pos, lines, hier };
   }, [data.checkpoints.features, data.links, ready, viewTick]);
+
+  /**
+   * 見た目の同じものを、1本の <path> にまとめる。
+   *
+   * 以前は接続1本ごとに <g> と <line> 2本、CP1つごとに <circle> を作っていた。
+   * 648点・729本では 2,900 個ほどになり、地図を動かすたびに
+   * その全部を組み直していた。点や線を増やすほど重くなる作りだった。
+   *
+   * 描く中身は同じでも、まとめてしまえば十数個で済む。
+   * 線の形は「M 始点 L 終点」を並べるだけ、丸は円弧2つで描ける。
+   */
+  const shapes = useMemo(() => {
+    if (!overlay) return null;
+    const xy = (p: { x: number; y: number }) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+    const seg = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      `M${xy(a)}L${xy(b)}`;
+
+    /* 接続。縁取りは太さごと、中身は色と太さと点線の別ごとにまとめる */
+    const casing = new Map<number, string[]>();
+    const core = new Map<string, { color: string; width: number; dash?: string; d: string[] }>();
+    for (const { l, a, b } of overlay.lines) {
+      const k = pathKindOf(l.kind);
+      const w = k.width + 2.5;
+      const s = seg(a, b);
+
+      const cw = w + 4;
+      const c = casing.get(cw);
+      if (c) c.push(s);
+      else casing.set(cw, [s]);
+
+      const color = l.id === selected ? "#f97316" : !l.enabled ? "#94a3b8" : k.color;
+      const dash = l.enabled ? undefined : "6 4";
+      const key = `${color}|${w}|${dash ?? ""}`;
+      const g = core.get(key);
+      if (g) g.d.push(s);
+      else core.set(key, { color, width: w, dash, d: [s] });
+    }
+
+    /* チェックポイント。選んでいるものだけは上に重ねたいので分けておく */
+    const dots = new Map<string, { fill: string; stroke: string; d: string[] }>();
+    const picked: { key: string; x: number; y: number }[] = [];
+    for (const c of overlay.cps) {
+      const p = overlay.pos.get(c.properties.id);
+      if (!p) continue;
+      if (c.properties.id === selected || c.properties.id === linkFrom) {
+        picked.push({ key: c.properties.id, x: p.x, y: p.y });
+        continue;
+      }
+      const k = checkpointKindOf(c.properties.kind);
+      const first = c.properties.level === 1;
+      const r = first ? 6 : 4.5;
+      const fill = k.color;
+      const stroke = first ? "#ffffff" : "#7c3aed";
+      // 円弧を2つつないで丸を描く
+      const d = `M${(p.x - r).toFixed(1)} ${p.y.toFixed(1)}a${r} ${r} 0 1 0 ${r * 2} 0a${r} ${r} 0 1 0 ${-r * 2} 0`;
+      const key = `${fill}|${stroke}|${r}`;
+      const g = dots.get(key);
+      if (g) g.d.push(d);
+      else dots.set(key, { fill, stroke, d: [d] });
+    }
+
+    return {
+      hier: overlay.hier.map(({ a, b }) => seg(a, b)).join(""),
+      casing: [...casing].map(([width, d]) => ({ width, d: d.join("") })),
+      core: [...core].map(([key, g]) => ({ key, color: g.color, width: g.width, dash: g.dash, d: g.d.join("") })),
+      dots: [...dots].map(([key, g]) => ({ key, fill: g.fill, stroke: g.stroke, d: g.d.join("") })),
+      picked,
+    };
+  }, [overlay, selected, linkFrom]);
 
   /** 選んだものに応じてタブを切り替える。編集欄が隠れたままにならないように */
   useEffect(() => {
@@ -2075,7 +2216,7 @@ export default function MapEditor() {
       </div>
 
       {/* CPと接続を地図の上に直接描く。MapLibre のレイヤに依存しない */}
-      {overlay && (
+      {shapes && (
         <svg
           className="pointer-events-none absolute inset-0"
           style={{ zIndex: 5 }}
@@ -2083,69 +2224,56 @@ export default function MapEditor() {
           height="100%"
         >
           {/* 親子関係。通らないと入れない道すじ */}
-          {overlay.hier.map(({ a, b, key }) => (
-            <line
-              key={key}
-              x1={a.x}
-              y1={a.y}
-              x2={b.x}
-              y2={b.y}
+          {shapes.hier && (
+            <path
+              d={shapes.hier}
+              fill="none"
               stroke="#7c3aed"
               strokeWidth={2.5}
               strokeDasharray="4 3"
             />
+          )}
+
+          {/* 接続。案内が通る区間。
+              濃紺の縁取りを先に全部敷いてから中身を描く。写真の上でも見える */}
+          {shapes.casing.map((g) => (
+            <path
+              key={g.width}
+              d={g.d}
+              fill="none"
+              stroke="#0f172a"
+              strokeWidth={g.width}
+              strokeLinecap="round"
+              opacity={0.9}
+            />
+          ))}
+          {shapes.core.map((g) => (
+            <path
+              key={g.key}
+              d={g.d}
+              fill="none"
+              stroke={g.color}
+              strokeWidth={g.width}
+              strokeLinecap="round"
+              strokeDasharray={g.dash}
+            />
           ))}
 
-          {/* 接続。案内が通る区間。濃紺の縁取りを下に敷いて写真の上でも見えるようにする */}
-          {overlay.lines.map(({ l, a, b }) => {
-            const k = pathKindOf(l.kind);
-            const w = k.width + 2.5;
-            return (
-              <g key={l.id}>
-                <line
-                  x1={a.x}
-                  y1={a.y}
-                  x2={b.x}
-                  y2={b.y}
-                  stroke="#0f172a"
-                  strokeWidth={w + 4}
-                  strokeLinecap="round"
-                  opacity={0.9}
-                />
-                <line
-                  x1={a.x}
-                  y1={a.y}
-                  x2={b.x}
-                  y2={b.y}
-                  stroke={
-                    l.id === selected ? "#f97316" : !l.enabled ? "#94a3b8" : k.color
-                  }
-                  strokeWidth={w}
-                  strokeLinecap="round"
-                  strokeDasharray={l.enabled ? undefined : "6 4"}
-                />
-              </g>
-            );
-          })}
-
-          {/* チェックポイント */}
-          {overlay.cps.map((c) => {
-            const p = overlay.pos.get(c.properties.id);
-            if (!p) return null;
-            const k = checkpointKindOf(c.properties.kind);
-            const on = c.properties.id === selected || c.properties.id === linkFrom;
-            return (
-              <circle
-                key={c.properties.id}
-                cx={p.x}
-                cy={p.y}
-                r={on ? 9 : c.properties.level === 1 ? 6 : 4.5}
-                fill={on ? "#ea580c" : k.color}
-                stroke={on ? "#ea580c" : c.properties.level === 1 ? "#ffffff" : "#7c3aed"}
-                strokeWidth={2.5}
-              />
-            );
-          })}
+          {/* チェックポイント。選んでいるものは最後に描いて隠れないようにする */}
+          {shapes.dots.map((g) => (
+            <path key={g.key} d={g.d} fill={g.fill} stroke={g.stroke} strokeWidth={2.5} />
+          ))}
+          {shapes.picked.map((p) => (
+            <circle
+              key={p.key}
+              cx={p.x}
+              cy={p.y}
+              r={9}
+              fill="#ea580c"
+              stroke="#ea580c"
+              strokeWidth={2.5}
+            />
+          ))}
         </svg>
       )}
 
@@ -3374,6 +3502,30 @@ export default function MapEditor() {
           className={`border-t border-slate-200 pt-2 ${tab === "io" ? "" : "hidden"}`}
         >
           <h2 className="mb-1.5 text-xs font-bold text-slate-900">書き出し / 読み込み</h2>
+
+          {/* いつでも取り込み直せるようにする。
+              ブラウザに変な下書きが残っていても、ここから作り直せる */}
+          <div className="mb-2 flex flex-col gap-1.5">
+            <button
+              onClick={() => importFrom("/data", "公開中の地図")}
+              disabled={busy}
+              className="w-full rounded bg-slate-900 px-2 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              公開中の地図を取り込む
+            </button>
+            <button
+              onClick={() => importFrom("/data/base", "経路なしの土台")}
+              disabled={busy}
+              className="w-full rounded bg-violet-600 px-2 py-1.5 text-[11px] font-bold text-white hover:bg-violet-700 disabled:opacity-50"
+            >
+              経路なしの土台を取り込む
+            </button>
+            <p className="text-[10px] leading-relaxed text-slate-500">
+              「土台」は、いまの地図から<b>通過点と接続の線だけ</b>を外したもの。
+              敷地・建物・出入口はそのまま残るので、歩く道すじを一から引き直せます。
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-1.5">
             <button
               onClick={() => downloadJson("campus.geojson", data.campus)}

@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/make-base-data.mjs && next dev",
     "build": "next build",
+    "edit": "node scripts/edit.mjs",
+    "make-base": "node scripts/make-base-data.mjs",
     "start": "next start",
     "lint": "eslint"
   },
