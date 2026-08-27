@@ -306,9 +306,11 @@ function MapOverlayInner({
 
   /* 押されたときに見る値を、毎回の描画で入れ直す */
   hitRef.current =
-    view?.buildings.map(({ f, at, box }) => ({
+    view?.buildings.map(({ f, at, text, box }) => ({
       id: f.properties.tempId,
-      label: f.properties.name || f.properties.code,
+      // 画面に出ている名前をそのまま渡す。付け替えたのに案内の欄だけ
+      // もとの名前が出ると、同じ場所だと分からなくなる
+      label: text,
       ring: f.geometry.coordinates[0],
       at,
       w: box.w,

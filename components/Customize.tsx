@@ -7,9 +7,10 @@
  * 誰かに送るものではないので、データベースには触らない。
  */
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { AppData } from "@/lib/appdata";
 import { LABEL_COLORS, colorOf, type Custom } from "@/lib/custom";
+import { GROUP_LABEL, compareOrder, orderKey } from "@/lib/order";
 
 type Props = {
   open: boolean;
@@ -23,33 +24,20 @@ export default function Customize({ open, onClose, data, value, onChange }: Prop
   const [q, setQ] = useState("");
 
   /**
-   * 建物の一覧。号館を数の順に並べ、そのあとにその他を置く。
+   * 建物の一覧。
    *
-   * 名前の文字どおりに並べると「10号館」が「2号館」より前に来る。
-   * 1号館から順に探せないと、目当ての場所が見つけられない。
+   * 並び順は建物一覧・お気に入りと同じものを使う。
+   * 画面ごとに違う順だと、同じ場所を探すのに毎回並びを覚え直すことになる。
    */
   const places = useMemo(() => {
     const list = (data?.buildings.features ?? [])
-      .map((f) => {
-        const original = f.properties.name || f.properties.code || "";
-        const m = /^(\d+)\s*号館$/.exec(original.trim());
-        return {
-          id: f.properties.tempId,
-          original,
-          /** 号館の番号。号館でなければ null */
-          no: m ? Number(m[1]) : null,
-        };
-      })
+      .map((f) => ({
+        id: f.properties.tempId,
+        original: f.properties.name || (f.properties.code ? `${f.properties.code}号館` : ""),
+        key: orderKey(f.properties.name ?? "", f.properties.code ?? ""),
+      }))
       .filter((p) => p.original);
-
-    return list.sort((a, b) => {
-      // 号館が先。番号の小さい順
-      if (a.no !== null && b.no !== null) return a.no - b.no;
-      if (a.no !== null) return -1;
-      if (b.no !== null) return 1;
-      // その他どうしは名前の順
-      return a.original.localeCompare(b.original, "ja");
-    });
+    return list.sort((a, b) => compareOrder(a.key, b.key));
   }, [data]);
 
   const changed = useMemo(
@@ -207,32 +195,47 @@ export default function Customize({ open, onClose, data, value, onChange }: Prop
             />
 
             <ul className="mt-2 space-y-1.5 pb-2">
-              {shown.map((p) => {
+              {shown.map((p, i) => {
                 const v = value.names[p.id] ?? "";
+                // 区切りが変わったところに見出しを出す（建物一覧と同じ形）
+                const head =
+                  p.key[0] !== shown[i - 1]?.key[0] ? GROUP_LABEL[p.key[0]] : undefined;
                 return (
-                  <li key={p.id} className="flex items-center gap-2">
-                    <span className="w-24 shrink-0 truncate text-[11px] text-slate-500" title={p.original}>
-                      {p.original}
-                    </span>
-                    <input
-                      value={v}
-                      onChange={(e) => setName(p.id, e.target.value)}
-                      placeholder={p.original}
-                      className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none ${
-                        v ? "bg-amber-50 font-bold ring-1 ring-amber-300" : "bg-slate-100"
-                      }`}
-                    />
-                    {v && (
-                      <button
-                        onClick={() => setName(p.id, "")}
-                        aria-label="もとに戻す"
-                        title="もとに戻す"
-                        className="shrink-0 rounded-full px-2 py-1 text-[11px] font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
-                      >
-                        ×
-                      </button>
+                  <Fragment key={p.id}>
+                    {head && (
+                      <li className="pt-1.5">
+                        <div className="border-t border-slate-200 pb-0.5 pt-1.5 text-[10px] font-bold text-slate-400">
+                          {head}
+                        </div>
+                      </li>
                     )}
-                  </li>
+                    <li className="flex items-center gap-2">
+                      <span
+                        className="w-24 shrink-0 truncate text-[11px] text-slate-500"
+                        title={p.original}
+                      >
+                        {p.original}
+                      </span>
+                      <input
+                        value={v}
+                        onChange={(e) => setName(p.id, e.target.value)}
+                        placeholder={p.original}
+                        className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none ${
+                          v ? "bg-amber-50 font-bold ring-1 ring-amber-300" : "bg-slate-100"
+                        }`}
+                      />
+                      {v && (
+                        <button
+                          onClick={() => setName(p.id, "")}
+                          aria-label="もとに戻す"
+                          title="もとに戻す"
+                          className="shrink-0 rounded-full px-2 py-1 text-[11px] font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </li>
+                  </Fragment>
                 );
               })}
               {shown.length === 0 && (

@@ -32,6 +32,7 @@ import CampusPanel from "./CampusPanel";
 import MapOverlay, { type LabelHit } from "./MapOverlay";
 import Customize from "./Customize";
 import { EMPTY_CUSTOM, colorOf, loadCustom, saveCustom, type Custom } from "@/lib/custom";
+import { GROUP_LABEL, compareOrder, orderKey } from "@/lib/order";
 import { metersBetween, metersToRing } from "@/lib/geo";
 
 /**
@@ -1195,10 +1196,7 @@ export default function Guide() {
         key: orderKey(f.properties.name ?? "", f.properties.code ?? ""),
       }))
       .filter((x) => x.label)
-      .sort(
-        (a, b) =>
-          a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2].localeCompare(b.key[2], "ja"),
-      );
+      .sort((a, b) => compareOrder(a.key, b.key));
   }, [data]);
 
 
@@ -2223,28 +2221,6 @@ function Field({
   );
 }
 
-/* ---------------- 一覧の並び順 ---------------- */
-
-/** 号館のあとに並べる順番。実データの表記に合わせてある */
-const TAIL_ORDER = [
-  "自転車(北)",
-  "自転車(北2)",
-  "自転車(東)",
-  "自転車(東2)",
-  "自転車(西)",
-  "自転車(南)",
-  "テニスコート",
-  "グラウンド",
-];
-
-/**
- * 「その他」としてまとめるもの。
- *
- * 構内の建物ではなく、行き帰りに使う場所。
- * 号館や施設に混ぜると探しにくいので、末尾に分けて置く。
- */
-const OTHER_ORDER = ["金沢工業大学前バス停", "野々市工大前駅", "バス停"];
-
 /**
  * 点が輪の中にあるか。辺との交差数が奇数なら中にいる。
  * 敷地が複数あるので、面ごとにこれで確かめる。
@@ -2272,45 +2248,6 @@ const ZOOM_ONLY_NAMES = new Set(["野々市工大前駅", "バス停"]);
 /** この縮尺より寄ったら、上の名前も出す */
 const ZOOM_ONLY_AT = 17.5;
 
-/** 全角半角の括弧ゆれを吸収して比べる */
-const plain = (s: string) => s.replace(/[（）()\s]/g, "");
-const TAIL_KEYS = TAIL_ORDER.map(plain);
-const OTHER_KEYS = OTHER_ORDER.map(plain);
-
-/** 一覧の区切り。数が小さいほど上に出る */
-export const GROUP = { hall: 0, plain: 1, tail: 2, other: 3 } as const;
-
-/** 区切りの見出し。号館には見出しを付けない（先頭なので要らない） */
-const GROUP_LABEL: Record<number, string> = {
-  [GROUP.tail]: "施設",
-  [GROUP.other]: "その他",
-};
-
-/**
- * 並び順のキー。
- * ① 号館を番号順（1, 2, 3, 5 …）
- *    名前に「6号館」を含むもの（LC(6号館) など）は 6 の直後に置く
- * ② それ以外の建物
- * ③ 自転車・テニスコート・グラウンドを指定の順
- * ④ その他（バス停・駅）を指定の順
- */
-function orderKey(name: string, code: string): [number, number, string] {
-  if (code && /^\d+$/.test(code)) return [GROUP.hall, Number(code), ""];
-
-  const o = OTHER_KEYS.indexOf(plain(name));
-  if (o >= 0) return [GROUP.other, o, ""];
-
-  const i = TAIL_KEYS.indexOf(plain(name));
-  if (i >= 0) return [GROUP.tail, i, ""];
-
-  // 番号は無いが「◯号館」と名乗るものは、その号館の直後に差し込む
-  const m = /(\d+)\s*号館/.exec(name);
-  if (m) return [GROUP.hall, Number(m[1]) + 0.5, ""];
-
-  return [GROUP.plain, 0, name];
-}
-
-export { GROUP_LABEL };
 
 /* ---------------- 補助 ---------------- */
 

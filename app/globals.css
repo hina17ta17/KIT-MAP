@@ -62,20 +62,39 @@ body {
   50% { opacity: 0.7; }
 }
 
-/* お気に入りの名前を光らせる。
-   色だけだと航空写真の上で埋もれるので、ふちを淡く明滅させる */
-@keyframes kitGlow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 1px 2px rgba(0, 0, 0, 0.2); }
-  50%      { box-shadow: 0 0 10px 3px rgba(245, 158, 11, 0.8), 0 1px 2px rgba(0, 0, 0, 0.2); }
+/*
+ * お気に入りの名前を光らせる。
+ *
+ * 光そのものは別の層に置き、動かすのは濃さ（opacity）だけにする。
+ *
+ * 最初は box-shadow を直接明滅させていたが、影の大きさが変わるたびに
+ * 描き直しが起きる。名前は地図の上に重なっているので、その描き直しが
+ * 指の操作と同じ流れに割り込み、拡大縮小や押した反応が鈍っていた。
+ * 濃さだけの変化なら合成で済み、描き直しは起きない。
+ */
+@keyframes kitGlowFade {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
 }
 .kit-fav-glow {
-  animation: kitGlow 1.8s ease-in-out infinite;
+  position: relative;
+}
+.kit-fav-glow::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  box-shadow: 0 0 10px 3px rgba(245, 158, 11, 0.85);
+  opacity: 0.25;
+  pointer-events: none;
+  will-change: opacity;
+  animation: kitGlowFade 1.8s ease-in-out infinite;
 }
 /* 動きを控える設定の人には明滅させない（酔いや発作への配慮） */
 @media (prefers-reduced-motion: reduce) {
-  .kit-fav-glow {
+  .kit-fav-glow::before {
     animation: none;
-    box-shadow: 0 0 8px 2px rgba(245, 158, 11, 0.75);
+    opacity: 0.85;
   }
 }
 
