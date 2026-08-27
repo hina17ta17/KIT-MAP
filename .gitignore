@@ -67,6 +67,7 @@ next-env.d.ts
 # 動かすのに要るのは Supabase に流したあとの状態なので、
 # ここへ置いておく必要は無い。手元のフォルダには残る。
 /supabase/*.sql
+/supabase/*.html
 /supabase/migrations/
 /supabase/seed_local.sql
 
