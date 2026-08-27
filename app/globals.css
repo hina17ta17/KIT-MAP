@@ -61,3 +61,45 @@ body {
   0%, 100% { opacity: 0.25; }
   50% { opacity: 0.7; }
 }
+
+/* お気に入りの名前を光らせる。
+   色だけだと航空写真の上で埋もれるので、ふちを淡く明滅させる */
+@keyframes kitGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 1px 2px rgba(0, 0, 0, 0.2); }
+  50%      { box-shadow: 0 0 10px 3px rgba(245, 158, 11, 0.8), 0 1px 2px rgba(0, 0, 0, 0.2); }
+}
+.kit-fav-glow {
+  animation: kitGlow 1.8s ease-in-out infinite;
+}
+/* 動きを控える設定の人には明滅させない（酔いや発作への配慮） */
+@media (prefers-reduced-motion: reduce) {
+  .kit-fav-glow {
+    animation: none;
+    box-shadow: 0 0 8px 2px rgba(245, 158, 11, 0.75);
+  }
+}
+
+/*
+ * 右上の縦の並び。上から順に重ならないよう場所を空ける。
+ *
+ *   カスタマイズの丸ボタン（12〜52px）
+ *   ログイン中の表示（56〜92px、入っているときだけ）
+ *   MapLibre の操作系（拡大縮小・縮尺・向きを戻す）
+ */
+.kit-map .maplibregl-ctrl-top-right {
+  margin-top: 52px;
+}
+.kit-map.kit-signed .maplibregl-ctrl-top-right {
+  margin-top: 96px;
+}
+
+/*
+ * 夜の見え方。
+ *
+ * 地理院タイルに夜間の航空写真は無いため、昼の写真を暗く落として作る。
+ * かけるのは地図の絵だけにする。出典表示や操作ボタンまで暗くすると
+ * 読めなくなるうえ、出典の明示は地理院タイルの利用条件で必須のため。
+ */
+.kit-night .maplibregl-canvas {
+  filter: brightness(0.5) saturate(0.6) contrast(1.12) hue-rotate(200deg);
+}

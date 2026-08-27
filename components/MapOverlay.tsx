@@ -116,8 +116,13 @@ type Props = {
   areaOf: Map<string, number>;
   /** 出発地として押されている建物 */
   pickedFrom: SearchHit | null;
-  /** お気に入りの建物（tempId）。地図の上でも黄色にして分かるようにする */
+  /** お気に入りの建物（tempId）。地図の上でも黄色く光らせる */
   favs: Set<string>;
+  /** 名前の色（薄い色） */
+  labelBg: string;
+  labelFg: string;
+  /** 名前の付け替え。建物の tempId → 付けた名前 */
+  customNames: Record<string, string>;
   /** 遠くの場所を出し始める縮尺 */
   zoomOnlyAt: number;
   /** 寄ったときだけ出す名前 */
@@ -143,6 +148,9 @@ function MapOverlayInner({
   areaOf,
   pickedFrom,
   favs,
+  labelBg,
+  labelFg,
+  customNames,
   zoomOnlyAt,
   zoomOnlyNames,
   placeName,
@@ -186,15 +194,17 @@ function MapOverlayInner({
     const m = new Map<string, string>();
     for (const f of data?.buildings.features ?? []) {
       const raw = f.properties.name || f.properties.code || "";
-      if (raw && !m.has(raw)) m.set(raw, placeName(raw));
+      if (!raw) continue;
+      // 自分で付け替えた名前があればそれを使う。地図にはその名前だけが出る
+      const mine = (customNames[f.properties.tempId] ?? "").trim();
+      m.set(f.properties.tempId, mine || placeName(raw));
     }
     return m;
-  }, [data, placeName]);
+  }, [data, placeName, customNames]);
 
   const view = useMemo(() => {
     if (!map || !ready || !data) return null;
     void tick;
-    const name = (raw: string) => nameOf.get(raw) ?? raw;
     const p = (c: Position) => {
       const q = map.project([c[0], c[1]]);
       return { x: q.x, y: q.y };
@@ -239,7 +249,7 @@ function MapOverlayInner({
            * 判定の四角が実物より小さいので、見えている文字を押しても外れ、
            * 名前どうしの重なりも防げていなかった。
            */
-          text: name(f.properties.name || f.properties.code || ""),
+          text: nameOf.get(f.properties.tempId) ?? "",
           // お気に入りには★を添えるので、そのぶん幅が増える。測る文字に含める
           fav: favs.has(f.properties.tempId),
         };
@@ -255,11 +265,17 @@ function MapOverlayInner({
           x.c.y < H + 40,
       )
       .sort((a, b) => {
-        // 選んでいる建物と経路の両端は、何を押したか分からなくなるので必ず出す
-        const ah = highlight.has(a.f.properties.tempId) ? 1 : 0;
-        const bh = highlight.has(b.f.properties.tempId) ? 1 : 0;
-        if (ah !== bh) return bh - ah;
-        // あとは大きい建物から。小さな小屋より号館の方が目印になる
+        /*
+         * 場所を取る順番。先に取ったものが必ず出る。
+         *
+         *   2 … 選んでいる建物と経路の両端。何を押したか分からなくなるため
+         *   1 … お気に入り。自分で選んだ場所は、縮小しても消えないようにする
+         *   0 … それ以外。大きい建物から
+         */
+        const ra = highlight.has(a.f.properties.tempId) ? 2 : a.fav ? 1 : 0;
+        const rb = highlight.has(b.f.properties.tempId) ? 2 : b.fav ? 1 : 0;
+        if (ra !== rb) return rb - ra;
+        // 小さな小屋より号館の方が目印になる
         return (areaOf.get(b.f.properties.tempId) ?? 0) - (areaOf.get(a.f.properties.tempId) ?? 0);
       });
 
@@ -374,25 +390,29 @@ function MapOverlayInner({
           const fav = favs.has(id);
 
           /*
-           * 色の優先順位。
+           * 見た目の優先順位。
            * 出発に選んだもの > 案内で目立たせるもの > お気に入り > ふつう。
-           * お気に入りは黄色にして、地図を見ただけで分かるようにする。
+           *
+           * ふつうの色は本人が選んだもの。お気に入りは黄色く光らせて、
+           * 地図を見ただけで自分の場所だと分かるようにする。
            */
-          const look = from
+          const cls = from
             ? "bg-blue-600 text-white ring-2 ring-blue-300"
             : on
               ? "bg-orange-500 text-white"
               : fav
-                ? "bg-amber-300 text-amber-950 ring-1 ring-amber-500"
-                : "bg-white/85 text-slate-800";
+                ? "kit-fav-glow bg-amber-200 text-amber-950 ring-2 ring-amber-400"
+                : "";
 
           return (
             <div
               key={id}
-              className={`absolute left-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold shadow-sm ${look}`}
+              className={`absolute left-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold shadow-sm ${cls}`}
               style={{
                 transform: `translate3d(${c.x}px, ${c.y}px, 0) translate(-50%, -50%)`,
                 borderColor: cat.lineColor,
+                // 特別な状態でないときだけ、本人の選んだ色を敷く
+                ...(from || on || fav ? null : { backgroundColor: labelBg, color: labelFg }),
               }}
             >
               {from && <span className="mr-1 opacity-80">{t("出発")}</span>}

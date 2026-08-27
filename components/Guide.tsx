@@ -30,6 +30,8 @@ import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, buildSteps, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
 import MapOverlay, { type LabelHit } from "./MapOverlay";
+import Customize from "./Customize";
+import { EMPTY_CUSTOM, colorOf, loadCustom, saveCustom, type Custom } from "@/lib/custom";
 import { metersBetween, metersToRing } from "@/lib/geo";
 
 /**
@@ -212,6 +214,18 @@ export default function Guide() {
   const [favs, setFavs] = useState<string[]>([]);
   /** 地図の名前を黄色にする判定に使う。毎回作り直さないようまとめておく */
   const favSet = useMemo(() => new Set(favs), [favs]);
+
+  /** 表示の好み（名前の色・付け替え・夜の見え方）。この端末にだけ覚える */
+  const [custom, setCustom] = useState<Custom>(EMPTY_CUSTOM);
+  const [customOpen, setCustomOpen] = useState(false);
+  useEffect(() => {
+    setCustom(loadCustom());
+  }, []);
+  const updateCustom = useCallback((next: Custom) => {
+    setCustom(next);
+    saveCustom(next);
+  }, []);
+  const labelColor = useMemo(() => colorOf(custom.color), [custom.color]);
   /** お気に入りを選ぶ画面を開いているか */
   const [favPanel, setFavPanel] = useState(false);
   /** 地図のラベルで最初に押した建物。次に押した建物が目的地になる */
@@ -1322,8 +1336,29 @@ export default function Guide() {
   /* ---------------- 表示 ---------------- */
 
   return (
-    <div className="relative w-full select-none" style={{ height: "100dvh" }}>
+    <div
+      className={`kit-map relative w-full select-none ${custom.night ? "kit-night" : ""} ${email ? "kit-signed" : ""}`}
+      style={{ height: "100dvh" }}
+    >
       <div ref={boxRef} style={{ position: "absolute", inset: 0 }} />
+
+      {/* 一番右上。表示のカスタマイズを開く */}
+      <button
+        onClick={() => setCustomOpen(true)}
+        aria-label="表示のカスタマイズ"
+        title="表示のカスタマイズ"
+        className="absolute right-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white text-base shadow-md transition hover:bg-white active:scale-90"
+      >
+        🎨
+      </button>
+
+      <Customize
+        open={customOpen}
+        onClose={() => setCustomOpen(false)}
+        data={data}
+        value={custom}
+        onChange={updateCustom}
+      />
 
       {/* 起動時のタイトル。触ると上下に割れて地図が現れる */}
       {splash !== "done" && (
@@ -1395,6 +1430,9 @@ export default function Guide() {
         areaOf={areaOf}
         pickedFrom={pickedFrom}
         favs={favSet}
+        labelBg={labelColor.bg}
+        labelFg={labelColor.fg}
+        customNames={custom.names}
         zoomOnlyAt={ZOOM_ONLY_AT}
         zoomOnlyNames={ZOOM_ONLY_NAMES}
         placeName={P}
@@ -1407,7 +1445,7 @@ export default function Guide() {
       {email && (
         <a
           href="/login"
-          className="absolute right-4 top-4 z-10 flex max-w-[11rem] items-center gap-2 rounded-full bg-white py-1.5 pl-2 pr-3 shadow-md transition hover:bg-white active:scale-95"
+          className="absolute right-3 top-14 z-10 flex max-w-[11rem] items-center gap-2 rounded-full bg-white py-1.5 pl-2 pr-3 shadow-md transition hover:bg-white active:scale-95"
           title={`${email}（${ROLE_LABEL[role ?? "pending"]}）`}
         >
           <span
