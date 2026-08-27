@@ -116,6 +116,8 @@ type Props = {
   areaOf: Map<string, number>;
   /** 出発地として押されている建物 */
   pickedFrom: SearchHit | null;
+  /** お気に入りの建物（tempId）。地図の上でも黄色にして分かるようにする */
+  favs: Set<string>;
   /** 遠くの場所を出し始める縮尺 */
   zoomOnlyAt: number;
   /** 寄ったときだけ出す名前 */
@@ -140,6 +142,7 @@ function MapOverlayInner({
   highlight,
   areaOf,
   pickedFrom,
+  favs,
   zoomOnlyAt,
   zoomOnlyNames,
   placeName,
@@ -173,9 +176,25 @@ function MapOverlayInner({
     };
   }, [map]);
 
+  /**
+   * 名前の言い換えを、一度だけ作って覚えておく。
+   *
+   * 英語では正規表現を何度も通す。毎フレーム42件ぶん通しても
+   * 答えは変わらないので、言葉か建物が変わったときだけ作り直す。
+   */
+  const nameOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of data?.buildings.features ?? []) {
+      const raw = f.properties.name || f.properties.code || "";
+      if (raw && !m.has(raw)) m.set(raw, placeName(raw));
+    }
+    return m;
+  }, [data, placeName]);
+
   const view = useMemo(() => {
     if (!map || !ready || !data) return null;
     void tick;
+    const name = (raw: string) => nameOf.get(raw) ?? raw;
     const p = (c: Position) => {
       const q = map.project([c[0], c[1]]);
       return { x: q.x, y: q.y };
@@ -198,6 +217,8 @@ function MapOverlayInner({
       f: NonNullable<AppData["buildings"]["features"][number]>;
       c: { x: number; y: number };
       at: Position;
+      /** 実際に画面へ出す文字（言葉の切り替え済み） */
+      text: string;
       box: LabelBox;
     }[] = [];
 
@@ -208,7 +229,19 @@ function MapOverlayInner({
           f,
           at,
           c: p(at),
-          text: f.properties.name || f.properties.code || "",
+          /*
+           * 大きさは「実際に出す文字」で測る。
+           *
+           * 以前は日本語の名前で測っていたので、英語に切り替えると
+           * 四角と見えている文字が食い違っていた。英語のほうが横に長く、
+           * 「野々市工大前駅」は 93px の見積りに対して
+           * "Nonoichi-Kodai-mae Station" は 188px。42件中41件がずれていた。
+           * 判定の四角が実物より小さいので、見えている文字を押しても外れ、
+           * 名前どうしの重なりも防げていなかった。
+           */
+          text: name(f.properties.name || f.properties.code || ""),
+          // お気に入りには★を添えるので、そのぶん幅が増える。測る文字に含める
+          fav: favs.has(f.properties.tempId),
         };
       })
       // 画面の外は判定にも描画にも要らない。少しはみ出す分だけ余裕を持たせる
@@ -231,10 +264,11 @@ function MapOverlayInner({
       });
 
     for (const x of cands) {
-      const box = labelBox(x.text, x.c.x, x.c.y);
+      // 出発に選んだものは「出発」が前に付くが、そのときは1件だけなので見込まない
+      const box = labelBox(x.fav ? `★${x.text}` : x.text, x.c.x, x.c.y);
       if (taken.some((tk) => overlaps(tk, box))) continue;
       taken.push(box);
-      buildings.push({ f: x.f, c: x.c, at: x.at, box });
+      buildings.push({ f: x.f, c: x.c, at: x.at, text: x.text, box });
     }
 
     const drawn = route && !("error" in route) ? route : null;
@@ -247,7 +281,7 @@ function MapOverlayInner({
       me: fix && !tooFar ? p(fix.pos) : null,
       meR: fix && !tooFar ? radiusPx(map, fix.pos, fix.accuracy) : 0,
     };
-  }, [map, ready, data, tick, route, graph, fix, tooFar, highlight, areaOf, zoomOnlyAt, zoomOnlyNames]);
+  }, [map, ready, data, tick, route, graph, fix, tooFar, highlight, areaOf, zoomOnlyAt, zoomOnlyNames, nameOf, favs]);
 
   /* 押されたときに見る値を、毎回の描画で入れ直す */
   hitRef.current =
@@ -331,29 +365,40 @@ function MapOverlayInner({
         left/top ではなく transform で動かす。配置の計算が起きないため。
       */}
       <div className="pointer-events-none absolute inset-0" style={{ zIndex: 6 }}>
-        {view.buildings.map(({ f, c }) => {
-          const on = highlight.has(f.properties.tempId);
+        {view.buildings.map(({ f, c, text }) => {
+          const id = f.properties.tempId;
+          const on = highlight.has(id);
           const cat = categoryOf(f.properties.category);
-          const label = f.properties.name || f.properties.code;
-          if (!label) return null;
-          const from = pickedFrom?.buildingId === f.properties.tempId;
+          if (!text) return null;
+          const from = pickedFrom?.buildingId === id;
+          const fav = favs.has(id);
+
+          /*
+           * 色の優先順位。
+           * 出発に選んだもの > 案内で目立たせるもの > お気に入り > ふつう。
+           * お気に入りは黄色にして、地図を見ただけで分かるようにする。
+           */
+          const look = from
+            ? "bg-blue-600 text-white ring-2 ring-blue-300"
+            : on
+              ? "bg-orange-500 text-white"
+              : fav
+                ? "bg-amber-300 text-amber-950 ring-1 ring-amber-500"
+                : "bg-white/85 text-slate-800";
+
           return (
             <div
-              key={f.properties.tempId}
-              className={`absolute left-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold shadow-sm ${
-                from
-                  ? "bg-blue-600 text-white ring-2 ring-blue-300"
-                  : on
-                    ? "bg-orange-500 text-white"
-                    : "bg-white/85 text-slate-800"
-              }`}
+              key={id}
+              className={`absolute left-0 top-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold shadow-sm ${look}`}
               style={{
                 transform: `translate3d(${c.x}px, ${c.y}px, 0) translate(-50%, -50%)`,
                 borderColor: cat.lineColor,
               }}
             >
               {from && <span className="mr-1 opacity-80">{t("出発")}</span>}
-              {placeName(label)}
+              {/* お気に入りは★も添える。色だけだと見分けにくい人がいる */}
+              {!from && fav && <span className="mr-0.5">★</span>}
+              {text}
             </div>
           );
         })}

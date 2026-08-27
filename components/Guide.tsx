@@ -210,6 +210,8 @@ export default function Guide() {
   const [listOpen, setListOpen] = useState(false);
   /** お気に入りの建物（tempId）。この端末に覚えさせる */
   const [favs, setFavs] = useState<string[]>([]);
+  /** 地図の名前を黄色にする判定に使う。毎回作り直さないようまとめておく */
+  const favSet = useMemo(() => new Set(favs), [favs]);
   /** お気に入りを選ぶ画面を開いているか */
   const [favPanel, setFavPanel] = useState(false);
   /** 地図のラベルで最初に押した建物。次に押した建物が目的地になる */
@@ -1392,6 +1394,7 @@ export default function Guide() {
         highlight={highlight}
         areaOf={areaOf}
         pickedFrom={pickedFrom}
+        favs={favSet}
         zoomOnlyAt={ZOOM_ONLY_AT}
         zoomOnlyNames={ZOOM_ONLY_NAMES}
         placeName={P}
