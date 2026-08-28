@@ -6,12 +6,13 @@
  * ■ 申請の流れ
  *   ① メールアドレス・氏名・パスワードを入れて［START］
  *      → 大学のドメインでないと通らない
- *   ② 学年・クラス・名列番号を入れる
- *   ③ 認証アプリ（Authenticator）で本人確認  ← ここを通れば認証完了
- *      → その端末と結び付ける。以後この端末が本人の証になる
+ *   ② Microsoft Authenticator で本人確認
+ *      → QRを読ませ、出てきた6桁を入れる。その端末と結び付く
+ *   ③ 学年・クラス・名列番号を入れて申請完了
  *   ④ 管理者が承認するまでは学内情報を見られない
  *
- * ③は申請のときだけ。以後のログインはメールとパスワードで入る。
+ * 本人確認を先に置く。確かめられていない人の所属を集めても意味がないため。
+ * ②は申請のときだけ。以後のログインはメールとパスワードで入る。
  * 認証アプリを通るまで申請は終わらないので、途中でやめた人は
  * 次に開いたときその続きから求められる。
  *
@@ -180,8 +181,9 @@ export default function LoginPage() {
       // すでに権限がある人（管理者など）を所属の記入で止めない
       if (p.role !== "pending") setStep("done");
       // 所属を先に。認証アプリは最後で、そこを通れば認証完了
-      else if (!p.grade || !p.class_code || !p.seat_no) setStep("detail");
+      // 先に本人確認。通ってから所属を書いてもらう
       else if (!p.verified) setStep("mfa");
+      else if (!p.grade || !p.class_code || !p.seat_no) setStep("detail");
       else setStep("done");
     }
     setLoading(false);
@@ -221,8 +223,8 @@ export default function LoginPage() {
 
       setPw("");
       await reload();
-      setStep("detail");
-      setMsg({ kind: "info", text: T("続けて、所属を入れてください。") });
+      setStep("mfa");
+      setMsg({ kind: "info", text: T("続けて、認証アプリで本人確認をしてください。") });
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -380,9 +382,8 @@ export default function LoginPage() {
       if (e3) throw e3;
 
       setCode("");
-      setStep("done");
-      await reload();
-      setMsg({ kind: "ok", text: T("認証が完了しました。管理者の承認をお待ちください。") });
+      setStep("detail");
+      setMsg({ kind: "ok", text: T("本人確認ができました。最後に所属を入れてください。") });
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -419,9 +420,9 @@ export default function LoginPage() {
         .eq("id", u.user?.id ?? "");
       if (e2) throw e2;
 
-      // ここではまだ完了にしない。認証アプリを通ってはじめて認証完了とする
-      setStep("mfa");
-      setMsg({ kind: "ok", text: T("最後に、認証アプリで本人確認をしてください。") });
+      setStep("done");
+      await reload();
+      setMsg({ kind: "ok", text: T("申請しました。管理者の承認をお待ちください。") });
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -712,9 +713,9 @@ export default function LoginPage() {
             </p>
           )}
           <p className="mt-3 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
-            {T("［START］のあと、所属を入れ、認証アプリ（Authenticator）で本人確認をします。")}
+            {T("［START］のあと、Microsoft Authenticator で本人確認をし、所属を入れます。")}
             <br />
-            {T("スマートフォンに Google Authenticator などを入れておいてください。")}
+            {T("スマートフォンに Microsoft Authenticator を入れておいてください。")}
           </p>
         </>
       )}
@@ -837,11 +838,11 @@ function Wizard(props: {
   if (step === "mfa") {
     return (
       <div className="mt-4">
-        <Head n={3} total={3} text={T("認証アプリで本人確認")} />
+        <Head n={2} total={3} text={T("認証アプリで本人確認")} />
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          {T("スマートフォンの認証アプリでQRを読み取り、出てきた6桁を入れてください。Google Authenticator や Microsoft Authenticator が使えます。")}
+          {T("Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。")}
           <br />
-          {T("これを終えると認証が完了し、管理者の承認待ちになります。")}
+          {T("これができたら、所属の記入に進めます。")}
           <br />
         </p>
 
@@ -893,7 +894,7 @@ function Wizard(props: {
 
   return (
     <div className="mt-4">
-      <Head n={2} total={3} text={T("所属を入れてください")} />
+      <Head n={3} total={3} text={T("所属を入れてください")} />
 
       <Label>{T("氏名")}</Label>
       <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />

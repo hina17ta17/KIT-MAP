@@ -148,8 +148,8 @@ const EN: Record<string, string> = {
     "Verified. Last step: tell us where you belong.",
   "続けて、認証アプリで本人確認をしてください。": "Next, verify with your authenticator app.",
   "これができたら、所属の記入に進めます。": "After this you can enter your details.",
-  "スマートフォンに Google Authenticator などを入れておいてください。":
-    "Install an app such as Google Authenticator on your phone first.",
+  "スマートフォンに Microsoft Authenticator を入れておいてください。":
+    "Install Microsoft Authenticator on your phone first.",
   "申請しました。管理者の承認をお待ちください。":
     "Application sent. Please wait for an administrator to approve it.",
   "申請は受け付けています。管理者が承認すると学内情報が見られるようになります。":
@@ -209,10 +209,10 @@ const EN: Record<string, string> = {
     "Enter the email address the university gave you and your name, then press START. A verification email will arrive.",
   "パスワードは8桁ちょうどにしてください": "The password must be exactly 8 characters",
   "半角の英数字・記号だけで入力してください": "Use single-byte letters, numbers and symbols only",
-  "［START］のあと、認証アプリ（Authenticator）で本人確認をします。":
-    "After START you will verify with an authenticator app.",
-  "スマートフォンの認証アプリでQRを読み取り、出てきた6桁を入れてください。Google Authenticator や Microsoft Authenticator が使えます。":
-    "Scan the QR with your authenticator app and enter the 6-digit code. Google Authenticator and Microsoft Authenticator both work.",
+  "［START］のあと、Microsoft Authenticator で本人確認をし、所属を入れます。":
+    "After START you verify with Microsoft Authenticator, then enter your details.",
+  "Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。":
+    "Scan the QR with Microsoft Authenticator and enter the 6-digit code.",
   "接続先が設定されていないため、ログインと申請を受け付けられません。":
     "The server is not configured, so log in and applications are unavailable.",
 };
