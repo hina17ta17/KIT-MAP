@@ -464,7 +464,7 @@ function MapOverlayInner({
         指は地図が受け取るので、こちらは触れないようにしておく。
         left/top ではなく transform で動かす。配置の計算が起きないため。
       */}
-      <div className="pointer-events-none absolute inset-0" style={{ zIndex: 6 }}>
+      <div className="kit-map-overlay pointer-events-none absolute inset-0" style={{ zIndex: 6 }}>
         {view.buildings.map(({ f, c, text }) => {
           const id = f.properties.tempId;
           const on = highlight.has(id);

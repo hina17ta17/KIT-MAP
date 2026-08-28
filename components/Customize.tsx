@@ -226,7 +226,9 @@ export default function Customize({ open, onClose, data, value, onChange, t }: P
                         onChange={(e) => setName(p.id, e.target.value)}
                         placeholder={p.original}
                         className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none ${
-                          v ? "bg-amber-50 font-bold ring-1 ring-amber-300" : "bg-slate-100"
+                          v
+                            ? "bg-amber-50 font-bold text-amber-950 ring-1 ring-amber-300"
+                            : "bg-slate-100"
                         }`}
                       />
                       {v && (

@@ -73,19 +73,25 @@ body {
  * 濃さだけの変化なら合成で済み、描き直しは起きない。
  */
 @keyframes kitGlowFade {
-  0%, 100% { opacity: 0.25; }
-  50%      { opacity: 1; }
+  0%, 100% { opacity: 0.2; }
+  50%      { opacity: 0.9; }
 }
 .kit-fav-glow {
   position: relative;
 }
+/*
+ * 光は名前の形にぴったり重ねる。
+ *
+ * 以前は名前より外へ 2px はみ出させていたため、名前とは別の輪が
+ * 浮いているように見えていた。名前そのものが光っているように見せる。
+ */
 .kit-fav-glow::before {
   content: "";
   position: absolute;
-  inset: -2px;
+  inset: 0;
   border-radius: 9999px;
-  box-shadow: 0 0 10px 3px rgba(245, 158, 11, 0.85);
-  opacity: 0.25;
+  box-shadow: 0 0 8px 1px rgba(245, 158, 11, 0.9);
+  opacity: 0.2;
   pointer-events: none;
   will-change: opacity;
   animation: kitGlowFade 1.8s ease-in-out infinite;
@@ -195,6 +201,43 @@ body {
 .kit-dark .hover\:bg-white:active {
   background-color: #334155;
   color: #f1f5f9;
+}
+
+/*
+ * 黄色い面の上の文字。
+ *
+ * お気に入りの一覧と、名前を付け替えた入力欄は薄い黄色を敷いている。
+ * 面の色は暗くしていないのに、文字だけ明るい側へ直していたので、
+ * 明るい面に明るい文字が乗って読めなくなっていた。
+ * 暗い側では黄色をはっきりさせ、文字は黒に戻す。
+ */
+.kit-dark .bg-amber-50,
+.kit-dark .bg-amber-100,
+.kit-dark .hover\:bg-amber-100:hover,
+.kit-dark .hover\:bg-amber-100:active {
+  background-color: #fde68a;
+  color: #1c1917;
+}
+.kit-dark .bg-amber-50 *,
+.kit-dark .bg-amber-100 * {
+  color: #1c1917;
+}
+/* 黄色い面の中の、控えめな文字も読める濃さにする */
+.kit-dark .bg-amber-50 .text-amber-700,
+.kit-dark .bg-amber-50 .text-amber-500,
+.kit-dark .bg-amber-50 .text-amber-900 {
+  color: #78350f;
+}
+
+/*
+ * 地図に重ねている部分は、暗い側でも見え方を変えない。
+ *
+ * 名前は本人が選んだ色を敷いており、お気に入りは黄色に決めてある。
+ * ここまで暗くすると、明るいときと違う地図になってしまう。
+ */
+.kit-dark .kit-map-overlay,
+.kit-dark .kit-map-overlay * {
+  color: inherit;
 }
 
 /* 区切り線 */
