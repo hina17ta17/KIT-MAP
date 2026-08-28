@@ -250,7 +250,7 @@ function MapOverlayInner({
            * 名前どうしの重なりも防げていなかった。
            */
           text: nameOf.get(f.properties.tempId) ?? "",
-          // お気に入りには★を添えるので、そのぶん幅が増える。測る文字に含める
+          // お気に入りかどうか。色だけ変えるので、大きさの見積もりには関わらない
           fav: favs.has(f.properties.tempId),
         };
       })
@@ -285,8 +285,9 @@ function MapOverlayInner({
       });
 
     for (const x of cands) {
-      // 出発に選んだものは「出発」が前に付くが、そのときは1件だけなので見込まない
-      const box = labelBox(x.fav ? `★${x.text}` : x.text, x.c.x, x.c.y);
+      // 出発に選んだものは「出発」が前に付くが、そのときは1件だけなので見込まない。
+      // お気に入りは色が変わるだけで大きさは同じなので、見込むものはない
+      const box = labelBox(x.text, x.c.x, x.c.y);
       if (taken.some((tk) => overlaps(tk, box))) continue;
       taken.push(box);
       buildings.push({ f: x.f, c: x.c, at: x.at, text: x.text, box });
@@ -485,7 +486,9 @@ function MapOverlayInner({
             : on
               ? "bg-orange-500 text-white"
               : fav
-                ? "kit-fav-glow bg-amber-200 text-amber-950 ring-2 ring-amber-400"
+                ? // 大きさは変えない。色だけ黄色にする。
+                  // ★や縁取りを足すと幅と高さが変わり、名前の並べ替えとずれる
+                  "kit-fav-glow bg-amber-300 text-amber-950"
                 : "";
 
           return (
@@ -500,8 +503,6 @@ function MapOverlayInner({
               }}
             >
               {from && <span className="mr-1 opacity-80">{t("出発")}</span>}
-              {/* お気に入りは★も添える。色だけだと見分けにくい人がいる */}
-              {!from && fav && <span className="mr-0.5">★</span>}
               {text}
             </div>
           );
