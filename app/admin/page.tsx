@@ -28,6 +28,7 @@ type Row = {
   grade: number;
   class_code: string;
   group_no: number;
+  seat_no: number;
   verified: boolean;
   mail_verified: boolean;
   mail_verified_by: string | null;
@@ -212,7 +213,8 @@ export default function AdminPage() {
             onPick={setFClass}
             options={CLASS_CODES.map((c) => [c.code, c.code])}
           />
-          <Filter label="組" value={fGroup} onPick={setFGroup} options={GROUPS.map((g) => [g, `${g}`])} />
+          {/* 名列番号は200通りあるので、並べて絞り込む形にはしない。
+              学年とクラスで絞ったうえで、一覧から探す */}
         </div>
       )}
 
@@ -273,7 +275,7 @@ export default function AdminPage() {
                   <span className="mt-0.5 block text-[10px] text-slate-500">
                     {r.grade ? `${r.grade}年 ` : ""}
                     {r.class_code}
-                    {r.group_no ? `-${r.group_no}` : ""}
+                    {r.seat_no ? ` ${r.seat_no}番` : r.group_no ? `-${r.group_no}` : ""}
                     <span className="ml-2 font-bold text-slate-600">{SHORT[r.role]}</span>
                     {locked && <span className="ml-1 text-slate-400">（変更はデータベースから）</span>}
                   </span>

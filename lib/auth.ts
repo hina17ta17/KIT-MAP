@@ -43,6 +43,23 @@ export function checkPassword(pw: string): string | null {
 export const GRADES = [1, 2, 3, 4] as const;
 
 /** 組。申請のときに選ぶ */
+/**
+ * 名列番号の範囲。
+ *
+ * クラスの中で一人ずつに振られた番号。1から200まで。
+ * ボタンで選ばせるには多すぎるので、数字を打ち込む形にする。
+ */
+export const SEAT_MIN = 1;
+export const SEAT_MAX = 200;
+
+/** 名列番号として正しいか。合っていれば null、違えば理由を返す */
+export function checkSeat(n: number): string | null {
+  if (!Number.isInteger(n) || n < SEAT_MIN || n > SEAT_MAX)
+    return `名列番号は${SEAT_MIN}から${SEAT_MAX}までの数字です`;
+  return null;
+}
+
+/** 以前の「組」。名列番号に変えたので、もう画面では使わない */
 export const GROUPS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 /**

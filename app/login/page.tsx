@@ -32,7 +32,9 @@ import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
 import {
   CLASS_CODES,
   GRADES,
-  GROUPS,
+  SEAT_MAX,
+  SEAT_MIN,
+  checkSeat,
   PASSWORD_LENGTH,
   ROLE_LABEL,
   checkPassword,
@@ -50,6 +52,8 @@ type Me = {
   grade: number;
   class_code: string;
   group_no: number;
+  /** 名列番号。組から置き換えた */
+  seat_no: number;
   verified: boolean;
   mail_verified: boolean;
 };
@@ -108,7 +112,8 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const [grade, setGrade] = useState<number>(0);
   const [classCode, setClassCode] = useState("");
-  const [groupNo, setGroupNo] = useState<number>(0);
+  /** 名列番号（1〜200）。入力中は文字で持つ。空にできるようにするため */
+  const [seat, setSeat] = useState("");
   /** 認証アプリに読ませるQRと、手で入れる用の文字列 */
   const [mfa, setMfa] = useState<{ id: string; qr: string; secret: string } | null>(null);
   const [code, setCode] = useState("");
@@ -130,7 +135,10 @@ export default function LoginPage() {
       (
         await supabase
           .from("profiles")
-          .select("email, role, full_name, grade, class_code, group_no, verified, mail_verified")
+          // 列を並べずに取る。新しい列を足す SQL を流す前でも落ちないようにするため。
+          // 並べて書くと、無い列を1つ指したとたん問い合わせ全体が失敗し、
+          // ログインできているのに「誰でもない」扱いになってしまう
+          .select("*")
           .eq("id", data.user!.id)
           .single()
       ).data as Me | null;
@@ -168,7 +176,10 @@ export default function LoginPage() {
         .from("profiles")
         .update({ mail_verified: true })
         .eq("id", data.user!.id);
-      if (!error) p = { ...p, mail_verified: true };
+      // 記録できなくても止めない。確かめ自体はメールで済んでいるので、
+      // 列がまだ無いときに申請が進まなくなるほうが困る
+      p = { ...p, mail_verified: true };
+      if (error) console.warn("[login] mail_verified を残せませんでした", error.message);
     }
 
     if (p) {
@@ -177,7 +188,7 @@ export default function LoginPage() {
       setName(p.full_name);
       setGrade(p.grade);
       setClassCode(p.class_code);
-      setGroupNo(p.group_no);
+      setSeat(p.seat_no ? String(p.seat_no) : "");
 
       // 申請の続きを求めるのは、まだ承認待ちの人だけ。
       // すでに権限がある人（管理者など）を所属の記入で止めない
@@ -185,7 +196,7 @@ export default function LoginPage() {
       // メールの持ち主だと分かっていない人は、まずそこから
       else if (!p.mail_verified) setStep("mail");
       else if (!p.verified) setStep("mfa");
-      else if (!p.grade || !p.class_code || !p.group_no) setStep("detail");
+      else if (!p.grade || !p.class_code || !p.seat_no) setStep("detail");
       else setStep("done");
     }
     setLoading(false);
@@ -386,8 +397,14 @@ export default function LoginPage() {
 
   const finish = async () => {
     setMsg(null);
-    if (!grade || !classCode || !groupNo) {
-      setMsg({ kind: "err", text: T("学年・クラス・組をすべて選んでください") });
+    const seatNo = Number(seat);
+    if (!grade || !classCode || !seat) {
+      setMsg({ kind: "err", text: T("学年・クラス・名列番号をすべて入れてください") });
+      return;
+    }
+    const seatErr = checkSeat(seatNo);
+    if (seatErr) {
+      setMsg({ kind: "err", text: T(seatErr) });
       return;
     }
     const pwErr = checkPassword(pw);
@@ -409,7 +426,7 @@ export default function LoginPage() {
           full_name: name.trim(),
           grade,
           class_code: classCode,
-          group_no: groupNo,
+          seat_no: seatNo,
         })
         .eq("id", u.user?.id ?? "");
       if (e2) throw e2;
@@ -504,8 +521,8 @@ export default function LoginPage() {
               setGrade,
               classCode,
               setClassCode,
-              groupNo,
-              setGroupNo,
+              seat,
+              setSeat,
               pw,
               setPw,
               name,
@@ -663,8 +680,8 @@ function Wizard(props: {
   setGrade: (v: number) => void;
   classCode: string;
   setClassCode: (v: string) => void;
-  groupNo: number;
-  setGroupNo: (v: number) => void;
+  seat: string;
+  setSeat: (v: string) => void;
   pw: string;
   setPw: (v: string) => void;
   name: string;
@@ -773,7 +790,7 @@ function Wizard(props: {
   }
 
   /* 所属とパスワード */
-  const { grade, setGrade, classCode, setClassCode, groupNo, setGroupNo, pw, setPw, name, setName, finish } =
+  const { grade, setGrade, classCode, setClassCode, seat, setSeat, pw, setPw, name, setName, finish } =
     props;
 
   return (
@@ -806,14 +823,14 @@ function Wizard(props: {
         </p>
       )}
 
-      <Label>{T("組")}</Label>
-      <div className="grid grid-cols-7 gap-1.5">
-        {GROUPS.map((g) => (
-          <Pick key={g} on={groupNo === g} onClick={() => setGroupNo(g)}>
-            {g}
-          </Pick>
-        ))}
-      </div>
+      <Label>{T("名列番号")}</Label>
+      <input
+        value={seat}
+        onChange={(e) => setSeat(e.target.value.replace(/D/g, "").slice(0, 3))}
+        inputMode="numeric"
+        placeholder={SEAT_MIN + " 〜 " + SEAT_MAX}
+        className={inputCls}
+      />
 
       <Label>{T("パスワード")}（{PASSWORD_LENGTH}）</Label>
       <input
