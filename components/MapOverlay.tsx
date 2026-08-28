@@ -293,14 +293,64 @@ function MapOverlayInner({
     }
 
     const drawn = route && !("error" in route) ? route : null;
+
+    /*
+     * 経路の線を、画面に写る分だけに切り詰める。
+     *
+     * 寄るほど、経路の端は画面のはるか外へ行く。構内の端から端までだと
+     * 縮尺19で ±3,665px、縮尺21では ±14,660px にもなる。
+     * そこまで含めた線を、太さ30・20・12・6の4本重ねて毎フレーム描いていた。
+     * 見えない場所の形まで毎回計算することになり、寄った状態ほど重くなる。
+     *
+     * 画面から外れた区間は落とす。ただし画面をまたぐ線は残す必要があるので、
+     * 「両端とも外」かつ「線が画面を横切らない」ものだけを落とす。
+     * 落とした前後で線が切れるので、続いている部分ごとに分けて返す。
+     */
+    const all = drawn && graph ? drawn.path.map((id) => p(graph.pos.get(id)!)) : [];
+    const M = 120; // 端で切れて見えないよう、少しはみ出して描く
+    const L = -M,
+      R = W + M,
+      TOP = -M,
+      B = H + M;
+    const runs: { x: number; y: number }[][] = [];
+    let run: { x: number; y: number }[] = [];
+    for (let i = 1; i < all.length; i++) {
+      const a = all[i - 1],
+        b = all[i];
+      // 線を囲む四角が画面と重ならなければ、その区間は写らない
+      const shows =
+        Math.max(a.x, b.x) >= L &&
+        Math.min(a.x, b.x) <= R &&
+        Math.max(a.y, b.y) >= TOP &&
+        Math.min(a.y, b.y) <= B;
+      if (shows) {
+        if (run.length === 0) run.push(a);
+        run.push(b);
+      } else if (run.length > 1) {
+        runs.push(run);
+        run = [];
+      } else {
+        run = [];
+      }
+    }
+    if (run.length > 1) runs.push(run);
+
+    /*
+     * 誤差の円も、画面より大きくは描かない。
+     * 粗い測り方だと誤差が数kmになることがあり、寄った状態では
+     * 半径が数万pxの円になる。画面いっぱいを超えた先は見えないので、
+     * そこで止めても見え方は変わらない。
+     */
+    const maxR = Math.hypot(W, H);
+
     return {
       buildings,
-      routePts: drawn && graph ? drawn.path.map((id) => p(graph.pos.get(id)!)) : [],
+      routeRuns: runs,
       goal: drawn ? p(drawn.goal.geometry.coordinates) : null,
       start: drawn && graph ? p(graph.pos.get(drawn.startId)!) : null,
       // 守備範囲より遠くにいる人の点は打たない
       me: fix && !tooFar ? p(fix.pos) : null,
-      meR: fix && !tooFar ? radiusPx(map, fix.pos, fix.accuracy) : 0,
+      meR: fix && !tooFar ? Math.min(radiusPx(map, fix.pos, fix.accuracy), maxR) : 0,
     };
   }, [map, ready, data, tick, route, graph, fix, tooFar, highlight, areaOf, zoomOnlyAt, zoomOnlyNames, nameOf, favs]);
 
@@ -318,7 +368,6 @@ function MapOverlayInner({
     })) ?? [];
 
   if (!view) return null;
-  const routeLine = view.routePts.map((q) => `${q.x},${q.y}`).join(" ");
 
   return (
     <>
@@ -329,15 +378,19 @@ function MapOverlayInner({
         width="100%"
         height="100%"
       >
-        {/* 経路。薄い青を4枚重ねて、光っているように見せる */}
-        {view.routePts.length > 1 && (
-          <>
-            <polyline points={routeLine} fill="none" stroke="#7dd3fc" strokeWidth={30} strokeOpacity={0.18} strokeLinecap="round" strokeLinejoin="round" />
-            <polyline points={routeLine} fill="none" stroke="#7dd3fc" strokeWidth={20} strokeOpacity={0.3} strokeLinecap="round" strokeLinejoin="round" />
-            <polyline points={routeLine} fill="none" stroke="#bae6fd" strokeWidth={12} strokeOpacity={0.65} strokeLinecap="round" strokeLinejoin="round" />
-            <polyline points={routeLine} fill="none" stroke="#38bdf8" strokeWidth={6} strokeOpacity={0.95} strokeLinecap="round" strokeLinejoin="round" />
-          </>
-        )}
+        {/* 経路。薄い青を4枚重ねて、光っているように見せる。
+            画面に写る区間だけを描く。切れた前後は別の線に分かれる */}
+        {view.routeRuns.map((pts, i) => {
+          const d = pts.map((q) => q.x.toFixed(1) + "," + q.y.toFixed(1)).join(" ");
+          return (
+            <g key={i}>
+              <polyline points={d} fill="none" stroke="#7dd3fc" strokeWidth={30} strokeOpacity={0.18} strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points={d} fill="none" stroke="#7dd3fc" strokeWidth={20} strokeOpacity={0.3} strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points={d} fill="none" stroke="#bae6fd" strokeWidth={12} strokeOpacity={0.65} strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points={d} fill="none" stroke="#38bdf8" strokeWidth={6} strokeOpacity={0.95} strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+          );
+        })}
 
         {view.start && (
           <circle cx={view.start.x} cy={view.start.y} r={8} fill="#ffffff" stroke="#38bdf8" strokeWidth={4} />
