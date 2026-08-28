@@ -113,6 +113,23 @@ body {
 }
 
 /*
+ * 地図の操作系を、建物の名前より前に出す。
+ *
+ * MapLibre の既定は z-index: 2 で、名前を置いている層（6）より後ろだった。
+ * そのため拡大縮小や縮尺の上に名前が重なり、押せているのか
+ * 分からなくなっていた。自前で置いたボタン（10〜20）と同じ高さに揃える。
+ *
+ * 出典表示（下）も同じ。地理院タイルの利用条件で必須なので、
+ * 名前に隠れて読めなくなってはいけない。
+ */
+.kit-map .maplibregl-ctrl-top-right,
+.kit-map .maplibregl-ctrl-top-left,
+.kit-map .maplibregl-ctrl-bottom-right,
+.kit-map .maplibregl-ctrl-bottom-left {
+  z-index: 10;
+}
+
+/*
  * ダークモード。
  *
  * 地図（航空写真）はそのまま。地図の上に重ねているボタンや一覧だけを黒くする。
