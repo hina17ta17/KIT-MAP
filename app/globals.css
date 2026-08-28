@@ -102,14 +102,17 @@ body {
  * 右上の縦の並び。上から順に重ならないよう場所を空ける。
  *
  *   カスタマイズの丸ボタン（12〜52px）
- *   ログイン中の表示（56〜92px、入っているときだけ）
+ *   ログイン中の表示（80〜116px、入っているときだけ）
  *   MapLibre の操作系（拡大縮小・縮尺・向きを戻す）
+ *
+ * ログイン中の表示は 80px から始める。56px だと、左に出る
+ * 「圏外」の表示と高さが重なり、狭い画面では文字がぶつかっていた。
  */
 .kit-map .maplibregl-ctrl-top-right {
   margin-top: 52px;
 }
 .kit-map.kit-signed .maplibregl-ctrl-top-right {
-  margin-top: 96px;
+  margin-top: 124px;
 }
 
 /*
@@ -172,6 +175,26 @@ body {
 .kit-dark .text-slate-400,
 .kit-dark .text-slate-300 {
   color: #94a3b8;
+}
+
+/*
+ * 押したとき・触れたときの色。
+ *
+ * Tailwind は hover:bg-slate-200 のような指定を別のクラスとして出す。
+ * 明るい側の色を上書きしただけでは、押した瞬間だけ明るい色に戻り、
+ * 文字（明るい色に直してある）と同じ明るさになって読めなくなる。
+ * 押したときも暗い側で、少しだけ明るくする。
+ */
+.kit-dark .hover\:bg-slate-50:hover,
+.kit-dark .hover\:bg-slate-100:hover,
+.kit-dark .hover\:bg-slate-200:hover,
+.kit-dark .hover\:bg-white:hover,
+.kit-dark .hover\:bg-slate-50:active,
+.kit-dark .hover\:bg-slate-100:active,
+.kit-dark .hover\:bg-slate-200:active,
+.kit-dark .hover\:bg-white:active {
+  background-color: #334155;
+  color: #f1f5f9;
 }
 
 /* 区切り線 */

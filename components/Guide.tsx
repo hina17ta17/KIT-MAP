@@ -49,6 +49,14 @@ const RANGE_M = 1000;
 /** 精度の扱い。推測で決めず3段階に分ける */
 const ACC_TRUST = 20;
 const ACC_ROUGH = 50;
+/**
+ * これだけ動いていなければ、位置が変わったとみなさない（メートル）。
+ *
+ * 止まっていても衛星の位置は細かく揺れる。その揺れを毎回受け取ると
+ * 画面ぜんぶを組み直すことになり、指の操作に割り込む。
+ */
+const FIX_MIN_MOVE = 2;
+
 /** 現在地からこの距離以内に経路の節点が無ければ案内できない */
 const SNAP_MAX = 50;
 
@@ -551,7 +559,24 @@ export default function Guide() {
       // より精度の良いものだけ採用する。ただし古い値に居座られないよう、
       // 15秒経ったら無条件に入れ替える。
       const stale = now - prev.at > 15_000;
-      return acc <= prev.accuracy || stale ? next : prev;
+      if (!(acc <= prev.accuracy || stale)) return prev;
+
+      /*
+       * ほとんど動いていない位置は捨てる。
+       *
+       * 屋外や構内の外では衛星の見え方が安定せず、止まっていても
+       * 位置が細かく揺れ続ける。そのたびに新しい値として受け取ると、
+       * 画面ぜんぶを組み直すことになり、指で拡大縮小しているあいだに
+       * 何度も割り込む。これが「GPSを入れると操作が鈍る」正体。
+       *
+       * 動いた距離が誤差よりずっと小さければ、それは揺れであって
+       * 移動ではない。少なくとも2mは動いていることを求める。
+       * 誤差が縮まったときは、揺れでも受け取る（表示が良くなるため）。
+       */
+      const moved = metersBetween(prev.pos, next.pos);
+      const better = acc < prev.accuracy - 1;
+      if (!stale && !better && moved < FIX_MIN_MOVE) return prev;
+      return next;
     });
     // 進んでいるときは、位置から向きが分かることがある。
     // 止まっていると null や NaN が来るので、そのときは触らない
@@ -559,8 +584,18 @@ export default function Guide() {
     if (h != null && Number.isFinite(h) && (p.coords.speed ?? 0) > 0.5) {
       setHeading(h);
     }
-    // 粗いあいだも位置は出す（円で誤差を正直に見せる）
-    setGeoState(acc > ACC_ROUGH ? "rough" : "on");
+    /*
+     * 粗いあいだも位置は出す（円で誤差を正直に見せる）。
+     *
+     * 境目ちょうどで揺れると「粗い」と「良い」を行き来し、そのたびに
+     * 画面を組み直す。行きと帰りで境目をずらして、へばりつかせる。
+     */
+    setGeoState((prev) => {
+      if (prev !== "on" && prev !== "rough") return acc > ACC_ROUGH ? "rough" : "on";
+      if (prev === "on" && acc > ACC_ROUGH + 10) return "rough";
+      if (prev === "rough" && acc <= ACC_ROUGH) return "on";
+      return prev;
+    });
   }, []);
 
   /**
@@ -687,7 +722,9 @@ export default function Guide() {
           // 追従中の一時的な失敗で、取れている位置を消さない
           if (err.code === err.PERMISSION_DENIED) setGeoState("denied");
         },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 30_000 },
+        // 1秒前までの値なら使い回す。0 にすると毎回測り直し、
+        // 揺れも届く回数も増えて、指の操作に割り込みやすくなる
+        { enableHighAccuracy: true, maximumAge: 1_000, timeout: 30_000 },
       );
     };
 
@@ -1186,18 +1223,30 @@ export default function Guide() {
     return m;
   }, [data]);
 
-  /** 一覧に出す建物。号館を番号順、そのあと屋外・施設を指定の順で並べる */
+  /**
+   * 一覧に出す建物。号館を番号順、そのあと屋外・施設を指定の順で並べる。
+   *
+   * 名前は、付け替えたものがあればそちらを使う。地図の名前だけ変えても、
+   * 一覧が元の名前のままでは同じ場所だと分からなくなるため。
+   * 並び順は元の名前で決める（付け替えるたびに並びが変わると探せない）。
+   */
   const listed = useMemo(() => {
     if (!data) return [];
     return [...data.buildings.features]
-      .map((f) => ({
-        f,
-        label: f.properties.name || (f.properties.code ? `${f.properties.code}号館` : ""),
-        key: orderKey(f.properties.name ?? "", f.properties.code ?? ""),
-      }))
+      .map((f) => {
+        const original = f.properties.name || (f.properties.code ? `${f.properties.code}号館` : "");
+        const mine = (custom.names[f.properties.tempId] ?? "").trim();
+        return {
+          f,
+          label: mine || original,
+          // 付け替えた名前は、そのまま出す。英語の言い換えにかけない
+          renamed: mine.length > 0,
+          key: orderKey(f.properties.name ?? "", f.properties.code ?? ""),
+        };
+      })
       .filter((x) => x.label)
       .sort((a, b) => compareOrder(a.key, b.key));
-  }, [data]);
+  }, [data, custom.names]);
 
 
   /** お気に入りだけを、登録した順に並べたもの */
@@ -1444,7 +1493,7 @@ export default function Guide() {
       {email && (
         <a
           href="/login"
-          className="absolute right-3 top-14 z-10 flex max-w-[11rem] items-center gap-2 rounded-full bg-white py-1.5 pl-2 pr-3 shadow-md transition hover:bg-white active:scale-95"
+          className="absolute right-3 top-20 z-10 flex max-w-[11rem] items-center gap-2 rounded-full bg-white py-1.5 pl-2 pr-3 shadow-md transition hover:bg-white active:scale-95"
           title={`${email}（${ROLE_LABEL[role ?? "pending"]}）`}
         >
           <span
@@ -1722,7 +1771,7 @@ export default function Guide() {
               {favs.length > 0 && <span className="ml-1 font-bold text-slate-700">{favs.length}件</span>}
             </p>
             <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-              {listed.map(({ f, label }) => {
+              {listed.map(({ f, label, renamed }) => {
                 const on = favs.includes(f.properties.tempId);
                 return (
                   <li key={f.properties.tempId}>
@@ -1738,7 +1787,7 @@ export default function Guide() {
                           on ? "font-bold text-slate-900" : "text-slate-700"
                         }`}
                       >
-                        {P(label)}
+                        {renamed ? label : P(label)}
                       </span>
                     </button>
                   </li>
@@ -1802,7 +1851,7 @@ export default function Guide() {
                   {T("★ お気に入り")}
                 </li>
               )}
-              {favListed.map(({ f, label }) => {
+              {favListed.map(({ f, label, renamed }) => {
                 const on = focusId === f.properties.tempId;
                 return (
                   <li key={`fav-${f.properties.tempId}`}>
@@ -1819,7 +1868,7 @@ export default function Guide() {
                           on ? "text-white" : "text-slate-800 hover:bg-amber-100"
                         }`}
                       >
-                        {P(label)}
+                        {renamed ? label : P(label)}
                       </button>
                       <button
                         onClick={() => {
@@ -1850,7 +1899,7 @@ export default function Guide() {
                 );
               })}
 
-              {listed.map(({ f, label, key }, i) => {
+              {listed.map(({ f, label, renamed, key }, i) => {
                 const on = focusId === f.properties.tempId;
                 // 区切りが変わったところに見出しを挟む。
                 // 列をまたいで一行使いたいので col-span-full にする
@@ -1880,7 +1929,7 @@ export default function Guide() {
                           on ? "text-white" : "text-slate-700 hover:bg-slate-200"
                         }`}
                       >
-                        {P(label)}
+                        {renamed ? label : P(label)}
                       </button>
                       {/* ［案内］を押すだけでそこへの案内が始まる */}
                       <button

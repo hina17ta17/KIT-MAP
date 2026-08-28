@@ -348,11 +348,35 @@ function MapOverlayInner({
       routeRuns: runs,
       goal: drawn ? p(drawn.goal.geometry.coordinates) : null,
       start: drawn && graph ? p(graph.pos.get(drawn.startId)!) : null,
-      // 守備範囲より遠くにいる人の点は打たない
-      me: fix && !tooFar ? p(fix.pos) : null,
-      meR: fix && !tooFar ? Math.min(radiusPx(map, fix.pos, fix.accuracy), maxR) : 0,
+      maxR,
     };
-  }, [map, ready, data, tick, route, graph, fix, tooFar, highlight, areaOf, zoomOnlyAt, zoomOnlyNames, nameOf, favs]);
+    /*
+     * 現在地（fix）はここに入れない。
+     *
+     * 名前の並べ替えは、42件を画面の位置に直し、大きい順に並べ、
+     * 互いにぶつからないか総当たりで見る、いちばん重い処理。
+     * ここに現在地を混ぜると、GPSが届くたびに全部やり直しになる。
+     * 現在地の点だけは、下で別に作る。
+     */
+  }, [map, ready, data, tick, route, graph, highlight, areaOf, zoomOnlyAt, zoomOnlyNames, nameOf, favs]);
+
+  /**
+   * 現在地の点と、誤差の円。
+   *
+   * 名前の並べ替えとは切り離してある。GPSは動いていなくても
+   * 細かく届き続けるので、そのたびに並べ替えまでやり直すと
+   * 指の操作に割り込む。ここは位置を1つ画面に直すだけで済む。
+   */
+  const meMark = useMemo(() => {
+    if (!map || !view || !fix || tooFar) return null;
+    void tick;
+    const q = map.project([fix.pos[0], fix.pos[1]]);
+    return {
+      x: q.x,
+      y: q.y,
+      r: Math.min(radiusPx(map, fix.pos, fix.accuracy), view.maxR),
+    };
+  }, [map, view, tick, fix, tooFar]);
 
   /* 押されたときに見る値を、毎回の描画で入れ直す */
   hitRef.current =
@@ -396,12 +420,12 @@ function MapOverlayInner({
           <circle cx={view.start.x} cy={view.start.y} r={8} fill="#ffffff" stroke="#38bdf8" strokeWidth={4} />
         )}
 
-        {view.me && (
+        {meMark && (
           <>
-            <circle cx={view.me.x} cy={view.me.y} r={view.meR} fill="#38bdf8" fillOpacity={0.12} />
+            <circle cx={meMark.x} cy={meMark.y} r={meMark.r} fill="#38bdf8" fillOpacity={0.12} />
             <circle
-              cx={view.me.x}
-              cy={view.me.y}
+              cx={meMark.x}
+              cy={meMark.y}
               r={9}
               fill="#38bdf8"
               stroke="#ffffff"
@@ -411,7 +435,7 @@ function MapOverlayInner({
 
             {/* 向いている方角。地図を回していても正しい方角を指すよう、地図の向きを差し引く */}
             {heading != null && (
-              <g transform={`translate(${view.me.x},${view.me.y}) rotate(${heading - (map?.getBearing() ?? 0)})`}>
+              <g transform={`translate(${meMark.x},${meMark.y}) rotate(${heading - (map?.getBearing() ?? 0)})`}>
                 <path d="M -13 -16 A 20 20 0 0 1 13 -16 L 0 -40 Z" fill="#38bdf8" opacity={0.22} />
                 <path d="M 0 -20 L 7 -8 L 0 -11 L -7 -8 Z" fill="#38bdf8" stroke="#ffffff" strokeWidth={2} strokeLinejoin="round" />
               </g>
