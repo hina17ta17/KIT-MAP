@@ -4,25 +4,27 @@
  * ログインと利用の申請。
  *
  * ■ 申請の流れ
- *   ① メールアドレスと氏名を入れて［START］
- *      → 大学のドメインでないと押せない
- *   ② そのアドレスへ送った6桁を入れる
- *      → ここで「そのアドレスの持ち主である」ことが分かる
- *   ③ 学年・クラス・名列番号・パスワードを入れる
- *   ④ 認証アプリ（Authenticator）で本人確認  ← ここを通れば認証完了
+ *   ① メールアドレス・氏名・パスワードを入れて［START］
+ *      → 大学のドメインでないと通らない
+ *   ② 学年・クラス・名列番号を入れる
+ *   ③ 認証アプリ（Authenticator）で本人確認  ← ここを通れば認証完了
  *      → その端末と結び付ける。以後この端末が本人の証になる
+ *   ④ 管理者が承認するまでは学内情報を見られない
  *
- * ②と④は申請のときだけ。以後のログインはメールとパスワードで入る。
- * 認証アプリを通るまでは申請が終わらないので、
- * 途中でやめた人は次に開いたときその続きから求められる。
+ * ③は申請のときだけ。以後のログインはメールとパスワードで入る。
+ * 認証アプリを通るまで申請は終わらないので、途中でやめた人は
+ * 次に開いたときその続きから求められる。
  *
- * ■ メールが届かないとき
- *   ・60秒おきに送り直せる
- *   ・それでも駄目なら、管理者が承認画面から代わりに確認済みにできる
+ * ■ なぜメールでの確認をしないか
+ *   学生は全員この認証アプリを持っているので、そちらで確かめる。
+ *   メールに頼ると、送信の上限（標準の送信サービスは非常に少ない）と
+ *   文面を変えられない制限に当たり、一斉の申請に耐えられない。
  *
- * ■ 送信の上限に注意
- *   Supabase の標準の送信は1時間に数通しか出せない。
- *   一斉に申請する場面があるなら、送信サービスの設定が要る。
+ * ■ そのぶん守れないこと
+ *   「そのアドレスの持ち主か」までは分からない。大学のドメインで
+ *   ありさえすれば、他人のアドレスでも申請できてしまう。
+ *   最後の関門は管理者の承認。承認画面に氏名・学年・クラス・
+ *   名列番号が出るので、名簿と突き合わせて判断する。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -43,7 +45,13 @@ import {
   type Role,
 } from "@/lib/auth";
 
-/** 申請のどこまで進んだか */
+/**
+ * 申請のどこまで進んだか。
+ *
+ * mail は「パスワードを忘れたとき」だけに使う。
+ * 申請そのものではメールを使わない（本人確認は認証アプリで行う）が、
+ * パスワードを忘れた人を通す道が他に無いため、そこだけ残してある。
+ */
 type Step = "start" | "mail" | "reset" | "mfa" | "detail" | "done";
 
 type Me = {
@@ -160,31 +168,6 @@ export default function LoginPage() {
       p = await read();
     }
 
-    /*
-     * メールの持ち主だと分かった扱いにする。
-     *
-     * ここに来ている＝すでに入れている、ということ。
-     * 申請の途中で入れるようになる道は、そのアドレスに届いた
-     * 6桁を入れたか、届いたリンクを開いたかの二つしかない。
-     * どちらもアドレスを受け取れる人にしかできないので、
-     * この時点で持ち主だと分かっている。
-     *
-     * パスワードで入る道は、④でパスワードを決めたあとにしか使えない。
-     * つまり、確認を飛ばしてここへ来ることはできない。
-     *
-     * こうしておくと、メールの文面が6桁でもリンクでも同じように通る。
-     */
-    if (p && !p.mail_verified) {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ mail_verified: true })
-        .eq("id", data.user!.id);
-      // 記録できなくても止めない。確かめ自体はメールで済んでいるので、
-      // 列がまだ無いときに申請が進まなくなるほうが困る
-      p = { ...p, mail_verified: true };
-      if (error) console.warn("[login] mail_verified を残せませんでした", error.message);
-    }
-
     if (p) {
       setMe(p);
       // 途中で閉じた人が続きから進められるようにする
@@ -196,8 +179,6 @@ export default function LoginPage() {
       // 申請の続きを求めるのは、まだ承認待ちの人だけ。
       // すでに権限がある人（管理者など）を所属の記入で止めない
       if (p.role !== "pending") setStep("done");
-      // メールの持ち主だと分かっていない人は、まずそこから
-      else if (!p.mail_verified) setStep("mail");
       // 所属を先に。認証アプリは最後で、そこを通れば認証完了
       else if (!p.grade || !p.class_code || !p.seat_no) setStep("detail");
       else if (!p.verified) setStep("mfa");
@@ -210,10 +191,11 @@ export default function LoginPage() {
     void reload();
   }, [reload]);
 
-  /* ---------------- ① START：6桁をメールで送る ---------------- */
+  /* ---------------- ① 席を作る ---------------- */
 
   const domainOk = isAllowedEmail(email);
-  const canStart = domainOk && name.trim().length > 0;
+  const pwOk = checkPassword(pw) === null;
+  const canStart = domainOk && name.trim().length > 0 && pwOk;
 
   const start = async () => {
     setMsg(null);
@@ -222,31 +204,25 @@ export default function LoginPage() {
     try {
       const supabase = createClient();
       /*
-       * そのアドレスへ6桁の数字を送る。
+       * 席を作り、そのまま入った状態にする。
        *
-       * ここで席も一緒に作られる。パスワードはまだ決めない。
-       * 6桁を入れられた時点で「そのアドレスの持ち主」と分かるので、
-       * そのあとで本人にパスワードを決めてもらう。
+       * メールは送らない。学生は全員この認証アプリを持っているので、
+       * 本人確認はそちらで行う。ここではまだ本人だと確かめていないので、
+       * 学内の情報は何も見られない（権限は承認待ちのまま）。
+       *
+       * 大学のドメイン以外は、データベース側でも撥ねる。
        */
-      const { error } = await supabase.auth.signInWithOtp({
+      const { error } = await supabase.auth.signUp({
         email: email.trim(),
-        options: {
-          shouldCreateUser: true,
-          data: { full_name: name.trim() },
-          /*
-           * リンクを開いた人が、申請の続きへ戻ってこられるようにする。
-           * 指定しないとサイトの入口（地図）へ戻され、
-           * 何をすればよいのか分からなくなる。
-           */
-          emailRedirectTo:
-            typeof window !== "undefined" ? window.location.origin + "/login" : undefined,
-        },
+        password: pw,
+        options: { data: { full_name: name.trim() } },
       });
       if (error) throw error;
 
-      setSentAt(Date.now());
-      setStep("mail");
-      setMsg({ kind: "info", text: T("メールに届いた6桁を入れてください。") });
+      setPw("");
+      await reload();
+      setStep("detail");
+      setMsg({ kind: "info", text: T("続けて、所属を入れてください。") });
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -254,7 +230,7 @@ export default function LoginPage() {
     }
   };
 
-  /* ---------------- ② メールの6桁を確かめる ---------------- */
+  /* ---------------- パスワードを忘れた人だけが通る道 ---------------- */
 
   /**
    * 送り直しは60秒あける。
@@ -281,8 +257,8 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          shouldCreateUser: true,
-          data: { full_name: name.trim() },
+          // 席のある人だけ。ここから新しい席は作らせない
+          shouldCreateUser: false,
           /*
            * リンクを開いた人が、申請の続きへ戻ってこられるようにする。
            * 指定しないとサイトの入口（地図）へ戻され、
@@ -428,18 +404,9 @@ export default function LoginPage() {
       setMsg({ kind: "err", text: T(seatErr) });
       return;
     }
-    const pwErr = checkPassword(pw);
-    if (pwErr) {
-      setMsg({ kind: "err", text: T(pwErr) });
-      return;
-    }
     setBusy(true);
     try {
       const supabase = createClient();
-      // 以降ふつうに入れるよう、ここでパスワードを決める
-      const { error: e1 } = await supabase.auth.updateUser({ password: pw });
-      if (e1) throw e1;
-
       const { data: u } = await supabase.auth.getUser();
       const { error: e2 } = await supabase
         .from("profiles")
@@ -452,7 +419,6 @@ export default function LoginPage() {
         .eq("id", u.user?.id ?? "");
       if (e2) throw e2;
 
-      setPw("");
       // ここではまだ完了にしない。認証アプリを通ってはじめて認証完了とする
       setStep("mfa");
       setMsg({ kind: "ok", text: T("最後に、認証アプリで本人確認をしてください。") });
@@ -721,20 +687,32 @@ export default function LoginPage() {
             autoComplete="name"
             className={`${inputCls} mt-2`}
           />
+          {/* パスワードはここで決める。2回目以降のログインに使う */}
+          <input
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            type="password"
+            autoComplete="new-password"
+            placeholder={`${T("パスワード")}（${PASSWORD_LENGTH}）`}
+            className={`${inputCls} mt-2`}
+          />
+          {pw.length > 0 && checkPassword(pw) && (
+            <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">{T(checkPassword(pw)!)}</p>
+          )}
           <button
             onClick={start}
             disabled={!canStart || busy}
             className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold tracking-widest text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
           >
-            {busy ? T("送信中…") : "START"}
+            {busy ? T("処理中…") : "START"}
           </button>
           {!canStart && (
             <p className="mt-1 text-center text-[10px] text-slate-400">
-              {T("メールアドレスと氏名の両方が要ります")}
+              {T("メールアドレス・氏名・パスワードが要ります")}
             </p>
           )}
           <p className="mt-3 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
-            {T("［START］のあと、認証アプリ（Authenticator）で本人確認をします。")}
+            {T("［START］のあと、所属を入れ、認証アプリ（Authenticator）で本人確認をします。")}
             <br />
             {T("スマートフォンに Google Authenticator などを入れておいてください。")}
           </p>
@@ -788,7 +766,7 @@ function Wizard(props: {
   if (step === "mail") {
     return (
       <div className="mt-4">
-        <Head n={1} total={3} text={T("メールで本人確認")} />
+        <Head n={1} total={2} text={T("メールで確かめる")} />
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
           {T("入力したメールアドレスへ確認のメールを送りました。届いた6桁の数字を入れてください。")}
           <br />
@@ -952,14 +930,7 @@ function Wizard(props: {
         className={inputCls}
       />
 
-      <Label>{T("パスワード")}（{PASSWORD_LENGTH}）</Label>
-      <input
-        value={pw}
-        onChange={(e) => setPw(e.target.value)}
-        type="password"
-        autoComplete="new-password"
-        className={inputCls}
-      />
+
       <p className="mt-1 pl-1 text-[10px] text-slate-400">
         {pw.length} / {PASSWORD_LENGTH} 桁
       </p>

@@ -188,6 +188,11 @@ const EN: Record<string, string> = {
   "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
     "Still nothing? Contact an administrator — they can verify you instead.",
   パスワード: "Password",
+  "メールで確かめる": "Confirm by email",
+  "続けて、所属を入れてください。": "Next, enter your details.",
+  "メールアドレス・氏名・パスワードが要ります": "Email, name and password are all required",
+  "［START］のあと、所属を入れ、認証アプリ（Authenticator）で本人確認をします。":
+    "After START you enter your details, then verify with an authenticator app.",
   "メールを確かめました。所属を入れてください。": "Email confirmed. Now enter your details.",
   "最後に、認証アプリで本人確認をしてください。": "Last step: verify with your authenticator app.",
   "認証が完了しました。管理者の承認をお待ちください。":
