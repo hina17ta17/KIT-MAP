@@ -188,6 +188,12 @@ const EN: Record<string, string> = {
   "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
     "Still nothing? Contact an administrator — they can verify you instead.",
   パスワード: "Password",
+  決める: "Set",
+  "新しいパスワード": "New password",
+  "新しいパスワードを決めてください。": "Choose a new password.",
+  "パスワードを忘れた（メールで入る）": "Forgot your password? Sign in by email",
+  "先にメールアドレスを入れてください": "Enter your email address first",
+  "パスワードを決め直しました。": "Your password has been changed.",
   "大学から配られたメールアドレスと氏名を入れて［START］を押すと、本人確認のメールが届きます。":
     "Enter the email address the university gave you and your name, then press START. A verification email will arrive.",
   "パスワードは8桁ちょうどにしてください": "The password must be exactly 8 characters",

@@ -43,7 +43,7 @@ import {
 } from "@/lib/auth";
 
 /** 申請のどこまで進んだか */
-type Step = "start" | "mail" | "mfa" | "detail" | "done";
+type Step = "start" | "mail" | "reset" | "mfa" | "detail" | "done";
 
 type Me = {
   email: string;
@@ -102,6 +102,8 @@ export default function LoginPage() {
   const [sentAt, setSentAt] = useState<number | null>(null);
   /** メールに届いた6桁 */
   const [mailCode, setMailCode] = useState("");
+  /** パスワードを決め直す途中か。6桁で入ったあと、決め直す画面へ送る */
+  const [resetMode, setResetMode] = useState(false);
 
   /* ログイン */
   const [email, setEmail] = useState("");
@@ -324,6 +326,14 @@ export default function LoginPage() {
       if (e2) throw e2;
 
       setMailCode("");
+
+      // パスワードを決め直しに来た人は、申請の手順には送らない
+      if (resetMode) {
+        setStep("reset");
+        setMsg({ kind: "info", text: T("新しいパスワードを決めてください。") });
+        return;
+      }
+
       setStep("mfa");
       setMsg({ kind: "info", text: T("続けて、認証アプリで本人確認をしてください。") });
     } catch (e) {
@@ -462,6 +472,67 @@ export default function LoginPage() {
     }
   };
 
+  /**
+   * パスワードを忘れた人が入れるようにする。
+   *
+   * パスワードは暗号化して保存されているので、誰にも読めない。
+   * 決め直すしかないが、その口が無いと、忘れた時点で永久に入れなくなる。
+   * メールに届く6桁で入り、そのあと本人が決め直す。
+   */
+  const forgotPassword = async () => {
+    setMsg(null);
+    if (!isAllowedEmail(email)) {
+      setMsg({ kind: "err", text: T("先にメールアドレスを入れてください") });
+      return;
+    }
+    setBusy(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        // 席のある人だけ。ここから新しく作らせない
+        options: {
+          shouldCreateUser: false,
+          emailRedirectTo:
+            typeof window !== "undefined" ? window.location.origin + "/login" : undefined,
+        },
+      });
+      if (error) throw error;
+      setSentAt(Date.now());
+      setResetMode(true);
+      setStep("mail");
+      setMode("signup");
+      setMsg({ kind: "info", text: T("メールに届いた6桁を入れてください。") });
+    } catch (e) {
+      setMsg({ kind: "err", text: T(translate(e)) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 新しいパスワードを決める。6桁で入ったあとに使う */
+  const savePassword = async () => {
+    setMsg(null);
+    const err = checkPassword(pw);
+    if (err) {
+      setMsg({ kind: "err", text: T(err) });
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await createClient().auth.updateUser({ password: pw });
+      if (error) throw error;
+      setPw("");
+      setResetMode(false);
+      await reload();
+      setMsg({ kind: "ok", text: T("パスワードを決め直しました。") });
+    } catch (e) {
+      setMsg({ kind: "err", text: T(translate(e)) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOut = async () => {
     await createClient().auth.signOut();
     location.reload();
@@ -510,6 +581,7 @@ export default function LoginPage() {
               mailCode,
               setMailCode,
               verifyMail,
+              savePassword,
               resendMail,
               waitLeft,
               mfa,
@@ -601,6 +673,14 @@ export default function LoginPage() {
           >
             {busy ? T("処理中…") : T("ログイン")}
           </button>
+          {/* 忘れた人の逃げ道。無いと、忘れた時点で永久に入れなくなる */}
+          <button
+            onClick={() => void forgotPassword()}
+            disabled={busy}
+            className="mt-2 w-full text-center text-[11px] text-slate-500 underline disabled:text-slate-300"
+          >
+            {T("パスワードを忘れた（メールで入る）")}
+          </button>
         </>
       ) : (
         <>
@@ -667,6 +747,7 @@ function Wizard(props: {
   mailCode: string;
   setMailCode: (v: string) => void;
   verifyMail: () => Promise<void>;
+  savePassword: () => Promise<void>;
   resendMail: () => Promise<void>;
   /** 送り直せるまでの残り秒。0 なら押せる */
   waitLeft: number;
@@ -733,6 +814,33 @@ function Wizard(props: {
           <br />
           {T("それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。")}
         </p>
+      </div>
+    );
+  }
+
+  /* ---------------- パスワードを決め直す ---------------- */
+  if (step === "reset") {
+    return (
+      <div className="mt-4">
+        <Head n={2} total={2} text={T("新しいパスワード")} />
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+          {T("新しいパスワードを決めてください。")}
+        </p>
+        <input
+          value={props.pw}
+          onChange={(e) => props.setPw(e.target.value)}
+          type="password"
+          autoComplete="new-password"
+          placeholder={`${T("パスワード")}（${PASSWORD_LENGTH}）`}
+          className={`${inputCls} mt-3`}
+        />
+        <button
+          onClick={() => void props.savePassword()}
+          disabled={busy}
+          className="mt-2 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
+        >
+          {busy ? T("送信中…") : T("決める")}
+        </button>
       </div>
     );
   }
