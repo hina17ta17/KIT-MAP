@@ -445,6 +445,12 @@ export default function LoginPage() {
   if (me && step === "verify") {
     return (
       <Shell lang={lang} onToggleLang={toggleLang}>
+        <Link
+          href="/"
+          className="mb-3 inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:underline"
+        >
+          ← {T("地図へ戻る")}
+        </Link>
         <Title />
         <p className="mt-4 text-sm text-slate-700">
           <b>{me.email}</b> {T("でログイン中")}
@@ -488,6 +494,13 @@ export default function LoginPage() {
   if (me) {
     return (
       <Shell lang={lang} onToggleLang={toggleLang}>
+        {/* 戻る道は上にも置く。下だけだと管理メニューの下に埋もれて見つからない */}
+        <Link
+          href="/"
+          className="mb-3 inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:underline"
+        >
+          ← {T("地図へ戻る")}
+        </Link>
         <Title />
         <p className="mt-4 text-sm text-slate-700">
           <b>{me.email}</b> {T("でログイン中")}
