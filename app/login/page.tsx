@@ -16,6 +16,10 @@
  * 認証アプリを通るまで申請は終わらないので、途中でやめた人は
  * 次に開いたときその続きから求められる。
  *
+ * ■ メールは一通も送らない
+ *   確認も、パスワードの再設定も、メールは使わない。
+ *   忘れた人は、管理者が supabase/set_password.sql で決め直す。
+ *
  * ■ なぜメールでの確認をしないか
  *   学生は全員この認証アプリを持っているので、そちらで確かめる。
  *   メールに頼ると、送信の上限（標準の送信サービスは非常に少ない）と
@@ -46,14 +50,8 @@ import {
   type Role,
 } from "@/lib/auth";
 
-/**
- * 申請のどこまで進んだか。
- *
- * mail は「パスワードを忘れたとき」だけに使う。
- * 申請そのものではメールを使わない（本人確認は認証アプリで行う）が、
- * パスワードを忘れた人を通す道が他に無いため、そこだけ残してある。
- */
-type Step = "start" | "mail" | "reset" | "mfa" | "detail" | "done";
+/** 申請のどこまで進んだか */
+type Step = "start" | "mfa" | "detail" | "done";
 
 type Me = {
   email: string;
@@ -107,13 +105,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
-
-  /** 6桁を最後に送った時刻。送り直しの間隔を測る */
-  const [sentAt, setSentAt] = useState<number | null>(null);
-  /** メールに届いた6桁 */
-  const [mailCode, setMailCode] = useState("");
-  /** パスワードを決め直す途中か。6桁で入ったあと、決め直す画面へ送る */
-  const [resetMode, setResetMode] = useState(false);
 
   /* ログイン */
   const [email, setEmail] = useState("");
@@ -180,7 +171,6 @@ export default function LoginPage() {
       // 申請の続きを求めるのは、まだ承認待ちの人だけ。
       // すでに権限がある人（管理者など）を所属の記入で止めない
       if (p.role !== "pending") setStep("done");
-      // 所属を先に。認証アプリは最後で、そこを通れば認証完了
       // 先に本人確認。通ってから所属を書いてもらう
       else if (!p.verified) setStep("mfa");
       else if (!p.grade || !p.class_code || !p.seat_no) setStep("detail");
@@ -225,97 +215,6 @@ export default function LoginPage() {
       await reload();
       setStep("mfa");
       setMsg({ kind: "info", text: T("続けて、認証アプリで本人確認をしてください。") });
-    } catch (e) {
-      setMsg({ kind: "err", text: T(translate(e)) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /* ---------------- パスワードを忘れた人だけが通る道 ---------------- */
-
-  /**
-   * 送り直しは60秒あける。
-   *
-   * 続けて押されると送信の上限に当たり、本当に必要な人にも
-   * 届かなくなる。届いていないと思って何度も押しがちなので、
-   * あと何秒かを画面に出す。
-   */
-  const RESEND_WAIT = 60_000;
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (step !== "mail") return;
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [step]);
-  const waitLeft = sentAt ? Math.max(0, Math.ceil((sentAt + RESEND_WAIT - now) / 1000)) : 0;
-
-  const resendMail = async () => {
-    setMsg(null);
-    if (waitLeft > 0) return;
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: {
-          // 席のある人だけ。ここから新しい席は作らせない
-          shouldCreateUser: false,
-          /*
-           * リンクを開いた人が、申請の続きへ戻ってこられるようにする。
-           * 指定しないとサイトの入口（地図）へ戻され、
-           * 何をすればよいのか分からなくなる。
-           */
-          emailRedirectTo:
-            typeof window !== "undefined" ? window.location.origin + "/login" : undefined,
-        },
-      });
-      if (error) throw error;
-      setSentAt(Date.now());
-      setMsg({ kind: "ok", text: T("送り直しました。メールを確かめてください。") });
-    } catch (e) {
-      setMsg({ kind: "err", text: T(translate(e)) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verifyMail = async () => {
-    setMsg(null);
-    if (!/^d{6}$/.test(mailCode)) {
-      setMsg({ kind: "err", text: T("6桁の数字を入れてください") });
-      return;
-    }
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token: mailCode,
-        type: "email",
-      });
-      if (error) throw error;
-
-      // 席はできているが、情報の行がまだ無いことがある
-      await supabase.rpc("ensure_profile");
-      const { data: u } = await supabase.auth.getUser();
-      const { error: e2 } = await supabase
-        .from("profiles")
-        .update({ mail_verified: true, full_name: name.trim() })
-        .eq("id", u.user?.id ?? "");
-      if (e2) throw e2;
-
-      setMailCode("");
-
-      // パスワードを決め直しに来た人は、申請の手順には送らない
-      if (resetMode) {
-        setStep("reset");
-        setMsg({ kind: "info", text: T("新しいパスワードを決めてください。") });
-        return;
-      }
-
-      setStep("detail");
-      setMsg({ kind: "info", text: T("メールを確かめました。所属を入れてください。") });
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -450,67 +349,6 @@ export default function LoginPage() {
     }
   };
 
-  /**
-   * パスワードを忘れた人が入れるようにする。
-   *
-   * パスワードは暗号化して保存されているので、誰にも読めない。
-   * 決め直すしかないが、その口が無いと、忘れた時点で永久に入れなくなる。
-   * メールに届く6桁で入り、そのあと本人が決め直す。
-   */
-  const forgotPassword = async () => {
-    setMsg(null);
-    if (!isAllowedEmail(email)) {
-      setMsg({ kind: "err", text: T("先にメールアドレスを入れてください") });
-      return;
-    }
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        // 席のある人だけ。ここから新しく作らせない
-        options: {
-          shouldCreateUser: false,
-          emailRedirectTo:
-            typeof window !== "undefined" ? window.location.origin + "/login" : undefined,
-        },
-      });
-      if (error) throw error;
-      setSentAt(Date.now());
-      setResetMode(true);
-      setStep("mail");
-      setMode("signup");
-      setMsg({ kind: "info", text: T("メールに届いた6桁を入れてください。") });
-    } catch (e) {
-      setMsg({ kind: "err", text: T(translate(e)) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** 新しいパスワードを決める。6桁で入ったあとに使う */
-  const savePassword = async () => {
-    setMsg(null);
-    const err = checkPassword(pw);
-    if (err) {
-      setMsg({ kind: "err", text: T(err) });
-      return;
-    }
-    setBusy(true);
-    try {
-      const { error } = await createClient().auth.updateUser({ password: pw });
-      if (error) throw error;
-      setPw("");
-      setResetMode(false);
-      await reload();
-      setMsg({ kind: "ok", text: T("パスワードを決め直しました。") });
-    } catch (e) {
-      setMsg({ kind: "err", text: T(translate(e)) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const signOut = async () => {
     await createClient().auth.signOut();
     location.reload();
@@ -556,12 +394,6 @@ export default function LoginPage() {
             step={step}
             me={me}
             {...{
-              mailCode,
-              setMailCode,
-              verifyMail,
-              savePassword,
-              resendMail,
-              waitLeft,
               mfa,
               code,
               setCode,
@@ -651,14 +483,6 @@ export default function LoginPage() {
           >
             {busy ? T("処理中…") : T("ログイン")}
           </button>
-          {/* 忘れた人の逃げ道。無いと、忘れた時点で永久に入れなくなる */}
-          <button
-            onClick={() => void forgotPassword()}
-            disabled={busy}
-            className="mt-2 w-full text-center text-[11px] text-slate-500 underline disabled:text-slate-300"
-          >
-            {T("パスワードを忘れた（メールで入る）")}
-          </button>
         </>
       ) : (
         <>
@@ -734,13 +558,6 @@ function Wizard(props: {
   /** いまの言葉。年の書き方など、言い換えだけでは足りないところに使う */
   lang: Lang;
   step: Step;
-  mailCode: string;
-  setMailCode: (v: string) => void;
-  verifyMail: () => Promise<void>;
-  savePassword: () => Promise<void>;
-  resendMail: () => Promise<void>;
-  /** 送り直せるまでの残り秒。0 なら押せる */
-  waitLeft: number;
   me: Me;
   mfa: { id: string; qr: string; secret: string } | null;
   code: string;
@@ -761,79 +578,6 @@ function Wizard(props: {
   busy: boolean;
 }) {
   const { t: T, lang, step, mfa, code, setCode, enroll, verifyMfa, busy } = props;
-  const { mailCode, setMailCode, verifyMail, resendMail, waitLeft } = props;
-
-  /* ---------------- ② メールに届いた6桁 ---------------- */
-  if (step === "mail") {
-    return (
-      <div className="mt-4">
-        <Head n={1} total={2} text={T("メールで確かめる")} />
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          {T("入力したメールアドレスへ確認のメールを送りました。届いた6桁の数字を入れてください。")}
-          <br />
-          {T("メールに数字がなくリンクだけのときは、そのリンクを開けば同じように進めます。")}
-        </p>
-
-        <input
-          value={mailCode}
-          onChange={(e) => setMailCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder={T("メールに届いた6桁")}
-          className={`${inputCls} mt-3 text-center text-lg tracking-[0.4em]`}
-        />
-        <button
-          onClick={() => void verifyMail()}
-          disabled={busy || mailCode.length !== 6}
-          className="mt-2 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
-        >
-          {busy ? T("確認中…") : T("本人確認をする")}
-        </button>
-
-        {/* 届かないときの手立て。続けて押されると送信の上限に当たるので間隔を置く */}
-        <button
-          onClick={() => void resendMail()}
-          disabled={busy || waitLeft > 0}
-          className="mt-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 disabled:text-slate-400"
-        >
-          {waitLeft > 0 ? `${T("送り直す")}（${waitLeft}）` : T("送り直す")}
-        </button>
-
-        <p className="mt-2 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
-          {T("届かないときは、迷惑メールに入っていないか確かめてください。数分かかることもあります。")}
-          <br />
-          {T("それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。")}
-        </p>
-      </div>
-    );
-  }
-
-  /* ---------------- パスワードを決め直す ---------------- */
-  if (step === "reset") {
-    return (
-      <div className="mt-4">
-        <Head n={2} total={2} text={T("新しいパスワード")} />
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          {T("新しいパスワードを決めてください。")}
-        </p>
-        <input
-          value={props.pw}
-          onChange={(e) => props.setPw(e.target.value)}
-          type="password"
-          autoComplete="new-password"
-          placeholder={`${T("パスワード")}（${PASSWORD_LENGTH}）`}
-          className={`${inputCls} mt-3`}
-        />
-        <button
-          onClick={() => void props.savePassword()}
-          disabled={busy}
-          className="mt-2 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
-        >
-          {busy ? T("送信中…") : T("決める")}
-        </button>
-      </div>
-    );
-  }
 
   if (step === "mfa") {
     return (
