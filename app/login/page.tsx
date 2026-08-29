@@ -382,7 +382,7 @@ export default function LoginPage() {
    */
   const verifyDevice = async () => {
     setMsg(null);
-    if (!/^d{6}$/.test(loginCode)) {
+    if (!/^\d{6}$/.test(loginCode)) {
       setMsg({ kind: "err", text: T("6桁の数字を入れてください") });
       return;
     }
@@ -783,7 +783,7 @@ function Wizard(props: {
       <Label>{T("名列番号")}</Label>
       <input
         value={seat}
-        onChange={(e) => setSeat(e.target.value.replace(/D/g, "").slice(0, 3))}
+        onChange={(e) => setSeat(e.target.value.replace(/\D/g, "").slice(0, 3))}
         inputMode="numeric"
         placeholder={SEAT_MIN + " 〜 " + SEAT_MAX}
         className={inputCls}
