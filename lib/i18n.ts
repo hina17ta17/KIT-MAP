@@ -188,6 +188,11 @@ const EN: Record<string, string> = {
   "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
     "Still nothing? Contact an administrator — they can verify you instead.",
   パスワード: "Password",
+  "この端末ははじめてです": "This is a new device",
+  "Microsoft Authenticator に出ている6桁を入れてください。次からは求めません。":
+    "Enter the 6-digit code from Microsoft Authenticator. We will not ask again on this device.",
+  "この端末を確かめました。次からは求めません。":
+    "This device is verified. We will not ask again here.",
   "メールで確かめる": "Confirm by email",
   "続けて、所属を入れてください。": "Next, enter your details.",
   "メールアドレス・氏名・パスワードが要ります": "Email, name and password are all required",

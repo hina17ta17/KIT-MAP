@@ -37,6 +37,7 @@ import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminMenu } from "@/components/AdminNav";
 import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
+import { isTrustedDevice, trustDevice } from "@/lib/device";
 import {
   CLASS_CODES,
   GRADES,
@@ -51,7 +52,7 @@ import {
 } from "@/lib/auth";
 
 /** 申請のどこまで進んだか */
-type Step = "start" | "mfa" | "detail" | "done";
+type Step = "start" | "mfa" | "detail" | "verify" | "done";
 
 type Me = {
   email: string;
@@ -117,6 +118,11 @@ export default function LoginPage() {
   const [classCode, setClassCode] = useState("");
   /** 名列番号（1〜200）。入力中は文字で持つ。空にできるようにするため */
   const [seat, setSeat] = useState("");
+  /** いま入っている人の席のID。端末を覚えるときの目印にする */
+  const [uid, setUid] = useState("");
+  /** 知らない端末から入ったときに使う、確認用の6桁 */
+  const [loginCode, setLoginCode] = useState("");
+
   /** 認証アプリに読ませるQRと、手で入れる用の文字列 */
   const [mfa, setMfa] = useState<{ id: string; qr: string; secret: string } | null>(null);
   const [code, setCode] = useState("");
@@ -160,6 +166,8 @@ export default function LoginPage() {
       p = await read();
     }
 
+    setUid(data.user.id);
+
     if (p) {
       setMe(p);
       // 途中で閉じた人が続きから進められるようにする
@@ -167,6 +175,20 @@ export default function LoginPage() {
       setGrade(p.grade);
       setClassCode(p.class_code);
       setSeat(p.seat_no ? String(p.seat_no) : "");
+
+      /*
+       * 知らない端末から入ったときは、認証アプリで確かめてもらう。
+       *
+       * 一度確かめた端末では次から求めない。毎回だと使ってもらえず、
+       * 一度きりだと、パスワードが漏れた時点でどこからでも入れてしまう。
+       *
+       * 申請の途中の人は、そもそもこのあと認証アプリを通るので対象外。
+       */
+      if (p.role !== "pending" && p.verified && !isTrustedDevice(data.user.id)) {
+        setStep("verify");
+        setLoading(false);
+        return;
+      }
 
       // 申請の続きを求めるのは、まだ承認待ちの人だけ。
       // すでに権限がある人（管理者など）を所属の記入で止めない
@@ -281,6 +303,8 @@ export default function LoginPage() {
       if (e3) throw e3;
 
       setCode("");
+      // いま確かめたので、この端末は覚えてよい
+      if (u.user?.id) trustDevice(u.user.id);
       setStep("detail");
       setMsg({ kind: "ok", text: T("本人確認ができました。最後に所属を入れてください。") });
     } catch (e) {
@@ -349,6 +373,52 @@ export default function LoginPage() {
     }
   };
 
+  /**
+   * 知らない端末から入った人を、認証アプリで確かめる。
+   *
+   * 申請のときに登録した認証アプリと同じものを使う。
+   * 通れば、この端末を覚えて次からは求めない。
+   */
+  const verifyDevice = async () => {
+    setMsg(null);
+    if (!/^d{6}$/.test(loginCode)) {
+      setMsg({ kind: "err", text: T("6桁の数字を入れてください") });
+      return;
+    }
+    setBusy(true);
+    try {
+      const supabase = createClient();
+      const { data: list, error: e0 } = await supabase.auth.mfa.listFactors();
+      if (e0) throw e0;
+      const f = (list?.totp ?? []).find((x) => x.status === "verified");
+      if (!f) {
+        // 認証アプリが登録されていない。確かめようがないので通す
+        trustDevice(uid);
+        setLoginCode("");
+        await reload();
+        return;
+      }
+
+      const { data: ch, error: e1 } = await supabase.auth.mfa.challenge({ factorId: f.id });
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.auth.mfa.verify({
+        factorId: f.id,
+        challengeId: ch.id,
+        code: loginCode,
+      });
+      if (e2) throw e2;
+
+      trustDevice(uid);
+      setLoginCode("");
+      setMsg({ kind: "ok", text: T("この端末を確かめました。次からは求めません。") });
+      await reload();
+    } catch (e) {
+      setMsg({ kind: "err", text: T(translate(e)) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOut = async () => {
     await createClient().auth.signOut();
     location.reload();
@@ -369,6 +439,49 @@ export default function LoginPage() {
         <Back t={T} />
       </Shell>
     );
+
+  /* 知らない端末から入った人。ここを通るまで先へ進ませない */
+  if (me && step === "verify") {
+    return (
+      <Shell lang={lang} onToggleLang={toggleLang}>
+        <Title />
+        <p className="mt-4 text-sm text-slate-700">
+          <b>{me.email}</b> {T("でログイン中")}
+        </p>
+
+        <div className="mt-4 rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
+          <p className="text-xs font-bold text-amber-900">{T("この端末ははじめてです")}</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-amber-900">
+            {T("Microsoft Authenticator に出ている6桁を入れてください。次からは求めません。")}
+          </p>
+        </div>
+
+        <input
+          value={loginCode}
+          onChange={(e) => setLoginCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          placeholder={T("アプリに出た6桁")}
+          className={`${inputCls} mt-3 text-center text-lg tracking-[0.4em]`}
+        />
+        <button
+          onClick={() => void verifyDevice()}
+          disabled={busy || loginCode.length !== 6}
+          className="mt-2 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
+        >
+          {busy ? T("確認中…") : T("本人確認をする")}
+        </button>
+
+        {msg && <Msg msg={msg} />}
+        <button
+          onClick={signOut}
+          className="mt-3 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700"
+        >
+          {T("ログアウト")}
+        </button>
+      </Shell>
+    );
+  }
 
   /* 申請の途中、またはログイン済み */
   if (me) {
