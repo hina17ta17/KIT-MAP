@@ -44,7 +44,8 @@ import {
   SEAT_MAX,
   SEAT_MIN,
   checkSeat,
-  PASSWORD_LENGTH,
+  PASSWORD_MAX,
+  PASSWORD_MIN,
   ROLE_LABEL,
   checkPassword,
   isAllowedEmail,
@@ -585,7 +586,7 @@ export default function LoginPage() {
             value={pw}
             onChange={(e) => setPw(e.target.value)}
             type="password"
-            placeholder={`${T("パスワード")}（${PASSWORD_LENGTH}）`}
+            placeholder={`${T("パスワード")}（${PASSWORD_MIN}〜${PASSWORD_MAX}）`}
             autoComplete="current-password"
             className={`${inputCls} mt-2`}
           />
@@ -628,10 +629,10 @@ export default function LoginPage() {
           {/* パスワードはここで決める。2回目以降のログインに使う */}
           <input
             value={pw}
-            onChange={(e) => setPw(e.target.value)}
+            onChange={(e) => setPw(e.target.value.slice(0, PASSWORD_MAX))}
             type="password"
             autoComplete="new-password"
-            placeholder={`${T("パスワード")}（${PASSWORD_LENGTH}）`}
+            placeholder={`${T("パスワード")}（${PASSWORD_MIN}〜${PASSWORD_MAX}）`}
             className={`${inputCls} mt-2`}
           />
           {pw.length > 0 && checkPassword(pw) && (
@@ -790,7 +791,7 @@ function Wizard(props: {
 
 
       <p className="mt-1 pl-1 text-[10px] text-slate-400">
-        {pw.length} / {PASSWORD_LENGTH} 桁
+        {pw.length} / {PASSWORD_MAX} 字（半角{PASSWORD_MIN}字以上）
       </p>
 
       <button

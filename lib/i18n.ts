@@ -212,7 +212,8 @@ const EN: Record<string, string> = {
   "パスワードを決め直しました。": "Your password has been changed.",
   "大学から配られたメールアドレスと氏名を入れて［START］を押すと、本人確認のメールが届きます。":
     "Enter the email address the university gave you and your name, then press START. A verification email will arrive.",
-  "パスワードは8桁ちょうどにしてください": "The password must be exactly 8 characters",
+  "パスワードは半角6〜20字にしてください":
+    "The password must be 6 to 20 single-byte characters",
   "半角の英数字・記号だけで入力してください": "Use single-byte letters, numbers and symbols only",
   "［START］のあと、Microsoft Authenticator で本人確認をし、所属を入れます。":
     "After START you verify with Microsoft Authenticator, then enter your details.",
