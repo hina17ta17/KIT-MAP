@@ -1,17 +1,28 @@
 "use client";
 
 /**
- * 承認と権限の管理（Lv3だけが使える）。
+ * 承認と権限の管理。
  *
  * ■ 二つの見方
- *   新規 … まだ承認していない人。まとめて権限を付けられる
- *   既存 … すでに使っている人。年・クラス・組で絞って見る
+ *   新規 … まだ承認していない人
+ *   既存 … すでに使っている人。年・クラスで絞って見る
+ *
+ * ■ 権限はその人の欄で変える
+ *   以前は画面の下に固定のボタンを置き、選んでから押す形だった。
+ *   誰に何を付けているのか目で追えず、選び間違いに気づけない。
+ *   いまは名前を押すとその人の欄が開き、そこで変える。
+ *   一度決めたあとでも、同じ場所から何度でも変えられる。
+ *
+ *   まとめて変えたいときのために、印を付ける道も残してある。
+ *   印を付けたときだけ、下にボタンが出る。
  *
  * すでに使っている人の権限を変えるときは操作パスワードが要る。
  * 押し間違いで一括降格させる事故を、ひと手間で防ぐため。
  *
- * 管理者Lv3 はここからは付けられない。データベースから設定する。
- * 画面から付けられると、Lv3 を乗っ取られた時点で全部を握られるため。
+ * ■ いちばん上の権限は、この画面には出さない
+ *   一覧にも、付けられる権限の並びにも出さない。
+ *   誰がそれを持っているのか、そもそも在るのかを画面から読み取れないようにする。
+ *   設定はデータベースから行う。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -35,8 +46,15 @@ type Row = {
   created_at: string;
 };
 
-/** ここから付けられる権限。Lv3 は入れない */
+/** ここから付けられる権限。いちばん上の権限は入れない */
 const ASSIGNABLE: Role[] = ["pending", "student", "admin_l0", "admin_l1", "admin_l2"];
+
+/**
+ * 画面に出さない権限。
+ *
+ * 一覧からも外す。ここに出ていると、その席が在ることが分かってしまう。
+ */
+const HIDDEN: Role = "admin_l3";
 
 const SHORT = ROLE_SHORT;
 
@@ -50,8 +68,15 @@ export default function AdminPage() {
   const [tab, setTab] = useState<"new" | "existing">("new");
   /** チェックを入れた人 */
   const [picked, setPicked] = useState<string[]>([]);
-  /** 既存を変えるときの合言葉 */
+  /** 既存を変えるときの合言葉。一度打てば、この画面にいる間は覚えておく */
   const [password, setPassword] = useState("");
+  /**
+   * いま権限の欄を開いている人。
+   *
+   * 一人ずつしか開かない。全員ぶん開いていると一覧が縦に伸びて、
+   * 誰を触っているのか分からなくなる。
+   */
+  const [open, setOpen] = useState<string | null>(null);
 
   /* 既存の絞り込み */
   const [fGrade, setFGrade] = useState<number | null>(null);
@@ -111,8 +136,11 @@ export default function AdminPage() {
     }
   };
 
-  const news = useMemo(() => rows.filter((r) => r.role === "pending"), [rows]);
-  const existing = useMemo(() => rows.filter((r) => r.role !== "pending"), [rows]);
+  /* いちばん上の権限の人は、そもそも一覧に載せない */
+  const listed = useMemo(() => rows.filter((r) => r.role !== HIDDEN), [rows]);
+
+  const news = useMemo(() => listed.filter((r) => r.role === "pending"), [listed]);
+  const existing = useMemo(() => listed.filter((r) => r.role !== "pending"), [listed]);
 
   const shown = useMemo(() => {
     if (tab === "new") return news;
@@ -124,25 +152,37 @@ export default function AdminPage() {
     );
   }, [tab, news, existing, fGrade, fClass, fGroup]);
 
-  /** まとめて権限を付ける */
-  const apply = async (role: Role) => {
+  /**
+   * 権限を付ける。
+   *
+   * その人の欄からは一人ぶん、下のボタンからは印を付けた人ぶんを渡す。
+   * 手順は同じなので一本にしてある。
+   */
+  const apply = async (role: Role, ids: string[]) => {
     setMsg(null);
-    if (picked.length === 0) {
+    if (ids.length === 0) {
       setMsg({ kind: "err", text: "誰も選ばれていません" });
       return;
     }
     setBusy(true);
     try {
       const { data, error } = await createClient().rpc("set_roles", {
-        p_ids: picked,
+        p_ids: ids,
         p_role: role,
         p_password: password || null,
       });
       if (error) throw error;
-      setPicked([]);
-      setPassword("");
+
+      const one = ids.length === 1 ? rows.find((r) => r.id === ids[0]) : null;
+      setPicked((p) => p.filter((x) => !ids.includes(x)));
+      setOpen(null);
       await load();
-      setMsg({ kind: "ok", text: `${data ?? 0}名を「${ROLE_LABEL[role]}」にしました` });
+      setMsg({
+        kind: "ok",
+        text: one
+          ? `${one.full_name || one.email} を「${ROLE_LABEL[role]}」にしました`
+          : `${data ?? 0}名を「${ROLE_LABEL[role]}」にしました`,
+      });
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "変更できませんでした" });
     } finally {
@@ -168,13 +208,15 @@ export default function AdminPage() {
   if (!canManage(myRole))
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は管理者（Lv3）だけが使えます。</p>
+        {/* どの権限なら使えるのかは書かない。上に誰か居ることが分かってしまう */}
+        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
         <p className="mt-1 text-xs text-slate-500">現在の権限：{ROLE_LABEL[myRole]}</p>
         <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">地図へ戻る</Link>
       </Shell>
     );
 
-  const needPassword = tab === "existing";
+  /* 印を付けた中に、すでに承認した人が混ざっているか */
+  const needPassword = picked.some((id) => rows.find((r) => r.id === id)?.role !== "pending");
 
   return (
     <Shell wide>
@@ -220,39 +262,46 @@ export default function AdminPage() {
 
       <p className="mb-2 text-[11px] text-slate-500">
         {shown.length} 名
-        {picked.length > 0 && <b className="ml-2 text-blue-700">{picked.length} 名を選択中</b>}
+        <span className="ml-2 text-slate-400">名前を押すと権限を変えられます</span>
+        {picked.length > 0 && <b className="ml-2 text-blue-700">{picked.length} 名に印</b>}
       </p>
 
       {/* 一覧 */}
       <ul className="space-y-1.5">
         {shown.map((r) => {
           const on = picked.includes(r.id);
-          const locked = r.role === "admin_l3";
+          const here = open === r.id;
+          /* すでに承認した人を触るときは合言葉が要る（データベース側の決まり） */
+          const needsPw = r.role !== "pending";
           return (
             <li key={r.id}>
-              <button
-                disabled={locked}
-                onClick={() =>
-                  setPicked((p) => (on ? p.filter((x) => x !== r.id) : [...p, r.id]))
-                }
-                className={`flex w-full items-start gap-2 rounded-xl p-2.5 text-left ring-1 transition ${
-                  locked
-                    ? "bg-slate-50 ring-slate-200 opacity-60"
+              <div
+                className={`flex items-start gap-2 rounded-xl p-2.5 ring-1 transition ${
+                  here
+                    ? "bg-white ring-slate-900"
                     : on
                       ? "bg-blue-50 ring-blue-300"
                       : r.role === "pending"
-                        ? "bg-amber-50 ring-amber-200 hover:bg-amber-100"
-                        : "bg-white ring-slate-200 hover:bg-slate-50"
+                        ? "bg-amber-50 ring-amber-200"
+                        : "bg-white ring-slate-200"
                 }`}
               >
-                <span
-                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold ${
+                {/* 印。まとめて変えたいときだけ使う。名前を押すのとは別の的にする */}
+                <button
+                  onClick={() => setPicked((p) => (on ? p.filter((x) => x !== r.id) : [...p, r.id]))}
+                  aria-label={on ? "印を外す" : "印を付ける"}
+                  className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold transition active:scale-90 ${
                     on ? "bg-blue-600 text-white" : "bg-white text-transparent ring-1 ring-slate-300"
                   }`}
                 >
                   ✓
-                </span>
-                <span className="min-w-0 flex-1">
+                </button>
+
+                {/* 名前を押すと、その人の権限の欄が開く */}
+                <button
+                  onClick={() => setOpen(here ? null : r.id)}
+                  className="min-w-0 flex-1 text-left"
+                >
                   <span className="block truncate text-sm font-semibold text-slate-900">
                     {r.full_name || "（氏名未記入）"}
                     {!r.mail_verified && (
@@ -276,11 +325,62 @@ export default function AdminPage() {
                     {r.grade ? `${r.grade}年 ` : ""}
                     {r.class_code}
                     {r.seat_no ? ` ${r.seat_no}番` : r.group_no ? `-${r.group_no}` : ""}
-                    <span className="ml-2 font-bold text-slate-600">{SHORT[r.role]}</span>
-                    {locked && <span className="ml-1 text-slate-400">（変更はデータベースから）</span>}
+                    <span className="ml-2 rounded bg-slate-200 px-1 py-0.5 font-bold text-slate-700">
+                      {SHORT[r.role]}
+                    </span>
                   </span>
+                </button>
+
+                <span className={`mt-1 shrink-0 text-slate-400 transition ${here ? "rotate-90" : ""}`}>
+                  ›
                 </span>
-              </button>
+              </div>
+
+              {/* その人の権限を変える欄 */}
+              {here && (
+                <div className="mt-1 rounded-xl bg-slate-900 p-2.5">
+                  <div className="mb-1.5 text-[10px] font-bold text-slate-400">
+                    権限を変える
+                    <span className="ml-1.5 font-normal text-slate-500">
+                      いまは「{ROLE_LABEL[r.role]}」
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {ASSIGNABLE.map((role) => {
+                      const current = role === r.role;
+                      return (
+                        <button
+                          key={role}
+                          disabled={busy || current}
+                          onClick={() => void apply(role, [r.id])}
+                          className={`rounded-lg px-2.5 py-2 text-[11px] font-bold transition active:scale-95 ${
+                            current
+                              ? "bg-white text-slate-900"
+                              : "bg-slate-700 text-white hover:bg-slate-600 disabled:opacity-40"
+                          }`}
+                        >
+                          {SHORT[role]}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {needsPw && (
+                    <>
+                      <input
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        type="password"
+                        placeholder="操作パスワード"
+                        className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        一度承認した人を変えるには必要です
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/*
                 メールが届かない人のための逃げ道。
@@ -305,46 +405,57 @@ export default function AdminPage() {
         )}
       </ul>
 
-      {/* まとめて権限を付ける */}
-      <div className="sticky bottom-0 mt-4 rounded-2xl bg-white/95 pt-3 backdrop-blur">
-        {needPassword && (
-          <>
-            <div className="mb-1 text-[11px] font-bold text-slate-500">操作パスワード</div>
+      {msg && (
+        <p
+          className={`mt-3 rounded-xl p-3 text-xs leading-relaxed ${
+            msg.kind === "ok" ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-800"
+          }`}
+        >
+          {msg.text}
+        </p>
+      )}
+
+      {/*
+        まとめて変える道。
+        ふだんは出さない。印を付けたときだけ下から出す。
+        常に置いておくと、誰に付けるのか目で追えないまま押せてしまう。
+      */}
+      {picked.length > 0 && (
+        <div className="sticky bottom-0 mt-4 rounded-2xl bg-white/95 pb-1 pt-3 backdrop-blur">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[11px] font-bold text-blue-700">
+              印を付けた {picked.length} 名にまとめて付ける
+            </span>
+            <button
+              onClick={() => setPicked([])}
+              className="rounded-lg px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-100"
+            >
+              印を外す
+            </button>
+          </div>
+          {needPassword && (
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               type="password"
-              placeholder="すでに承認した人を変えるには必要です"
+              placeholder="操作パスワード（承認済みの人を変えるとき）"
               className="mb-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
             />
-          </>
-        )}
-        <div className="grid grid-cols-5 gap-1.5">
-          {ASSIGNABLE.map((role) => (
-            <button
-              key={role}
-              disabled={busy || picked.length === 0}
-              onClick={() => void apply(role)}
-              className="rounded-lg bg-slate-900 px-1 py-2.5 text-[11px] font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
-            >
-              {SHORT[role]}
-            </button>
-          ))}
+          )}
+          <div className="grid grid-cols-5 gap-1.5">
+            {ASSIGNABLE.map((role) => (
+              <button
+                key={role}
+                disabled={busy}
+                onClick={() => void apply(role, picked)}
+                className="rounded-lg bg-slate-900 px-1 py-2.5 text-[11px] font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {SHORT[role]}
+              </button>
+            ))}
+          </div>
         </div>
-        <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
-          選んだ人にまとめて付けます。
-          <b>管理者Lv3 はここからは付けられません</b>（データベースから設定してください）。
-        </p>
-        {msg && (
-          <p
-            className={`mt-2 rounded-xl p-3 text-xs leading-relaxed ${
-              msg.kind === "ok" ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-800"
-            }`}
-          >
-            {msg.text}
-          </p>
-        )}
-      </div>
+      )}
     </Shell>
   );
 }

@@ -153,7 +153,7 @@ export default function RoomsPage() {
   if (!canEdit)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は管理者Lv3だけが使えます。</p>
+        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
         <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">
           ログインへ
         </Link>

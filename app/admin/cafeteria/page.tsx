@@ -206,7 +206,7 @@ export default function CafeteriaAdminPage() {
     return (
       <Shell>
         <p className="text-sm text-slate-700">
-          食堂の設定ができるのは、管理者Lv0 と Lv3 だけです。
+          食堂の設定ができるのは、食堂の担当だけです。
         </p>
         <p className="mt-1 text-xs text-slate-500">現在の権限：{ROLE_LABEL[role]}</p>
         <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">地図へ戻る</Link>

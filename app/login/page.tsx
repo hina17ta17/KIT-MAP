@@ -505,7 +505,14 @@ export default function LoginPage() {
         <p className="mt-4 text-sm text-slate-700">
           <b>{me.email}</b> {T("でログイン中")}
         </p>
-        <p className="mt-1 text-xs text-slate-500">{ROLE_LABEL[me.role]}</p>
+        {/*
+          いちばん上の権限だけは書かない。
+          肩越しに覗かれただけで、そういう席が在ることが分かってしまう。
+          何ができるかは、下に並ぶボタンを見れば足りる。
+        */}
+        {me.role !== "admin_l3" && (
+          <p className="mt-1 text-xs text-slate-500">{ROLE_LABEL[me.role]}</p>
+        )}
 
         {/* 権限がある人には、まずどこへ行けるかを見せる */}
         {me.role !== "pending" && (
@@ -878,10 +885,22 @@ function Msg({ msg }: { msg: { kind: "ok" | "err" | "info"; text: string } }) {
   );
 }
 
+/**
+ * 見出し。
+ *
+ * 字の太さは「KIT」と「map」で揃える。以前は細字と太字が混ざっていて、
+ * 一つの名前に見えなかった。
+ *
+ * 真ん中に置く。字間を空けてあるぶん、最後の字の右にも同じだけ空きが付く。
+ * そのままだと左に寄って見えるので、同じ幅を左に足して釣り合わせる。
+ */
 function Title() {
   return (
-    <Link href="/" className="text-xl font-light tracking-[0.18em] text-slate-900">
-      KIT<span className="ml-1.5 font-semibold">map</span>
+    <Link
+      href="/"
+      className="block pl-[0.18em] text-center text-xl font-semibold tracking-[0.18em] text-slate-900"
+    >
+      KIT<span className="ml-1.5">map</span>
     </Link>
   );
 }

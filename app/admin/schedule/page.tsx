@@ -467,7 +467,7 @@ export default function SchedulePage() {
   if (!canEvent)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は管理者Lv1以上が使えます。</p>
+        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
         <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">地図へ戻る</Link>
       </Shell>
     );
@@ -510,7 +510,7 @@ export default function SchedulePage() {
               }`}
             >
               {KIND_LABEL[k]}
-              {disabled && <span className="mt-0.5 block text-[9px] font-normal">Lv2以上</span>}
+              {disabled && <span className="mt-0.5 block text-[9px] font-normal">教授のみ</span>}
             </button>
           );
         })}
@@ -1012,7 +1012,7 @@ export default function SchedulePage() {
           )}
 
           <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-            消せるのは、自分で入れたものと管理者Lv3。授業は Lv2 も消せます。
+            消せるのは、自分で入れたもの。授業は教授も消せます。
           </p>
         </div>
       </div>
