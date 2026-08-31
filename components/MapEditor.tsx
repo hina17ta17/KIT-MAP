@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Map as MlMap,
-  Marker,
   NavigationControl,
   ScaleControl,
   type ExpressionSpecification,
@@ -11,6 +10,7 @@ import {
   type MapMouseEvent,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { EditorOverlay } from "@/components/EditorOverlay";
 import type { Feature, Polygon, Position } from "geojson";
 // @turf/turf（全部入り）ではなく個別パッケージを使う。
 // 全部入りは巨大で、開発時のコンパイルが数分単位で止まる原因になる。
@@ -51,6 +51,8 @@ import {
   guessFloor,
   PATH_KINDS,
   CHECKPOINT_KINDS,
+  ringCenter,
+  NEW_CHECKPOINT_KIND,
   ROOM_CATEGORIES,
   type BuildingProps,
   type CheckpointFeature,
@@ -124,6 +126,24 @@ function nearestCp(
   return best;
 }
 
+/**
+ * 描かれている図形を拾う。まだ出来ていない層は、訊く前に外す。
+ *
+ * MapLibre は、style に無い層の名前を渡されると例外を投げる。
+ * 層を作るのは地図の load を待ってからなのに、地図の上でマウスを
+ * 動かせるのはその前から。読み込みの数百ミリ秒のあいだに一度でも
+ * 動かすと、毎回これに当たっていた。
+ *
+ * 直し方として `ready` を見る手もあるが、それだと
+ * ・ホットリロードで古い listener が残っている
+ * ・層の作成が途中の層で失敗した
+ * といった場合を拾えない。訊く直前に、在るものだけへ絞る。
+ */
+function queryLayers(map: MlMap, point: MapMouseEvent["point"], ids: string[]) {
+  const live = ids.filter((id) => map.getLayer(id));
+  return live.length ? map.queryRenderedFeatures(point, { layers: live }) : [];
+}
+
 const MODE_LABEL: Record<Mode, string> = {
   none: "",
   campus: "敷地",
@@ -133,16 +153,6 @@ const MODE_LABEL: Record<Mode, string> = {
   child: "この先の場所",
   link: "接続",
 };
-
-/** リングの平均座標。ラベルの置き場所に使う（厳密な重心でなくてよい） */
-function ringCenter(ring: Position[]): [number, number] {
-  const pts = ring.slice(0, -1);
-  const sum = pts.reduce<[number, number]>(
-    (acc, p) => [acc[0] + p[0], acc[1] + p[1]],
-    [0, 0],
-  );
-  return [sum[0] / pts.length, sum[1] / pts.length];
-}
 
 function toPolygon(coords: Position[]): Polygon {
   return { type: "Polygon", coordinates: [[...coords, coords[0]]] };
@@ -189,10 +199,14 @@ function campusBbox(features: readonly Feature<Polygon, unknown>[]): Bbox {
   return b;
 }
 
+/** 一覧に一度に並べる行数と、[もっと出す] で増える数 */
+const ROW_STEP = 150;
+
 /** 外接矩形を度単位で広げる。0.002度 ≒ 200m */
 function padBbox(b: Bbox, pad: number): Bbox {
   return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
 }
+
 
 /**
  * どの組を編集するか。
@@ -208,16 +222,35 @@ export type EditorSource = "live" | "base";
 export default function MapEditor({ source = "live" }: { source?: EditorSource }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
-  const markersRef = useRef<Marker[]>([]);
-  /** チェックポイントのラベル。建物のラベルとは別に管理する */
-  const cpMarkersRef = useRef<Marker[]>([]);
+  /**
+   * 一覧に一度に並べる行数。
+   *
+   * CP 648 行・接続 729 行を全部並べると、タブを開くだけで 0.7 秒止まる。
+   * 出す数を絞って、足りなければ押して増やす。
+   * **減るのは画面に並ぶ行だけで、持っているデータは何も変わらない。**
+   */
+  const [rowLimit, setRowLimit] = useState(ROW_STEP);
+
   const [ready, setReady] = useState(false);
+  /**
+   * 地図の実体。ref とは別に state でも持つ。
+   * 子の部品へ渡すものなので、出来上がった時点で描き直しが要る。
+   * ref を描画中に読むと、出来上がっても子へ伝わらない。
+   */
+  const [mapObj, setMapObj] = useState<MlMap | null>(null);
   const readyRef = useRef(false);
   readyRef.current = ready;
 
   const [base, setBase] = useState<BaseId>("photo");
   /** 背景を暗くして通路を見やすくするか */
   const [dim, setDim] = useState(false);
+  /**
+   * 敷地の外を沈めるか。
+   *
+   * 初めは沈めておく。どこまでが敷地なのか、開いた瞬間に分かるほうがいい。
+   * 敷地の外にも道を引きたいときは切る。
+   */
+  const [focus, setFocus] = useState(true);
   /** 地図の向き（度・時計回り）。0 が北。ボタンの表示に使う */
   const [bearing, setBearing] = useState(0);
   /**
@@ -463,22 +496,19 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
 
     function buildLayers(map: MlMap) {
       const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
-      map.addSource("campus", { type: "geojson", data: empty });
       map.addSource("buildings", { type: "geojson", data: empty });
       map.addSource("draft", { type: "geojson", data: empty });
 
-      map.addLayer({
-        id: "campus-fill",
-        type: "fill",
-        source: "campus",
-        paint: { "fill-color": "#22c55e", "fill-opacity": 0.12 },
-      });
-      map.addLayer({
-        id: "campus-line",
-        type: "line",
-        source: "campus",
-        paint: { "line-color": "#16a34a", "line-width": 3, "line-dasharray": [2, 1] },
-      });
+      /*
+       * 敷地はここでは描かない。地図の上に重ねる SVG のほうで描く。
+       *
+       * この地図では MapLibre の層が絵にならない（背景の写真は出るが、
+       * 自前で足した fill も line も一枚も描かれない）。実際に
+       * 建物のソースへ不透明度 0.9 の水色を足して確かめても、何も出なかった。
+       * 敷地が見えなかったのは色が薄かったからではなく、これが理由。
+       *
+       * CPと接続を SVG に移してあるのも同じ事情。敷地も同じところへ寄せる。
+       */
 
       map.addLayer({
         id: "buildings-fill",
@@ -754,6 +784,7 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
           "circle-stroke-width": 2,
         },
       });
+
     }
 
     // ★ハンドラは ref 経由で呼ぶ。
@@ -769,10 +800,20 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
     ro.observe(containerRef.current);
 
     mapRef.current = map;
+    setMapObj(map);
+    /*
+     * 手元で調べものをするとき用。開発中だけ、窓から地図を触れるようにする。
+     * 「層は在るのに描かれない」といった話は、外から中を見ないと分からない。
+     * 作図ツールは公開ビルドに入らないが、念のため開発時だけに絞る。
+     */
+    if (process.env.NODE_ENV === "development") {
+      (window as unknown as { __kitMap?: MlMap }).__kitMap = map;
+    }
     return () => {
       ro.disconnect();
       map.remove();
       mapRef.current = null;
+      setMapObj(null);
     };
   }, []);
 
@@ -799,17 +840,17 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
           setSelected(nearCp.properties.id);
           return;
         }
-        const hitLink = map.queryRenderedFeatures(e.point, { layers: ["links-line"] });
+        const hitLink = queryLayers(map, e.point, ["links-line"]);
         if (hitLink.length) {
           setSelected(String(hitLink[0].properties?.id ?? ""));
           return;
         }
-        const hitPath = map.queryRenderedFeatures(e.point, { layers: ["paths-line"] });
+        const hitPath = queryLayers(map, e.point, ["paths-line"]);
         if (hitPath.length) {
           setSelected(String(hitPath[0].properties?.id ?? ""));
           return;
         }
-        const hit = map.queryRenderedFeatures(e.point, { layers: ["buildings-fill"] });
+        const hit = queryLayers(map, e.point, ["buildings-fill"]);
         setSelected(hit.length ? String(hit[0].properties?.tempId ?? "") : null);
         return;
       }
@@ -897,12 +938,24 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
           ? cpsNow.find((c) => c.properties.id === parentId)
           : undefined;
 
+        /*
+         * 置いた点は、まず通過点にする。
+         *
+         * 以前は外に置くと出入口、中に置くと通過点と分かれていた。
+         * 出入口には「到着とみなす場所」を決める仕事が付いてくるので、
+         * 道すじを引いているだけのつもりでも、相手の決まっていない
+         * 出入口が並んでしまう。
+         *
+         * 通過点なら、そのままでも道すじとしては正しい。
+         * 出入口や門にしたいものは、右の欄で種類を押し替える。
+         * 半径もそのとき、その種類の値に入れ替わる。
+         */
         const props: CheckpointProps = {
           id,
-          kind: parent ? "waypoint" : "entrance",
+          kind: NEW_CHECKPOINT_KIND,
           name: "",
           linkedTo: "",
-          radius: parent ? CHECKPOINT_KINDS[2].radius : CHECKPOINT_KINDS[0].radius,
+          radius: checkpointKindOf(NEW_CHECKPOINT_KIND).radius,
           note: "",
           level: parent ? parent.properties.level + 1 : 1,
           parents: parent ? [parent.properties.id] : [],
@@ -976,9 +1029,12 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
         map.getCanvas().style.cursor = "crosshair";
         return;
       }
-      const hit = map.queryRenderedFeatures(e.point, {
-        layers: ["buildings-fill", "paths-line", "links-line", "cp-circle"],
-      });
+      const hit = queryLayers(map, e.point, [
+        "buildings-fill",
+        "paths-line",
+        "links-line",
+        "cp-circle",
+      ]);
       map.getCanvas().style.cursor = hit.length ? "pointer" : "";
     }
   };
@@ -989,6 +1045,7 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
     const map = mapRef.current;
     if (!map || !ready) return;
     for (const id of BASE_ORDER) {
+      if (!map.getLayer(`base-${id}`)) continue;
       map.setLayoutProperty(`base-${id}`, "visibility", id === base ? "visible" : "none");
       // 航空写真は情報量が多く、通路の線が埋もれる。
       // 暗くして彩度を落とすと、上に乗せた線と建物だけが浮かび上がる
@@ -1008,7 +1065,7 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
      * 一度実行し、まだなら落ち着いた時点（idle）でもう一度実行する。
      */
     const apply = () => {
-    (map.getSource("campus") as GeoJSONSource)?.setData(data.campus);
+    // 敷地はここでは渡さない。SVG のほうで描いている
 
     (map.getSource("paths") as GeoJSONSource)?.setData({
       type: "FeatureCollection",
@@ -1134,48 +1191,17 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
       })),
     });
 
-    // ラベルは HTML マーカーで出す（ラスタのみのスタイルには glyphs が無いため）
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = !showBuildingLabels ? [] : data.buildings.features.map((f) => {
-      const cat = categoryOf(f.properties.category);
-      const el = document.createElement("div");
-      el.textContent = buildingLabel(f.properties);
-      el.className =
-        "px-1.5 py-0.5 rounded text-[11px] font-bold leading-none whitespace-nowrap " +
-        "shadow-sm pointer-events-none border";
-      // 名称が入っているものは種別色で塗り、未入力のものは白地にして区別する
-      if (isNamed(f.properties)) {
-        el.style.backgroundColor = cat.color;
-        el.style.borderColor = cat.lineColor;
-        el.style.color = cat.textColor;
-      } else {
-        el.style.backgroundColor = "rgba(255,255,255,0.7)";
-        el.style.borderColor = cat.lineColor;
-        el.style.color = cat.lineColor;
-      }
-      return new Marker({ element: el })
-        .setLngLat(ringCenter(f.geometry.coordinates[0]))
-        .addTo(map);
-    });
-
-    // チェックポイントのラベル。どの点がどれか地図上で見分けられるようにする。
-    // 点が重なって読めなくならないよう、丸の少し上に小さく出す。
-    cpMarkersRef.current.forEach((m) => m.remove());
-    cpMarkersRef.current = !showCpLabels ? [] : cps.map((f) => {
-      const k = checkpointKindOf(f.properties.kind);
-      const el = document.createElement("div");
-      el.textContent = f.properties.name || f.properties.id;
-      el.className =
-        "px-1 py-0.5 rounded text-[10px] font-bold leading-none whitespace-nowrap " +
-        "shadow-sm pointer-events-none border";
-      const on = f.properties.id === selected || f.properties.id === linkFrom;
-      el.style.backgroundColor = on ? "#ea580c" : "rgba(255,255,255,0.92)";
-      el.style.borderColor = on ? "#ea580c" : k.color;
-      el.style.color = on ? "#ffffff" : k.color;
-      return new Marker({ element: el, offset: [0, -14] })
-        .setLngLat(f.geometry.coordinates as [number, number])
-        .addTo(map);
-    });
+    /*
+     * ラベルはここでは作らない。
+     *
+     * 以前は MapLibre のマーカー（建物42＋CP名648＝690個）で出していた。
+     * マーカーは1コマごとに全部の位置を書き換えるので、地図を動かすたびに
+     * 690回の書き換えが走り、実測で1コマ127ms（約8fps）まで落ちていた。
+     * 座標の計算そのものは648個で0.3msしかかからず、重かったのは
+     * 置いた要素の数のほう。
+     *
+     * いまは地図の上に重ねた層で、画面に出ているものだけを描いている。
+     */
     };
 
     apply();
@@ -1191,168 +1217,6 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
 
   /* ---------------- 地図の上に重ねる描画 ---------------- */
 
-  /**
-   * MapLibre のレイヤ経由の描画が反映されないため、
-   * CPと接続だけは地図の上に SVG を重ねて自前で描く。
-   * 地図が動くたびに座標を計算し直す。
-   */
-  const [viewTick, setViewTick] = useState(0);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return;
-
-    /*
-     * 描き直しの合図は、1フレームに1回までにまとめる。
-     *
-     * 指で拡大縮小しているあいだ、MapLibre は move と zoom を
-     * どちらも毎フレーム出す。そのまま受けると1フレームに2回、
-     * 点と線を全部描き直すことになる。
-     */
-    let raf = 0;
-    const bump = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        setViewTick((v) => v + 1);
-      });
-    };
-    for (const ev of ["move", "zoom", "rotate", "resize", "load"] as const) {
-      map.on(ev, bump);
-    }
-    bump();
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      for (const ev of ["move", "zoom", "rotate", "resize", "load"] as const) {
-        map.off(ev, bump);
-      }
-    };
-  }, [ready]);
-
-  /**
-   * 画面座標に変換したCPと接続。viewTick が変わるたびに作り直す。
-   *
-   * 画面の外にあるものは省く。以前は持っている点と線を全部描いていたため、
-   * 648点・729本では毎フレーム 2,900 個ほどの図形を組み直していた。
-   * 寄って作業しているときは、そのほとんどが画面の外にある。
-   *
-   * 線は「両端とも画面の外」のときだけ省く。片方でも入っていれば、
-   * 画面をまたぐ線として描く必要がある。
-   */
-  const overlay = useMemo(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return null;
-    void viewTick; // 地図が動いたら作り直すための依存
-
-    const box = map.getContainer();
-    // 少しはみ出したところまで描く。端で線が切れて見えないように
-    const M = 200;
-    const W = box.clientWidth + M;
-    const H = box.clientHeight + M;
-    const onScreen = (p: { x: number; y: number }) =>
-      p.x > -M && p.y > -M && p.x < W && p.y < H;
-
-    const all = data.checkpoints.features as CheckpointFeature[];
-    const pos = new Map<string, { x: number; y: number }>();
-    const cps: CheckpointFeature[] = [];
-    for (const c of all) {
-      const [lon, lat] = c.geometry.coordinates;
-      const q = map.project([lon, lat]);
-      const p = { x: q.x, y: q.y };
-      // 線を引くには画面外の端点の座標も要るので、位置は全部覚えておく
-      pos.set(c.properties.id, p);
-      if (onScreen(p)) cps.push(c);
-    }
-
-    const lines = data.links.flatMap((l) => {
-      const a = pos.get(l.from);
-      const b = pos.get(l.to);
-      if (!a || !b) return [];
-      if (!onScreen(a) && !onScreen(b)) return [];
-      return [{ l, a, b }];
-    });
-
-    const hier = all.flatMap((c) =>
-      c.properties.parents.flatMap((pid) => {
-        const a = pos.get(pid);
-        const b = pos.get(c.properties.id);
-        if (!a || !b) return [];
-        if (!onScreen(a) && !onScreen(b)) return [];
-        return [{ a, b, key: `${pid}-${c.properties.id}` }];
-      }),
-    );
-
-    return { cps, pos, lines, hier };
-  }, [data.checkpoints.features, data.links, ready, viewTick]);
-
-  /**
-   * 見た目の同じものを、1本の <path> にまとめる。
-   *
-   * 以前は接続1本ごとに <g> と <line> 2本、CP1つごとに <circle> を作っていた。
-   * 648点・729本では 2,900 個ほどになり、地図を動かすたびに
-   * その全部を組み直していた。点や線を増やすほど重くなる作りだった。
-   *
-   * 描く中身は同じでも、まとめてしまえば十数個で済む。
-   * 線の形は「M 始点 L 終点」を並べるだけ、丸は円弧2つで描ける。
-   */
-  const shapes = useMemo(() => {
-    if (!overlay) return null;
-    const xy = (p: { x: number; y: number }) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
-    const seg = (a: { x: number; y: number }, b: { x: number; y: number }) =>
-      `M${xy(a)}L${xy(b)}`;
-
-    /* 接続。縁取りは太さごと、中身は色と太さと点線の別ごとにまとめる */
-    const casing = new Map<number, string[]>();
-    const core = new Map<string, { color: string; width: number; dash?: string; d: string[] }>();
-    for (const { l, a, b } of overlay.lines) {
-      const k = pathKindOf(l.kind);
-      const w = k.width + 2.5;
-      const s = seg(a, b);
-
-      const cw = w + 4;
-      const c = casing.get(cw);
-      if (c) c.push(s);
-      else casing.set(cw, [s]);
-
-      const color = l.id === selected ? "#f97316" : !l.enabled ? "#94a3b8" : k.color;
-      const dash = l.enabled ? undefined : "6 4";
-      const key = `${color}|${w}|${dash ?? ""}`;
-      const g = core.get(key);
-      if (g) g.d.push(s);
-      else core.set(key, { color, width: w, dash, d: [s] });
-    }
-
-    /* チェックポイント。選んでいるものだけは上に重ねたいので分けておく */
-    const dots = new Map<string, { fill: string; stroke: string; d: string[] }>();
-    const picked: { key: string; x: number; y: number }[] = [];
-    for (const c of overlay.cps) {
-      const p = overlay.pos.get(c.properties.id);
-      if (!p) continue;
-      if (c.properties.id === selected || c.properties.id === linkFrom) {
-        picked.push({ key: c.properties.id, x: p.x, y: p.y });
-        continue;
-      }
-      const k = checkpointKindOf(c.properties.kind);
-      const first = c.properties.level === 1;
-      const r = first ? 6 : 4.5;
-      const fill = k.color;
-      const stroke = first ? "#ffffff" : "#7c3aed";
-      // 円弧を2つつないで丸を描く
-      const d = `M${(p.x - r).toFixed(1)} ${p.y.toFixed(1)}a${r} ${r} 0 1 0 ${r * 2} 0a${r} ${r} 0 1 0 ${-r * 2} 0`;
-      const key = `${fill}|${stroke}|${r}`;
-      const g = dots.get(key);
-      if (g) g.d.push(d);
-      else dots.set(key, { fill, stroke, d: [d] });
-    }
-
-    return {
-      hier: overlay.hier.map(({ a, b }) => seg(a, b)).join(""),
-      casing: [...casing].map(([width, d]) => ({ width, d: d.join("") })),
-      core: [...core].map(([key, g]) => ({ key, color: g.color, width: g.width, dash: g.dash, d: g.d.join("") })),
-      dots: [...dots].map(([key, g]) => ({ key, fill: g.fill, stroke: g.stroke, d: g.d.join("") })),
-      picked,
-    };
-  }, [overlay, selected, linkFrom]);
 
   /** 選んだものに応じてタブを切り替える。編集欄が隠れたままにならないように */
   useEffect(() => {
@@ -1630,6 +1494,18 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
     const [lon, lat] = f.geometry.coordinates;
     mapRef.current?.flyTo({ center: [lon, lat], zoom: 19 });
     setSelected(f.properties.id);
+  };
+
+  /** その敷地が画面に収まるところまで引く。決めた形を確かめるため */
+  const flyToCampus = (f: Feature<Polygon, unknown>) => {
+    const [w, s, e, n] = campusBbox([f]);
+    mapRef.current?.fitBounds(
+      [
+        [w, s],
+        [e, n],
+      ],
+      { padding: 60, duration: 600 },
+    );
   };
 
   const importFile = async (file: File) => {
@@ -2189,6 +2065,17 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
           {dim ? "背景を戻す" : "背景を暗く"}
         </button>
 
+        {/* 敷地の外を沈めて、境目をはっきりさせる */}
+        <button
+          onClick={() => setFocus((v) => !v)}
+          title="敷地の外を暗くして、どこまでが敷地か分かるようにする"
+          className={`ml-1 rounded px-3 py-1.5 text-xs font-medium transition ${
+            focus ? "bg-emerald-600 text-white" : "text-slate-700 hover:bg-slate-100"
+          }`}
+        >
+          {focus ? "敷地の外を戻す" : "敷地を際立たせる"}
+        </button>
+
         {/* 地図の向き。傾いた建物をなぞるとき、正対させると角が打ちやすい */}
         <span className="mx-1 inline-block h-4 w-px align-middle bg-slate-300" />
         <button
@@ -2243,67 +2130,21 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
         </button>
       </div>
 
-      {/* CPと接続を地図の上に直接描く。MapLibre のレイヤに依存しない */}
-      {shapes && (
-        <svg
-          className="pointer-events-none absolute inset-0"
-          style={{ zIndex: 5 }}
-          width="100%"
-          height="100%"
-        >
-          {/* 親子関係。通らないと入れない道すじ */}
-          {shapes.hier && (
-            <path
-              d={shapes.hier}
-              fill="none"
-              stroke="#7c3aed"
-              strokeWidth={2.5}
-              strokeDasharray="4 3"
-            />
-          )}
-
-          {/* 接続。案内が通る区間。
-              濃紺の縁取りを先に全部敷いてから中身を描く。写真の上でも見える */}
-          {shapes.casing.map((g) => (
-            <path
-              key={g.width}
-              d={g.d}
-              fill="none"
-              stroke="#0f172a"
-              strokeWidth={g.width}
-              strokeLinecap="round"
-              opacity={0.9}
-            />
-          ))}
-          {shapes.core.map((g) => (
-            <path
-              key={g.key}
-              d={g.d}
-              fill="none"
-              stroke={g.color}
-              strokeWidth={g.width}
-              strokeLinecap="round"
-              strokeDasharray={g.dash}
-            />
-          ))}
-
-          {/* チェックポイント。選んでいるものは最後に描いて隠れないようにする */}
-          {shapes.dots.map((g) => (
-            <path key={g.key} d={g.d} fill={g.fill} stroke={g.stroke} strokeWidth={2.5} />
-          ))}
-          {shapes.picked.map((p) => (
-            <circle
-              key={p.key}
-              cx={p.x}
-              cy={p.y}
-              r={9}
-              fill="#ea580c"
-              stroke="#ea580c"
-              strokeWidth={2.5}
-            />
-          ))}
-        </svg>
-      )}
+      {/*
+        地図と一緒に動くもの（敷地・CP・接続・ラベル）。
+        別の部品にしてある。地図を動かすと1コマごとに座標を計算し直すが、
+        ここから下の一覧まで作り直すと重い（実測 8fps）。
+      */}
+      <EditorOverlay
+        map={mapObj}
+        ready={ready}
+        data={data}
+        selected={selected}
+        linkFrom={linkFrom}
+        showBuildingLabels={showBuildingLabels}
+        showCpLabels={showCpLabels}
+        focus={focus}
+      />
 
       {/* 作図の進み具合。地図を見たまま数で確認できるようにする */}
       <div className="absolute left-1/2 top-16 z-10 -translate-x-1/2 rounded-full bg-slate-900/90 px-3 py-1.5 text-[11px] font-bold text-white shadow-lg">
@@ -2682,184 +2523,197 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
         )}
 
         {/* 敷地 */}
-        <section className={tab === "places" ? "" : "hidden"}>
-          <h2 className="mb-1 text-xs font-bold text-slate-900">
-            敷地（{data.campus.features.length}）
-          </h2>
-          {data.campus.features.length === 0 ? (
-            <p className="text-[11px] text-slate-500">未作成</p>
-          ) : (
-            <ul className="space-y-1">
-              {data.campus.features.map((f, i) => (
-                <li
-                  key={i}
-                  className="flex items-center justify-between rounded bg-emerald-50 px-2 py-1 text-[11px] ring-1 ring-emerald-200"
-                >
-                  <span className="text-slate-800">
-                    {f.properties.name}（{f.geometry.coordinates[0].length - 1}頂点）
-                  </span>
-                  <button
-                    onClick={() => removeCampus(i)}
-                    className="text-red-600 hover:underline"
-                  >
-                    削除
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        {tab === "places" && (
+                  <section>
+                    <h2 className="mb-1 text-xs font-bold text-slate-900">
+                      敷地（{data.campus.features.length}）
+                    </h2>
+                    {data.campus.features.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">未作成</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {data.campus.features.map((f, i) => (
+                          <li
+                            key={i}
+                            className="flex items-center justify-between rounded bg-emerald-50 px-2 py-1 text-[11px] ring-1 ring-emerald-200"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-slate-800">
+                              {f.properties.name}（{f.geometry.coordinates[0].length - 1}頂点）
+                            </span>
+                            {/* 決めた形をその場で確かめられるように */}
+                            <button
+                              onClick={() => flyToCampus(f as Feature<Polygon, unknown>)}
+                              className="ml-1 shrink-0 rounded bg-emerald-600 px-2 py-0.5 font-bold text-white hover:bg-emerald-700"
+                            >
+                              ここへ寄る
+                            </button>
+                            <button
+                              onClick={() => removeCampus(i)}
+                              className="ml-1.5 shrink-0 text-red-600 hover:underline"
+                            >
+                              削除
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+        )}
 
         {/* 建物 */}
-        <section className={`flex-1 ${tab === "places" ? "" : "hidden"}`}>
-          <h2 className="mb-1 text-xs font-bold text-slate-900">
-            場所（{data.buildings.features.length}）
-            <span className="ml-1 font-normal text-slate-500">名称 入力済 {named}</span>
-          </h2>
-          {/* 色の意味が分からないと地図が読めないので凡例を出す */}
-          <div className="mb-1.5 flex flex-wrap gap-x-2 gap-y-0.5">
-            {CATEGORIES.map((c) => (
-              <span key={c.id} className="text-[10px] text-slate-600">
-                <span
-                  className="mr-0.5 inline-block h-2 w-2 rounded-full border align-middle"
-                  style={{ backgroundColor: c.color, borderColor: c.lineColor }}
-                />
-                {c.label}
-              </span>
-            ))}
-          </div>
-          {data.buildings.features.length === 0 ? (
-            <p className="text-[11px] text-slate-500">未作成</p>
-          ) : (
-            <>
-              {/* 範囲違いのデータを取り込んでしまったときに、1件ずつ消さずに済むようにする */}
-              <button
-                onClick={clearBuildings}
-                className="mb-1.5 w-full rounded border border-red-300 px-2 py-1 text-[10px] font-bold text-red-700 hover:bg-red-50"
-              >
-                場所 {data.buildings.features.length} 件をすべて削除
-              </button>
-              <ul className="space-y-1">
-                {(data.buildings.features as BuildingFeature[]).map((f) => (
-                  <li key={f.properties.tempId}>
-                    <button
-                      onClick={() => flyTo(f)}
-                      className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
-                        selected === f.properties.tempId
-                          ? "bg-orange-100 ring-orange-400"
-                          : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
-                      }`}
-                    >
-                      <span
-                        className="mr-1.5 inline-block h-2 w-2 rounded-full border align-middle"
-                        style={{
-                          backgroundColor: categoryOf(f.properties.category).color,
-                          borderColor: categoryOf(f.properties.category).lineColor,
-                        }}
-                        title={categoryOf(f.properties.category).label}
-                      />
-                      <span className="font-mono text-slate-500">{f.properties.tempId}</span>
-                      <span className="ml-2 font-bold text-slate-900">
-                        {isNamed(f.properties) ? buildingLabel(f.properties) : "（名称未入力）"}
-                      </span>
-                      {(roomCount.get(f.properties.tempId) ?? 0) > 0 && (
-                        <span className="ml-1 text-slate-500">
-                          {roomCount.get(f.properties.tempId)}室
+        {tab === "places" && (
+                  <section className="flex-1">
+                    <h2 className="mb-1 text-xs font-bold text-slate-900">
+                      場所（{data.buildings.features.length}）
+                      <span className="ml-1 font-normal text-slate-500">名称 入力済 {named}</span>
+                    </h2>
+                    {/* 色の意味が分からないと地図が読めないので凡例を出す */}
+                    <div className="mb-1.5 flex flex-wrap gap-x-2 gap-y-0.5">
+                      {CATEGORIES.map((c) => (
+                        <span key={c.id} className="text-[10px] text-slate-600">
+                          <span
+                            className="mr-0.5 inline-block h-2 w-2 rounded-full border align-middle"
+                            style={{ backgroundColor: c.color, borderColor: c.lineColor }}
+                          />
+                          {c.label}
                         </span>
-                      )}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
+                      ))}
+                    </div>
+                    {data.buildings.features.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">未作成</p>
+                    ) : (
+                      <>
+                        {/* 範囲違いのデータを取り込んでしまったときに、1件ずつ消さずに済むようにする */}
+                        <button
+                          onClick={clearBuildings}
+                          className="mb-1.5 w-full rounded border border-red-300 px-2 py-1 text-[10px] font-bold text-red-700 hover:bg-red-50"
+                        >
+                          場所 {data.buildings.features.length} 件をすべて削除
+                        </button>
+                        <ul className="space-y-1">
+                          {(data.buildings.features as BuildingFeature[]).map((f) => (
+                            <li key={f.properties.tempId}>
+                              <button
+                                onClick={() => flyTo(f)}
+                                className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
+                                  selected === f.properties.tempId
+                                    ? "bg-orange-100 ring-orange-400"
+                                    : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                <span
+                                  className="mr-1.5 inline-block h-2 w-2 rounded-full border align-middle"
+                                  style={{
+                                    backgroundColor: categoryOf(f.properties.category).color,
+                                    borderColor: categoryOf(f.properties.category).lineColor,
+                                  }}
+                                  title={categoryOf(f.properties.category).label}
+                                />
+                                <span className="font-mono text-slate-500">{f.properties.tempId}</span>
+                                <span className="ml-2 font-bold text-slate-900">
+                                  {isNamed(f.properties) ? buildingLabel(f.properties) : "（名称未入力）"}
+                                </span>
+                                {(roomCount.get(f.properties.tempId) ?? 0) > 0 && (
+                                  <span className="ml-1 text-slate-500">
+                                    {roomCount.get(f.properties.tempId)}室
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </section>
+        )}
 
         {/* 通路（参考線） */}
-        <section className={tab === "route" ? "" : "hidden"}>
-          <h2 className="mb-1 text-xs font-bold text-slate-900">
-            参考線（{data.paths.features.length}）
-            <span className="ml-1 font-normal text-slate-500">
-              計 {pathTotal >= 1000 ? `${(pathTotal / 1000).toFixed(2)}km` : `${Math.round(pathTotal)}m`}
-              ／案内には使いません
-            </span>
-          </h2>
+        {tab === "route" && (
+                  <section>
+                    <h2 className="mb-1 text-xs font-bold text-slate-900">
+                      参考線（{data.paths.features.length}）
+                      <span className="ml-1 font-normal text-slate-500">
+                        計 {pathTotal >= 1000 ? `${(pathTotal / 1000).toFixed(2)}km` : `${Math.round(pathTotal)}m`}
+                        ／案内には使いません
+                      </span>
+                    </h2>
 
-          {data.paths.features.length === 0 ? (
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              未作成。[通路を描く] は<b>下書き用</b>です。チェックポイントを置く位置の
-              目安として道をなぞりたいときに使ってください。案内に使われるのは
-              <b>接続</b>だけです。
-            </p>
-          ) : (
-            <>
-              {/* つながっていない端点は経路が大回りする原因になるので目立たせる */}
-              {dangling.length > 0 ? (
-                <div className="mb-1.5 rounded bg-red-50 p-1.5 text-[10px] leading-relaxed text-red-800 ring-1 ring-red-300">
-                  <b>つながっていない端点が {dangling.length} 箇所</b>あります（地図上の赤い丸）。
-                  交差点で他の線とつながっていないと、そこを曲がれず遠回りの経路になります。
-                  端点の近く（{SNAP_METERS}m以内）をクリックすると自動で吸着します。
-                </div>
-              ) : (
-                <div className="mb-1.5 rounded bg-emerald-50 p-1.5 text-[10px] text-emerald-800 ring-1 ring-emerald-300">
-                  ✓ すべての端点がつながっています
-                </div>
-              )}
+                    {data.paths.features.length === 0 ? (
+                      <p className="text-[11px] leading-relaxed text-slate-500">
+                        未作成。[通路を描く] は<b>下書き用</b>です。チェックポイントを置く位置の
+                        目安として道をなぞりたいときに使ってください。案内に使われるのは
+                        <b>接続</b>だけです。
+                      </p>
+                    ) : (
+                      <>
+                        {/* つながっていない端点は経路が大回りする原因になるので目立たせる */}
+                        {dangling.length > 0 ? (
+                          <div className="mb-1.5 rounded bg-red-50 p-1.5 text-[10px] leading-relaxed text-red-800 ring-1 ring-red-300">
+                            <b>つながっていない端点が {dangling.length} 箇所</b>あります（地図上の赤い丸）。
+                            交差点で他の線とつながっていないと、そこを曲がれず遠回りの経路になります。
+                            端点の近く（{SNAP_METERS}m以内）をクリックすると自動で吸着します。
+                          </div>
+                        ) : (
+                          <div className="mb-1.5 rounded bg-emerald-50 p-1.5 text-[10px] text-emerald-800 ring-1 ring-emerald-300">
+                            ✓ すべての端点がつながっています
+                          </div>
+                        )}
 
-              {/* 通路が届いていない場所は、その場所への行き方を案内できない */}
-              {unreachable.length > 0 && (
-                <div className="mb-1.5 rounded bg-amber-50 p-1.5 text-[10px] leading-relaxed text-amber-900 ring-1 ring-amber-300">
-                  <b>通路が届いていない場所が {unreachable.length} 件</b>あります
-                  （{REACH_METERS}m以内に通路なし）。ここへの行き方は案内できません。
-                  <ul className="mt-1 space-y-0.5">
-                    {unreachable.slice(0, 8).map(({ f, d }) => (
-                      <li key={f.properties.tempId}>
-                        <button
-                          onClick={() => flyTo(f)}
-                          className="underline hover:no-underline"
-                        >
-                          {buildingLabel(f.properties)}
-                        </button>
-                        <span className="ml-1 opacity-70">
-                          {Number.isFinite(d) ? `約${Math.round(d)}m` : "通路なし"}
-                        </span>
-                      </li>
-                    ))}
-                    {unreachable.length > 8 && <li>ほか {unreachable.length - 8} 件</li>}
-                  </ul>
-                </div>
-              )}
+                        {/* 通路が届いていない場所は、その場所への行き方を案内できない */}
+                        {unreachable.length > 0 && (
+                          <div className="mb-1.5 rounded bg-amber-50 p-1.5 text-[10px] leading-relaxed text-amber-900 ring-1 ring-amber-300">
+                            <b>通路が届いていない場所が {unreachable.length} 件</b>あります
+                            （{REACH_METERS}m以内に通路なし）。ここへの行き方は案内できません。
+                            <ul className="mt-1 space-y-0.5">
+                              {unreachable.slice(0, 8).map(({ f, d }) => (
+                                <li key={f.properties.tempId}>
+                                  <button
+                                    onClick={() => flyTo(f)}
+                                    className="underline hover:no-underline"
+                                  >
+                                    {buildingLabel(f.properties)}
+                                  </button>
+                                  <span className="ml-1 opacity-70">
+                                    {Number.isFinite(d) ? `約${Math.round(d)}m` : "通路なし"}
+                                  </span>
+                                </li>
+                              ))}
+                              {unreachable.length > 8 && <li>ほか {unreachable.length - 8} 件</li>}
+                            </ul>
+                          </div>
+                        )}
 
-              <ul className="space-y-1">
-                {(data.paths.features as PathFeature[]).map((f) => {
-                  const k = pathKindOf(f.properties.kind);
-                  const len = lineLength(f.geometry.coordinates);
-                  return (
-                    <li key={f.properties.id}>
-                      <button
-                        onClick={() => setSelected(f.properties.id)}
-                        className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
-                          selected === f.properties.id
-                            ? "bg-orange-100 ring-orange-400"
-                            : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
-                        }`}
-                      >
-                        <span
-                          className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
-                          style={{ backgroundColor: k.color }}
-                        />
-                        <span className="font-mono text-slate-500">{f.properties.id}</span>
-                        <span className="ml-2 text-slate-900">{k.label}</span>
-                        <span className="ml-1 text-slate-500">{Math.round(len)}m</span>
-                        {f.properties.roofed && <span className="ml-1">☂</span>}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-        </section>
+                        <ul className="space-y-1">
+                          {(data.paths.features as PathFeature[]).map((f) => {
+                            const k = pathKindOf(f.properties.kind);
+                            const len = lineLength(f.geometry.coordinates);
+                            return (
+                              <li key={f.properties.id}>
+                                <button
+                                  onClick={() => setSelected(f.properties.id)}
+                                  className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
+                                    selected === f.properties.id
+                                      ? "bg-orange-100 ring-orange-400"
+                                      : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  <span
+                                    className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                                    style={{ backgroundColor: k.color }}
+                                  />
+                                  <span className="font-mono text-slate-500">{f.properties.id}</span>
+                                  <span className="ml-2 text-slate-900">{k.label}</span>
+                                  <span className="ml-1 text-slate-500">{Math.round(len)}m</span>
+                                  {f.properties.roofed && <span className="ml-1">☂</span>}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </>
+                    )}
+                  </section>
+        )}
 
         {/* 選択中の通路の編集 */}
         {selectedPath && (
@@ -2946,150 +2800,177 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
         )}
 
         {/* チェックポイント */}
-        <section className={tab === "route" ? "" : "hidden"}>
-          <h2 className="mb-1 text-xs font-bold text-slate-900">
-            チェックポイント（{data.checkpoints.features.length}）
-          </h2>
+        {tab === "route" && (
+                  <section>
+                    <h2 className="mb-1 text-xs font-bold text-slate-900">
+                      チェックポイント（{data.checkpoints.features.length}）
+                    </h2>
 
-          {data.checkpoints.features.length === 0 ? (
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              未作成。[CPを置く] で出入口に点を打つと、そこに入ったときに
-              「到着した」と判定できるようになります。
-            </p>
-          ) : (
-            <>
-              {noEntrance.length > 0 && (
-                <div className="mb-1.5 rounded bg-amber-50 p-1.5 text-[10px] leading-relaxed text-amber-900 ring-1 ring-amber-300">
-                  <b>到着判定がない場所が {noEntrance.length} 件</b>あります。
-                  出入口にCPを置いて「到着とみなす場所」に紐づけてください。
-                </div>
-              )}
-              {orphans.length > 0 && (
-                <div className="mb-1.5 rounded bg-red-50 p-1.5 text-[10px] leading-relaxed text-red-800 ring-1 ring-red-300">
-                  <b>入口が設定されていないCPが {orphans.length} 件</b>あります
-                  （{orphans.map((o) => o.properties.id).slice(0, 6).join(" / ")}）。
-                  レベル2以上なのに親が無いため、<b>どこからも入れません。</b>
-                </div>
-              )}
-              <ul className="space-y-1">
-                {(data.checkpoints.features as CheckpointFeature[]).map((f) => {
-                  const k = checkpointKindOf(f.properties.kind);
-                  const target = (data.buildings.features as BuildingFeature[]).find(
-                    (b) => b.properties.tempId === f.properties.linkedTo,
-                  );
-                  return (
-                    <li key={f.properties.id}>
-                      <button
-                        onClick={() => flyToCp(f)}
-                        title="クリックすると地図がその位置へ移動します"
-                        className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
-                          selected === f.properties.id
-                            ? "bg-orange-100 ring-orange-400"
-                            : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
-                        }`}
-                      >
-                        <span
-                          className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
-                          style={{ backgroundColor: k.color }}
-                        />
-                        <span className="font-mono text-slate-500">{f.properties.id}</span>
-                        {f.properties.level > 1 && (
-                          <span className="ml-1 rounded bg-violet-100 px-1 text-[9px] font-bold text-violet-800">
-                            Lv{f.properties.level}
-                          </span>
+                    {data.checkpoints.features.length === 0 ? (
+                      <p className="text-[11px] leading-relaxed text-slate-500">
+                        未作成。[CPを置く] で出入口に点を打つと、そこに入ったときに
+                        「到着した」と判定できるようになります。
+                      </p>
+                    ) : (
+                      <>
+                        {noEntrance.length > 0 && (
+                          <div className="mb-1.5 rounded bg-amber-50 p-1.5 text-[10px] leading-relaxed text-amber-900 ring-1 ring-amber-300">
+                            <b>到着判定がない場所が {noEntrance.length} 件</b>あります。
+                            出入口にCPを置いて「到着とみなす場所」に紐づけてください。
+                          </div>
                         )}
-                        <span className="ml-1.5 text-slate-900">
-                          {f.properties.name || k.label}
-                        </span>
-                        <span className="ml-1 text-slate-500">{f.properties.radius}m</span>
-                        {target && (
-                          <span className="ml-1 text-emerald-700">
-                            → {buildingLabel(target.properties)}
-                          </span>
+                        {orphans.length > 0 && (
+                          <div className="mb-1.5 rounded bg-red-50 p-1.5 text-[10px] leading-relaxed text-red-800 ring-1 ring-red-300">
+                            <b>入口が設定されていないCPが {orphans.length} 件</b>あります
+                            （{orphans.map((o) => o.properties.id).slice(0, 6).join(" / ")}）。
+                            レベル2以上なのに親が無いため、<b>どこからも入れません。</b>
+                          </div>
                         )}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-        </section>
+                        <ul className="space-y-1">
+                          {(data.checkpoints.features as CheckpointFeature[]).slice(0, rowLimit).map((f) => {
+                            const k = checkpointKindOf(f.properties.kind);
+                            const target = (data.buildings.features as BuildingFeature[]).find(
+                              (b) => b.properties.tempId === f.properties.linkedTo,
+                            );
+                            return (
+                              <li key={f.properties.id}>
+                                <button
+                                  onClick={() => flyToCp(f)}
+                                  title="クリックすると地図がその位置へ移動します"
+                                  className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
+                                    selected === f.properties.id
+                                      ? "bg-orange-100 ring-orange-400"
+                                      : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
+                                  }`}
+                                >
+                                  <span
+                                    className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                                    style={{ backgroundColor: k.color }}
+                                  />
+                                  <span className="font-mono text-slate-500">{f.properties.id}</span>
+                                  {f.properties.level > 1 && (
+                                    <span className="ml-1 rounded bg-violet-100 px-1 text-[9px] font-bold text-violet-800">
+                                      Lv{f.properties.level}
+                                    </span>
+                                  )}
+                                  <span className="ml-1.5 text-slate-900">
+                                    {f.properties.name || k.label}
+                                  </span>
+                                  <span className="ml-1 text-slate-500">{f.properties.radius}m</span>
+                                  {target && (
+                                    <span className="ml-1 text-emerald-700">
+                                      → {buildingLabel(target.properties)}
+                                    </span>
+                                  )}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+
+                        {data.checkpoints.features.length > rowLimit && (
+                          <button
+                            onClick={() => setRowLimit((v) => v + ROW_STEP)}
+                            className="mt-1 w-full rounded bg-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-300"
+                          >
+                            残り {data.checkpoints.features.length - rowLimit} 件を出す
+                            <span className="ml-1 font-normal text-slate-500">
+                              （並べる行を減らしているだけで、データは全部あります）
+                            </span>
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </section>
+        )}
 
         {/* 接続（経路グラフ） */}
-        <section className={tab === "route" ? "" : "hidden"}>
-          <h2 className="mb-1 text-xs font-bold text-slate-900">
-            接続（{data.links.length}）
-            <span className="ml-1 font-normal text-slate-500">
-              案内はここだけを通ります
-            </span>
-          </h2>
+        {tab === "route" && (
+                  <section>
+                    <h2 className="mb-1 text-xs font-bold text-slate-900">
+                      接続（{data.links.length}）
+                      <span className="ml-1 font-normal text-slate-500">
+                        案内はここだけを通ります
+                      </span>
+                    </h2>
 
-          {data.links.length === 0 ? (
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              未作成。[CP同士をつなぐ] でチェックポイントを2つ押すと、その区間が通れるようになります。
-              つないでいない区間は通れません。
-            </p>
-          ) : (
-            <>
-              {/* グラフが分断されていると、その先へは経路が出ない */}
-              {graph.unreachable.length > 0 || graph.isolated.length > 0 ? (
-                <div className="mb-1.5 rounded bg-red-50 p-1.5 text-[10px] leading-relaxed text-red-800 ring-1 ring-red-300">
-                  <b>経路が {graph.groups} つに分断されています。</b>
-                  {graph.isolated.length > 0 && (
-                    <>
-                      <br />
-                      どこにもつながっていないCP：{graph.isolated.join(" / ")}
-                    </>
-                  )}
-                  {graph.unreachable.length > 0 && (
-                    <>
-                      <br />
-                      本体から切り離されているCP：{graph.unreachable.slice(0, 10).join(" / ")}
-                      {graph.unreachable.length > 10 && ` ほか${graph.unreachable.length - 10}件`}
-                    </>
-                  )}
-                  <br />
-                  ここへは案内できません。つなぎ直してください。
-                </div>
-              ) : (
-                <div className="mb-1.5 rounded bg-emerald-50 p-1.5 text-[10px] text-emerald-800 ring-1 ring-emerald-300">
-                  ✓ すべてのチェックポイントがひと続きにつながっています
-                </div>
-              )}
+                    {data.links.length === 0 ? (
+                      <p className="text-[11px] leading-relaxed text-slate-500">
+                        未作成。[CP同士をつなぐ] でチェックポイントを2つ押すと、その区間が通れるようになります。
+                        つないでいない区間は通れません。
+                      </p>
+                    ) : (
+                      <>
+                        {/* グラフが分断されていると、その先へは経路が出ない */}
+                        {graph.unreachable.length > 0 || graph.isolated.length > 0 ? (
+                          <div className="mb-1.5 rounded bg-red-50 p-1.5 text-[10px] leading-relaxed text-red-800 ring-1 ring-red-300">
+                            <b>経路が {graph.groups} つに分断されています。</b>
+                            {graph.isolated.length > 0 && (
+                              <>
+                                <br />
+                                どこにもつながっていないCP：{graph.isolated.join(" / ")}
+                              </>
+                            )}
+                            {graph.unreachable.length > 0 && (
+                              <>
+                                <br />
+                                本体から切り離されているCP：{graph.unreachable.slice(0, 10).join(" / ")}
+                                {graph.unreachable.length > 10 && ` ほか${graph.unreachable.length - 10}件`}
+                              </>
+                            )}
+                            <br />
+                            ここへは案内できません。つなぎ直してください。
+                          </div>
+                        ) : (
+                          <div className="mb-1.5 rounded bg-emerald-50 p-1.5 text-[10px] text-emerald-800 ring-1 ring-emerald-300">
+                            ✓ すべてのチェックポイントがひと続きにつながっています
+                          </div>
+                        )}
 
-              <ul className="space-y-1">
-                {data.links.map((l) => {
-                  const k = pathKindOf(l.kind);
-                  const a = cpById.get(l.from);
-                  const b = cpById.get(l.to);
-                  return (
-                    <li key={l.id}>
-                      <button
-                        onClick={() => setSelected(l.id)}
-                        className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
-                          selected === l.id
-                            ? "bg-orange-100 ring-orange-400"
-                            : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
-                        } ${l.enabled ? "" : "opacity-50"}`}
-                      >
-                        <span
-                          className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
-                          style={{ backgroundColor: k.color }}
-                        />
-                        <span className="text-slate-900">
-                          {a?.properties.name || l.from} → {b?.properties.name || l.to}
-                        </span>
-                        <span className="ml-1 text-slate-500">{Math.round(linkLength(l))}m</span>
-                        {!l.enabled && <span className="ml-1 text-slate-500">（除外）</span>}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-        </section>
+                        <ul className="space-y-1">
+                          {data.links.slice(0, rowLimit).map((l) => {
+                            const k = pathKindOf(l.kind);
+                            const a = cpById.get(l.from);
+                            const b = cpById.get(l.to);
+                            return (
+                              <li key={l.id}>
+                                <button
+                                  onClick={() => setSelected(l.id)}
+                                  className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
+                                    selected === l.id
+                                      ? "bg-orange-100 ring-orange-400"
+                                      : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
+                                  } ${l.enabled ? "" : "opacity-50"}`}
+                                >
+                                  <span
+                                    className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                                    style={{ backgroundColor: k.color }}
+                                  />
+                                  <span className="text-slate-900">
+                                    {a?.properties.name || l.from} → {b?.properties.name || l.to}
+                                  </span>
+                                  <span className="ml-1 text-slate-500">{Math.round(linkLength(l))}m</span>
+                                  {!l.enabled && <span className="ml-1 text-slate-500">（除外）</span>}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {data.links.length > rowLimit && (
+                          <button
+                            onClick={() => setRowLimit((v) => v + ROW_STEP)}
+                            className="mt-1 w-full rounded bg-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-300"
+                          >
+                            残り {data.links.length - rowLimit} 件を出す
+                            <span className="ml-1 font-normal text-slate-500">
+                              （並べる行を減らしているだけで、データは全部あります）
+                            </span>
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </section>
+        )}
 
         {/* 選択中の接続の編集 */}
         {selectedLink && (

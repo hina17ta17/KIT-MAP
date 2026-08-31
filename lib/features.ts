@@ -5,7 +5,7 @@
  * これにより大学からの情報を待たずに作図を進められる。
  */
 
-import type { Feature, FeatureCollection, LineString, Point, Polygon } from "geojson";
+import type { Feature, FeatureCollection, LineString, Point, Polygon, Position } from "geojson";
 
 /**
  * 場所の種別。
@@ -176,11 +176,27 @@ export type PathFeature = Feature<LineString, PathProps>;
  */
 export type CheckpointKind = "entrance" | "gate" | "waypoint";
 
+/**
+ * 新しく点を置いたときの種類。
+ *
+ * まず通過点として置き、そのあと欄で出入口や門に変える。
+ * 置いた瞬間に出入口だと、建物と結ぶ相手を決めないまま
+ * 「到着とみなす場所」が空の出入口が散らばってしまう。
+ * 通過点なら、そのままでも道すじとしては正しい。
+ */
+export const NEW_CHECKPOINT_KIND: CheckpointKind = "waypoint";
+
 export const CHECKPOINT_KINDS: {
   id: CheckpointKind;
   label: string;
   color: string;
-  /** 到着判定の既定半径（m） */
+  /**
+   * 到着判定の既定半径（m）。
+   *
+   * 新しく置くときと、種類を変えたときの初期値。
+   * 半径は点ごとに持たせてあるので、ここを変えても
+   * すでに置いてある点の半径は変わらない。
+   */
   radius: number;
   hint: string;
 }[] = [
@@ -202,8 +218,10 @@ export const CHECKPOINT_KINDS: {
     id: "waypoint",
     label: "通過点",
     color: "#a855f7",
-    radius: 20,
-    hint: "案内の目印。「〇〇を通過」と出したい曲がり角など",
+    // 曲がり角に置くもの。広いと隣の角の輪と重なって、
+    // どちらを通ったのか決められなくなる。数歩ぶんに絞る
+    radius: 5,
+    hint: "案内の目印。「〇〇を通過」と出したい曲がり角など。到着の輪は半径5m",
   },
 ];
 
@@ -545,4 +563,14 @@ export function buildingLabel(p: BuildingProps): string {
 /** 名前が入っているか（進捗の集計と一覧表示に使う） */
 export function isNamed(p: BuildingProps): boolean {
   return Boolean(p.name || p.code);
+}
+
+/** リングの平均座標。ラベルの置き場所に使う（厳密な重心でなくてよい） */
+export function ringCenter(ring: Position[]): [number, number] {
+  const pts = ring.slice(0, -1);
+  const sum = pts.reduce<[number, number]>(
+    (acc, p) => [acc[0] + p[0], acc[1] + p[1]],
+    [0, 0],
+  );
+  return [sum[0] / pts.length, sum[1] / pts.length];
 }
