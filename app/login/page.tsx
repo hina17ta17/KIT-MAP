@@ -52,8 +52,16 @@ import {
   type Role,
 } from "@/lib/auth";
 
-/** 申請のどこまで進んだか */
-type Step = "start" | "mfa" | "detail" | "verify" | "done";
+/**
+ * 席を作ったあとの段。
+ *
+ * 席を作る前（メールアドレス・氏名と、学年・クラス・名列番号）は
+ * まだログインしていないので、ここには入らない。SignupStep のほう。
+ */
+type Step = "mfa" | "password" | "verify" | "done";
+
+/** 席を作る前の段。この間はまだ何もデータベースに書かない */
+type SignupStep = 1 | 2;
 
 type Me = {
   email: string;
@@ -66,6 +74,18 @@ type Me = {
   seat_no: number;
   verified: boolean;
 };
+
+/**
+ * 席を作るときだけ使う、仮のパスワード。
+ *
+ * 本人は知らないし、本人が決めたものにすぐ置き換わる。
+ * 推測されないよう、端末の乱数から作る。
+ */
+function tempPassword(): string {
+  const a = new Uint8Array(24);
+  crypto.getRandomValues(a);
+  return "T" + Array.from(a, (b) => b.toString(36)).join("").slice(0, 30) + "9";
+}
 
 export default function LoginPage() {
   /*
@@ -112,7 +132,9 @@ export default function LoginPage() {
   const [pw, setPw] = useState("");
 
   /* 申請 */
-  const [step, setStep] = useState<Step>("start");
+  const [step, setStep] = useState<Step>("mfa");
+  /** 席を作る前の段。① メールと氏名 → ② 学年・クラス・名列番号 */
+  const [signupStep, setSignupStep] = useState<SignupStep>(1);
   const [name, setName] = useState("");
   const [grade, setGrade] = useState<number>(0);
   const [classCode, setClassCode] = useState("");
@@ -194,6 +216,22 @@ export default function LoginPage() {
       }
 
       /*
+       * パスワードを決めたか。
+       *
+       * 申請では、本人確認が済んでからパスワードを決める。それまでは
+       * こちらで作った仮のものが入っていて、本人は知らない。
+       * 決めたときに印を付けておき、途中で閉じても続きから戻れるようにする。
+       */
+      const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+      const pwSet = meta.pw_set === true;
+
+      // 席を作るときに預けた記入内容。読み込み直しても消えないように
+      if (!name && typeof meta.full_name === "string") setName(meta.full_name);
+      if (!grade && typeof meta.grade === "number") setGrade(meta.grade);
+      if (!classCode && typeof meta.class_code === "string") setClassCode(meta.class_code);
+      if (!seat && typeof meta.seat_no === "number") setSeat(String(meta.seat_no));
+
+      /*
        * どこへ進ませるかを、ここで一本にまとめる。
        *
        * 以前は「承認済みなら done」と先に決めていたため、
@@ -205,6 +243,9 @@ export default function LoginPage() {
         // まだ認証アプリが無い人は、承認済みでも登録から。
         // 下の管理メニューは出たままなので、締め出しにはならない
         setStep("mfa");
+      } else if (p.role === "pending" && !pwSet) {
+        // 本人確認は済んだ。あとはパスワードを決めれば申請が出る
+        setStep("password");
       } else if (p.role !== "pending") {
         /*
          * 知らない端末から入ったときは、認証アプリで確かめてもらう。
@@ -212,8 +253,6 @@ export default function LoginPage() {
          * 一度きりだと、パスワードが漏れた時点でどこからでも入れてしまう。
          */
         setStep(isTrustedDevice(data.user.id) ? "done" : "verify");
-      } else if (!p.grade || !p.class_code || !p.seat_no) {
-        setStep("detail");
       } else {
         setStep("done");
       }
@@ -236,35 +275,50 @@ export default function LoginPage() {
     void reload();
   }, [reload]);
 
-  /* ---------------- ① 席を作る ---------------- */
+  /* ---------------- ①② 記入 → ③ 席を作って本人確認へ ---------------- */
 
   const domainOk = isAllowedEmail(email);
-  const pwOk = checkPassword(pw) === null;
-  const canStart = domainOk && name.trim().length > 0 && pwOk;
+  /** ① メールアドレスと氏名 */
+  const canStep1 = domainOk && name.trim().length > 0;
+  /** ② 学年・クラス・名列番号 */
+  const seatNum = Number(seat);
+  const canStep2 =
+    !!grade && !!classCode && seat.length > 0 && checkSeat(seatNum) === null;
 
-  const start = async () => {
+  /**
+   * 席を作り、本人確認へ進む。
+   *
+   * パスワードは本人確認のあとに決めてもらうので、ここでは
+   * こちらで作った仮のものを入れておく。本人には見せないし、
+   * 最後に本人が決めたものへ置き換える。
+   *
+   * 席を作らないと認証アプリを登録できない（登録は入った人にしか
+   * できない仕組み）ので、記入が済むここまで待ってから作る。
+   * 途中でやめた人の席が残らないよう、作るのは最後の最後にしてある。
+   *
+   * 記入した内容は席の控えに預けておく。読み込み直しても消えず、
+   * 最後にまとめて情報として書き込む。
+   */
+  const beginVerify = async () => {
     setMsg(null);
-    if (!canStart) return;
+    if (!canStep1 || !canStep2) return;
     setBusy(true);
     try {
       const supabase = createClient();
-      /*
-       * 席を作り、そのまま入った状態にする。
-       *
-       * メールは送らない。学生は全員この認証アプリを持っているので、
-       * 本人確認はそちらで行う。ここではまだ本人だと確かめていないので、
-       * 学内の情報は何も見られない（権限は承認待ちのまま）。
-       *
-       * 大学のドメイン以外は、データベース側でも撥ねる。
-       */
       const { error } = await supabase.auth.signUp({
         email: email.trim(),
-        password: pw,
-        options: { data: { full_name: name.trim() } },
+        password: tempPassword(),
+        options: {
+          data: {
+            full_name: name.trim(),
+            grade,
+            class_code: classCode,
+            seat_no: seatNum,
+          },
+        },
       });
       if (error) throw error;
 
-      setPw("");
       await reload();
       setStep("mfa");
       setMsg({ kind: "info", text: T("続けて、認証アプリで本人確認をしてください。") });
@@ -350,36 +404,56 @@ export default function LoginPage() {
     }
   };
 
-  /* ---------------- ③ 所属を入れて申請 ---------------- */
+  /* ---------------- ④ パスワードを決めて申請 ---------------- */
 
+  /**
+   * 本人が決めたパスワードに置き換え、記入した情報を書いて申請を出す。
+   *
+   * ここまで来てはじめて、管理者の「申請」に並ぶ。
+   * 順番をこうしているのは、本人だと確かめられていない記入を
+   * 承認の一覧に混ぜないため。
+   */
   const finish = async () => {
     setMsg(null);
-    const seatNo = Number(seat);
-    if (!grade || !classCode || !seat) {
-      setMsg({ kind: "err", text: T("学年・クラス・名列番号をすべて入れてください") });
-      return;
-    }
-    const seatErr = checkSeat(seatNo);
-    if (seatErr) {
-      setMsg({ kind: "err", text: T(seatErr) });
+    const err = checkPassword(pw);
+    if (err) {
+      setMsg({ kind: "err", text: T(err) });
       return;
     }
     setBusy(true);
     try {
       const supabase = createClient();
       const { data: u } = await supabase.auth.getUser();
+      const meta = (u.user?.user_metadata ?? {}) as Record<string, unknown>;
+
+      // 仮のものから、本人が決めたものへ。決めた印もここで付ける
+      const { error: e1 } = await supabase.auth.updateUser({
+        password: pw,
+        data: { pw_set: true },
+      });
+      if (e1) throw e1;
+
+      // 記入した内容。読み込み直したあとでも困らないよう、控えからも拾う
+      const gradeV = grade || (typeof meta.grade === "number" ? meta.grade : 0);
+      const classV =
+        classCode || (typeof meta.class_code === "string" ? meta.class_code : "");
+      const seatV =
+        Number(seat) || (typeof meta.seat_no === "number" ? meta.seat_no : 0);
+      const nameV =
+        name.trim() || (typeof meta.full_name === "string" ? meta.full_name : "");
+
       const { error: e2 } = await supabase
         .from("profiles")
         .update({
-          full_name: name.trim(),
-          grade,
-          class_code: classCode,
-          seat_no: seatNo,
+          full_name: nameV,
+          grade: gradeV,
+          class_code: classV,
+          seat_no: seatV,
         })
         .eq("id", u.user?.id ?? "");
       if (e2) throw e2;
 
-      setStep("done");
+      setPw("");
       await reload();
       setMsg({ kind: "ok", text: T("申請しました。管理者の承認をお待ちください。") });
     } catch (e) {
@@ -559,28 +633,9 @@ export default function LoginPage() {
         {step !== "done" ? (
           <Wizard
             t={T}
-            lang={lang}
             step={step}
             me={me}
-            {...{
-              mfa,
-              code,
-              setCode,
-              enroll,
-              verifyMfa,
-              grade,
-              setGrade,
-              classCode,
-              setClassCode,
-              seat,
-              setSeat,
-              pw,
-              setPw,
-              name,
-              setName,
-              finish,
-              busy,
-            }}
+            {...{ mfa, code, setCode, enroll, verifyMfa, pw, setPw, finish, busy }}
           />
         ) : (
           me.role === "pending" && (
@@ -618,6 +673,9 @@ export default function LoginPage() {
             onClick={() => {
               setMode(m);
               setMsg(null);
+              // 行き来したときに、途中の段が残らないように
+              setSignupStep(1);
+              setPw("");
             }}
             className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
               mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
@@ -655,82 +713,123 @@ export default function LoginPage() {
         </>
       ) : (
         <>
-          {/*
-            ① メールと氏名とパスワード → START
-
-            以前ここに「本人確認のメールが届きます」と書いてあったが、
-            このアプリはメールを一通も送らない。本人確認は認証アプリで行う。
-            届かないものを待たせていたので、実際の順番をそのまま書く。
-          */}
+          {/* 申請の段どり。何をどの順で出すかは下の signupStep で分ける */}
           <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            {T("申請は3つの段どりで進みます。")}
+            {T("申請は4つの段どりで進みます。")}
           </p>
-          <ol className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-slate-600">
-            <li>
-              <b className="text-slate-900">1.</b>{" "}
-              {T("大学のメールアドレス・氏名・パスワードを入れる")}
-            </li>
-            <li>
-              <b className="text-slate-900">2.</b>{" "}
-              {T("Microsoft Authenticator で本人確認をする")}
-            </li>
-            <li>
-              <b className="text-slate-900">3.</b>{" "}
-              {T("学年・クラス・名列番号を入れて申請する")}
-            </li>
+          <ol className="mt-1.5 space-y-0.5 text-[11px] leading-relaxed text-slate-600">
+            {[
+              T("メールアドレスと氏名"),
+              T("学年・クラス・名列番号"),
+              T("Microsoft Authenticator で本人確認"),
+              T("パスワードを決めて申請"),
+            ].map((label, i) => (
+              <li key={label} className={signupStep === i + 1 ? "font-bold text-slate-900" : ""}>
+                <span className={signupStep === i + 1 ? "text-blue-600" : "text-slate-400"}>
+                  {i + 1}.
+                </span>{" "}
+                {label}
+              </li>
+            ))}
           </ol>
-          <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
-            {T("メールは送りません。2が終わるまで、申請は管理者に届きません。")}
-          </p>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder={T("メールアドレス")}
-            autoComplete="email"
-            className={`${inputCls} mt-2`}
-          />
-          {/* どのドメインなら通るかは書かない。
-              書くと、大学の関係者でない人にも当てはめ先を教えることになる。
-              条件に合わない、とだけ伝える */}
-          {email.length > 0 && !domainOk && (
-            <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">
-              {T("このメールアドレスでは申請できません")}
-            </p>
+
+          {signupStep === 1 ? (
+            <>
+              <Label>{T("メールアドレス")}</Label>
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder={T("メールアドレス")}
+                autoComplete="email"
+                className={inputCls}
+              />
+              {/* どのドメインなら通るかは書かない。
+                  書くと、大学の関係者でない人にも当てはめ先を教えることになる */}
+              {email.length > 0 && !domainOk && (
+                <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">
+                  {T("このメールアドレスでは申請できません")}
+                </p>
+              )}
+
+              <Label>{T("氏名")}</Label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={T("氏名")}
+                autoComplete="name"
+                className={inputCls}
+              />
+
+              <button
+                onClick={() => {
+                  setMsg(null);
+                  setSignupStep(2);
+                }}
+                disabled={!canStep1}
+                className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {T("次へ")}
+              </button>
+            </>
+          ) : (
+            <>
+              <Label>{T("学年")}</Label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {GRADES.map((g) => (
+                  <Pick key={g} on={grade === g} onClick={() => setGrade(g)}>
+                    {lang === "en" ? `Y${g}` : `${g}年`}
+                  </Pick>
+                ))}
+              </div>
+
+              <Label>{T("クラス")}</Label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {CLASS_CODES.map((c) => (
+                  <Pick
+                    key={c.code}
+                    on={classCode === c.code}
+                    onClick={() => setClassCode(c.code)}
+                    title={c.name}
+                  >
+                    {c.code}
+                  </Pick>
+                ))}
+              </div>
+              {classCode && (
+                <p className="mt-1 text-[10px] text-slate-500">
+                  {CLASS_CODES.find((c) => c.code === classCode)?.name}
+                </p>
+              )}
+
+              <Label>{T("名列番号")}</Label>
+              <input
+                value={seat}
+                onChange={(e) => setSeat(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                inputMode="numeric"
+                placeholder={SEAT_MIN + " 〜 " + SEAT_MAX}
+                className={inputCls}
+              />
+
+              <button
+                onClick={() => void beginVerify()}
+                disabled={!canStep2 || busy}
+                className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {busy ? T("処理中…") : T("次へ")}
+              </button>
+              <button
+                onClick={() => {
+                  setMsg(null);
+                  setSignupStep(1);
+                }}
+                className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+              >
+                {T("戻る")}
+              </button>
+            </>
           )}
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={T("氏名")}
-            autoComplete="name"
-            className={`${inputCls} mt-2`}
-          />
-          {/* パスワードはここで決める。2回目以降のログインに使う */}
-          <input
-            value={pw}
-            onChange={(e) => setPw(e.target.value.slice(0, PASSWORD_MAX))}
-            type="password"
-            autoComplete="new-password"
-            placeholder={`${T("パスワード")}（${PASSWORD_MIN}〜${PASSWORD_MAX}）`}
-            className={`${inputCls} mt-2`}
-          />
-          {pw.length > 0 && checkPassword(pw) && (
-            <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">{T(checkPassword(pw)!)}</p>
-          )}
-          <button
-            onClick={start}
-            disabled={!canStart || busy}
-            className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold tracking-widest text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
-          >
-            {busy ? T("処理中…") : "START"}
-          </button>
-          {!canStart && (
-            <p className="mt-1 text-center text-[10px] text-slate-400">
-              {T("メールアドレス・氏名・パスワードが要ります")}
-            </p>
-          )}
+
           <p className="mt-3 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
-            {T("［START］のあと、Microsoft Authenticator で本人確認をし、所属を入れます。")}
-            <br />
             {T("スマートフォンに Microsoft Authenticator を入れておいてください。")}
           </p>
         </>
@@ -747,8 +846,6 @@ export default function LoginPage() {
 function Wizard(props: {
   /** 言葉の言い換え */
   t: (ja: string) => string;
-  /** いまの言葉。年の書き方など、言い換えだけでは足りないところに使う */
-  lang: Lang;
   step: Step;
   me: Me;
   mfa: { id: string; qr: string; secret: string } | null;
@@ -756,20 +853,12 @@ function Wizard(props: {
   setCode: (v: string) => void;
   enroll: () => Promise<void>;
   verifyMfa: () => Promise<void>;
-  grade: number;
-  setGrade: (v: number) => void;
-  classCode: string;
-  setClassCode: (v: string) => void;
-  seat: string;
-  setSeat: (v: string) => void;
   pw: string;
   setPw: (v: string) => void;
-  name: string;
-  setName: (v: string) => void;
   finish: () => Promise<void>;
   busy: boolean;
 }) {
-  const { t: T, lang, step, me, mfa, code, setCode, enroll, verifyMfa, busy } = props;
+  const { t: T, step, me, mfa, code, setCode, enroll, verifyMfa, busy } = props;
   /* 申請の途中の人には段の番号を出す。すでに権限のある人には意味が無い */
   const applying = me.role === "pending";
 
@@ -777,7 +866,7 @@ function Wizard(props: {
     return (
       <div className="mt-4">
         {applying ? (
-          <Head n={2} total={3} text={T("認証アプリで本人確認")} />
+          <Head n={3} total={4} text={T("認証アプリで本人確認")} />
         ) : (
           <Head text={T("認証アプリで本人確認")} />
         )}
@@ -785,7 +874,7 @@ function Wizard(props: {
           {T("Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。")}
           <br />
           {applying
-            ? T("これができたら、所属の記入に進めます。")
+            ? T("これができたら、パスワードを決めて申請します。")
             : T("この端末を、次から確かめるのに使います。")}
           <br />
         </p>
@@ -832,60 +921,40 @@ function Wizard(props: {
     );
   }
 
-  /* 所属とパスワード */
-  const { grade, setGrade, classCode, setClassCode, seat, setSeat, pw, setPw, name, setName, finish } =
-    props;
+  /* パスワードを決める。ここまで来たら本人確認は済んでいる */
+  const { pw, setPw, finish } = props;
+  const pwErr = pw.length > 0 ? checkPassword(pw) : null;
 
   return (
     <div className="mt-4">
-      <Head n={3} total={3} text={T("所属を入れてください")} />
-
-      <Label>{T("氏名")}</Label>
-      <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
-
-      <Label>{T("学年")}</Label>
-      <div className="grid grid-cols-4 gap-1.5">
-        {GRADES.map((g) => (
-          <Pick key={g} on={grade === g} onClick={() => setGrade(g)}>
-            {lang === "en" ? `Y${g}` : `${g}年`}
-          </Pick>
-        ))}
-      </div>
-
-      <Label>{T("クラス")}</Label>
-      <div className="grid grid-cols-4 gap-1.5">
-        {CLASS_CODES.map((c) => (
-          <Pick key={c.code} on={classCode === c.code} onClick={() => setClassCode(c.code)} title={c.name}>
-            {c.code}
-          </Pick>
-        ))}
-      </div>
-      {classCode && (
-        <p className="mt-1 text-[10px] text-slate-500">
-          {CLASS_CODES.find((c) => c.code === classCode)?.name}
-        </p>
+      {applying ? (
+        <Head n={4} total={4} text={T("パスワードを決めてください")} />
+      ) : (
+        <Head text={T("パスワードを決めてください")} />
       )}
-
-      <Label>{T("名列番号")}</Label>
-      <input
-        value={seat}
-        onChange={(e) => setSeat(e.target.value.replace(/\D/g, "").slice(0, 3))}
-        inputMode="numeric"
-        placeholder={SEAT_MIN + " 〜 " + SEAT_MAX}
-        className={inputCls}
-      />
-
-
-      <p className="mt-1 pl-1 text-[10px] text-slate-400">
-        {pw.length} / {PASSWORD_MAX} 字（半角{PASSWORD_MIN}字以上）
+      <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+        {T("次からのログインに使います。")}
       </p>
+
+      <input
+        value={pw}
+        onChange={(e) => setPw(e.target.value.slice(0, PASSWORD_MAX))}
+        type="password"
+        autoComplete="new-password"
+        placeholder={T("パスワード")}
+        className={`${inputCls} mt-3`}
+      />
+      <p className="mt-1 pl-1 text-[10px] leading-relaxed text-slate-500">
+        {T("半角の英数字で8〜20字。数字を1文字以上入れてください。")}
+      </p>
+      {pwErr && <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">{T(pwErr)}</p>}
 
       <button
         onClick={() => void finish()}
-        disabled={busy}
-        className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-300"
+        disabled={busy || checkPassword(pw) !== null}
+        className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:bg-slate-200 disabled:text-slate-400"
       >
-        {busy ? T("送信中…") : T("申請を完了する")}
+        {busy ? T("送信中…") : applying ? T("申請する") : T("決める")}
       </button>
     </div>
   );

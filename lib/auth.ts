@@ -30,19 +30,20 @@ export function isAllowedEmail(email: string): boolean {
 }
 
 /**
- * パスワードの長さ。半角で 6〜20 字。
+ * パスワードの決まり。半角の英数字で 8〜20 字、数字を1文字以上。
  *
- * 下限の6は Supabase 側の決まりに合わせてある。
- * それより短くしても、登録のところで撥ねられて通らない
- * （実際に試して確かめた。5字は "Password should be at least 6 characters."）。
+ * 記号は入れさせない。打てる端末とそうでない端末があり、
+ * 打ち間違いも増える。そのぶん長さの下限を8に上げてある。
+ * 数字を1文字求めるのは、英字だけの短い言葉を避けるため。
  */
-export const PASSWORD_MIN = 6;
+export const PASSWORD_MIN = 8;
 export const PASSWORD_MAX = 20;
 
 export function checkPassword(pw: string): string | null {
   if (pw.length < PASSWORD_MIN || pw.length > PASSWORD_MAX)
     return `パスワードは半角${PASSWORD_MIN}〜${PASSWORD_MAX}字にしてください`;
-  if (!/^[\x21-\x7e]+$/.test(pw)) return "半角の英数字・記号だけで入力してください";
+  if (!/^[0-9A-Za-z]+$/.test(pw)) return "半角の英数字だけで入力してください";
+  if (!/[0-9]/.test(pw)) return "数字を1文字以上入れてください";
   return null;
 }
 

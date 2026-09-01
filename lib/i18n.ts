@@ -143,11 +143,7 @@ const EN: Record<string, string> = {
     "If the QR will not scan, type this key instead",
   "アプリに出た6桁": "6-digit code",
   "本人確認をする": "Verify",
-  "申請を完了する": "Submit application",
-  "本人確認ができました。最後に所属を入れてください。":
-    "Verified. Last step: tell us where you belong.",
   "続けて、認証アプリで本人確認をしてください。": "Next, verify with your authenticator app.",
-  "これができたら、所属の記入に進めます。": "After this you can enter your details.",
   "スマートフォンに Microsoft Authenticator を入れておいてください。":
     "Install Microsoft Authenticator on your phone first.",
   "申請しました。管理者の承認をお待ちください。":
@@ -163,7 +159,6 @@ const EN: Record<string, string> = {
   "メールアドレスかパスワードが違います": "Wrong email or password",
   "パスワードの条件を満たしていません": "Password does not meet the requirement",
   "学年・クラス・組をすべて選んでください": "Please choose year, class and group",
-  "所属を入れてください": "Please enter your details",
   "6桁の数字を入れてください": "Enter the 6-digit code",
   "6桁の数字が合いません。アプリの表示を確かめて、もう一度入れてください":
     "That code did not match. Check your app and try again.",
@@ -176,6 +171,31 @@ const EN: Record<string, string> = {
   "送り直す": "Send again",
   "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
     "Still nothing? Contact an administrator — they can verify you instead.",
+  /* 申請の段どり（4段）。順番は 記入 → 所属 → 本人確認 → パスワード */
+  "申請は4つの段どりで進みます。": "Applying takes four steps.",
+  "メールアドレスと氏名": "Email address and name",
+  "学年・クラス・名列番号": "Year, class and roll number",
+  "Microsoft Authenticator で本人確認": "Verify with Microsoft Authenticator",
+  "パスワードを決めて申請": "Choose a password and apply",
+  "次へ": "Next",
+  "戻る": "Back",
+  "これができたら、パスワードを決めて申請します。":
+    "After this you choose a password and apply.",
+  "パスワードを決めてください": "Choose a password",
+  "次からのログインに使います。": "You will use it to log in from next time.",
+  "半角の英数字で8〜20字。数字を1文字以上入れてください。":
+    "8 to 20 single-byte letters and digits, including at least one digit.",
+  "申請する": "Apply",
+  決める: "Set",
+  "本人確認ができました。": "You have been verified.",
+  "パスワードは半角8〜20字にしてください":
+    "The password must be 8 to 20 single-byte characters",
+  "半角の英数字だけで入力してください": "Use single-byte letters and digits only",
+  "数字を1文字以上入れてください": "Include at least one digit",
+  /* 現在地の状態 */
+  "構内から 1km 以上離れています。この範囲では現在地を出しません":
+    "You are more than 1 km from campus. Your location is not shown at this range.",
+  "構内の外にいます": "You are outside the campus.",
   パスワード: "Password",
   "この端末ははじめてです": "This is a new device",
   "Microsoft Authenticator に出ている6桁を入れてください。次からは求めません。":
@@ -183,7 +203,6 @@ const EN: Record<string, string> = {
   "この端末を確かめました。次からは求めません。":
     "This device is verified. We will not ask again here.",
   "続けて、所属を入れてください。": "Next, enter your details.",
-  "メールアドレス・氏名・パスワードが要ります": "Email, name and password are all required",
   "［START］のあと、所属を入れ、認証アプリ（Authenticator）で本人確認をします。":
     "After START you enter your details, then verify with an authenticator app.",
   "最後に、認証アプリで本人確認をしてください。": "Last step: verify with your authenticator app.",
@@ -197,19 +216,6 @@ const EN: Record<string, string> = {
   // その頃の言い換えは、画面のどこからも使われないので外してある。
   // 忘れた人は管理者が supabase/set_password.sql で決め直して本人に伝える。
   // 申請の段どり。メールは送らないので、届くのを待たせない
-  "申請は3つの段どりで進みます。": "Applying takes three steps.",
-  "大学のメールアドレス・氏名・パスワードを入れる":
-    "Enter your university email address, name and a password",
-  "Microsoft Authenticator で本人確認をする": "Verify who you are with Microsoft Authenticator",
-  "学年・クラス・名列番号を入れて申請する":
-    "Enter your year, class and roll number, then apply",
-  "メールは送りません。2が終わるまで、申請は管理者に届きません。":
-    "No email is sent. Your application does not reach an administrator until step 2 is done.",
-  "パスワードは半角6〜20字にしてください":
-    "The password must be 6 to 20 single-byte characters",
-  "半角の英数字・記号だけで入力してください": "Use single-byte letters, numbers and symbols only",
-  "［START］のあと、Microsoft Authenticator で本人確認をし、所属を入れます。":
-    "After START you verify with Microsoft Authenticator, then enter your details.",
   "この端末を、次から確かめるのに使います。":
     "It will be used to confirm this device from next time.",
   "Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。":
