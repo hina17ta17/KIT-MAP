@@ -620,9 +620,32 @@ export default function LoginPage() {
         </>
       ) : (
         <>
-          {/* ① メールと氏名 → START */}
+          {/*
+            ① メールと氏名とパスワード → START
+
+            以前ここに「本人確認のメールが届きます」と書いてあったが、
+            このアプリはメールを一通も送らない。本人確認は認証アプリで行う。
+            届かないものを待たせていたので、実際の順番をそのまま書く。
+          */}
           <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            {T("大学から配られたメールアドレスと氏名を入れて［START］を押すと、本人確認のメールが届きます。")}
+            {T("申請は3つの段どりで進みます。")}
+          </p>
+          <ol className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-slate-600">
+            <li>
+              <b className="text-slate-900">1.</b>{" "}
+              {T("大学のメールアドレス・氏名・パスワードを入れる")}
+            </li>
+            <li>
+              <b className="text-slate-900">2.</b>{" "}
+              {T("Microsoft Authenticator で本人確認をする")}
+            </li>
+            <li>
+              <b className="text-slate-900">3.</b>{" "}
+              {T("学年・クラス・名列番号を入れて申請する")}
+            </li>
+          </ol>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
+            {T("メールは送りません。2が終わるまで、申請は管理者に届きません。")}
           </p>
           <input
             value={email}

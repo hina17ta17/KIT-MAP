@@ -41,8 +41,6 @@ type Row = {
   group_no: number;
   seat_no: number;
   verified: boolean;
-  mail_verified: boolean;
-  mail_verified_by: string | null;
   created_at: string;
 };
 
@@ -65,7 +63,7 @@ export default function AdminPage() {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [tab, setTab] = useState<"new" | "existing">("new");
+  const [tab, setTab] = useState<"new" | "setup" | "existing">("new");
   /** チェックを入れた人 */
   const [picked, setPicked] = useState<string[]>([]);
   /** 既存を変えるときの合言葉。一度打てば、この画面にいる間は覚えておく */
@@ -111,46 +109,44 @@ export default function AdminPage() {
     void load();
   }, [load]);
 
-  /**
-   * メールが届かない人を、管理者が代わりに確認済みにする。
-   *
-   * 本人がアドレスの持ち主だと確かめる手順を飛ばす操作なので、
-   * 誰が誰に対して行ったかはデータベースに残る（mail_verified_by）。
-   */
-  const markMail = async (id: string, mail: string) => {
-    const ok = window.confirm(
-      `${mail} を、メール確認済みとして扱います。\n本人だと確かめたうえで行ってください。`,
-    );
-    if (!ok) return;
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.rpc("mark_mail_verified", { target: id });
-      if (error) throw error;
-      await load();
-      setMsg({ kind: "ok", text: mail + " を確認済みにしました" });
-    } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   /* いちばん上の権限の人は、そもそも一覧に載せない */
   const listed = useMemo(() => rows.filter((r) => r.role !== HIDDEN), [rows]);
 
-  const news = useMemo(() => listed.filter((r) => r.role === "pending"), [listed]);
+  /**
+   * 申請が出そろっているか。
+   *
+   * 席を作った時点（メールアドレスと氏名とパスワードを入れた直後）では、
+   * まだ本人だと確かめていない。本人確認を済ませ、所属まで入れて
+   * はじめて「申請」として管理者に届く。
+   *
+   * 途中の人まで承認の一覧に混ざると、確かめていない相手を
+   * 承認してしまう。段を分けて、申請の一覧には出そろった人だけを出す。
+   */
+  const isApplied = (r: Row) =>
+    r.verified && !!r.grade && !!r.class_code && !!r.seat_no;
+
+  /** 本人確認と所属が済み、承認を待っている人 */
+  const news = useMemo(
+    () => listed.filter((r) => r.role === "pending" && isApplied(r)),
+    [listed],
+  );
+  /** 席は作ったが、まだ手続きの途中の人。承認の対象にはしない */
+  const setup = useMemo(
+    () => listed.filter((r) => r.role === "pending" && !isApplied(r)),
+    [listed],
+  );
   const existing = useMemo(() => listed.filter((r) => r.role !== "pending"), [listed]);
 
   const shown = useMemo(() => {
     if (tab === "new") return news;
+    if (tab === "setup") return setup;
     return existing.filter(
       (r) =>
         (fGrade === null || r.grade === fGrade) &&
         (fClass === null || r.class_code === fClass) &&
         (fGroup === null || r.group_no === fGroup),
     );
-  }, [tab, news, existing, fGrade, fClass, fGroup]);
+  }, [tab, news, setup, existing, fGrade, fClass, fGroup]);
 
   /**
    * 権限を付ける。
@@ -223,10 +219,11 @@ export default function AdminPage() {
       <AdminHeader title="承認・権限の管理" />
       <AdminMenu current="approve" role={myRole} />
 
-      {/* 新規 / 既存 */}
+      {/* 申請 / 手続き中 / 既存 */}
       <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1">
         {([
-          ["new", `新規の申請（${news.length}）`],
+          ["new", `申請（${news.length}）`],
+          ["setup", `手続き中（${setup.length}）`],
           ["existing", `既存（${existing.length}）`],
         ] as const).map(([id, label]) => (
           <button
@@ -245,6 +242,18 @@ export default function AdminPage() {
         ))}
       </div>
 
+      {/* 手続き中の説明。承認できないのが故障に見えないように */}
+      {tab === "setup" && (
+        <div className="mb-3 rounded-xl bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
+          メールアドレスと氏名は入れたものの、
+          <b>まだ本人確認か所属の記入が済んでいない人</b>です。
+          <br />
+          本人だと確かめられていないので、ここからは権限を付けられません。
+          本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると、
+          「申請」に移ります。
+        </div>
+      )}
+
       {/* 既存の絞り込み */}
       {tab === "existing" && (
         <div className="mb-3 rounded-xl bg-slate-50 p-2.5">
@@ -262,7 +271,9 @@ export default function AdminPage() {
 
       <p className="mb-2 text-[11px] text-slate-500">
         {shown.length} 名
-        <span className="ml-2 text-slate-400">名前を押すと権限を変えられます</span>
+        <span className="ml-2 text-slate-400">
+          {tab === "setup" ? "本人確認が済むと「申請」に移ります" : "名前を押すと権限を変えられます"}
+        </span>
         {picked.length > 0 && <b className="ml-2 text-blue-700">{picked.length} 名に印</b>}
       </p>
 
@@ -286,7 +297,9 @@ export default function AdminPage() {
                         : "bg-white ring-slate-200"
                 }`}
               >
-                {/* 印。まとめて変えたいときだけ使う。名前を押すのとは別の的にする */}
+                {/* 印。まとめて変えたいときだけ使う。名前を押すのとは別の的にする。
+                    手続き中の人は承認の対象にしないので出さない */}
+                {tab !== "setup" && (
                 <button
                   onClick={() => setPicked((p) => (on ? p.filter((x) => x !== r.id) : [...p, r.id]))}
                   aria-label={on ? "印を外す" : "印を付ける"}
@@ -296,27 +309,28 @@ export default function AdminPage() {
                 >
                   ✓
                 </button>
+                )}
 
                 {/* 名前を押すと、その人の権限の欄が開く */}
                 <button
-                  onClick={() => setOpen(here ? null : r.id)}
+                  onClick={() => tab !== "setup" && setOpen(here ? null : r.id)}
                   className="min-w-0 flex-1 text-left"
                 >
                   <span className="block truncate text-sm font-semibold text-slate-900">
                     {r.full_name || "（氏名未記入）"}
-                    {!r.mail_verified && (
-                      <span className="ml-1.5 rounded bg-orange-100 px-1 py-0.5 text-[9px] font-bold text-orange-700">
-                        メール未確認
-                      </span>
-                    )}
+                    {/*
+                      メール確認の印は出さない。このアプリはメールを一通も
+                      送らないので、全員が「未確認」のままになり、意味を持たない。
+                      本人確認は認証アプリのほうで見る。
+                    */}
                     {!r.verified && (
                       <span className="ml-1.5 rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold text-red-700">
-                        認証アプリまだ
+                        本人確認まだ
                       </span>
                     )}
-                    {r.mail_verified_by && (
-                      <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-600">
-                        代理で確認
+                    {r.verified && !(r.grade && r.class_code && r.seat_no) && (
+                      <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
+                        所属まだ
                       </span>
                     )}
                   </span>
@@ -331,13 +345,17 @@ export default function AdminPage() {
                   </span>
                 </button>
 
-                <span className={`mt-1 shrink-0 text-slate-400 transition ${here ? "rotate-90" : ""}`}>
-                  ›
-                </span>
+                {tab !== "setup" && (
+                  <span
+                    className={`mt-1 shrink-0 text-slate-400 transition ${here ? "rotate-90" : ""}`}
+                  >
+                    ›
+                  </span>
+                )}
               </div>
 
-              {/* その人の権限を変える欄 */}
-              {here && (
+              {/* その人の権限を変える欄。本人確認が済んでいない人には出さない */}
+              {here && tab !== "setup" && (
                 <div className="mt-1 rounded-xl bg-slate-900 p-2.5">
                   <div className="mb-1.5 text-[10px] font-bold text-slate-400">
                     権限を変える
@@ -382,19 +400,6 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/*
-                メールが届かない人のための逃げ道。
-                本人確認を飛ばす操作なので、誰が行ったかは記録に残る。
-              */}
-              {!r.mail_verified && (
-                <button
-                  onClick={() => void markMail(r.id, r.email)}
-                  disabled={busy}
-                  className="mt-1 w-full rounded-lg bg-orange-600 px-2 py-1.5 text-[10px] font-bold text-white transition hover:bg-orange-700 active:scale-95 disabled:bg-slate-300"
-                >
-                  メールが届かない人を、代わりに確認済みにする
-                </button>
-              )}
             </li>
           );
         })}
