@@ -60,6 +60,24 @@ const FIX_MIN_MOVE = 2;
 /** 現在地からこの距離以内に経路の節点が無ければ案内できない */
 const SNAP_MAX = 50;
 
+/**
+ * 誤差が大きいときに、節点を探す輪をどこまで広げてよいか（メートル）。
+ *
+ * 建物の中にいると、いちばん近い通路の節点まで数十m離れる。
+ * 50m で切ると節点が見つからず、案内が門からに切り替わってしまう。
+ * 誤差の大きさに応じて広げ、ここを上限にする。
+ */
+const SNAP_MAX_FAR = 150;
+
+/**
+ * 構内かどうかを決めるときに、誤差を織り込む上限（メートル）。
+ *
+ * 建物の中では誤差が数十mに広がり、点が敷地の外へ出る。
+ * その誤差ぶんは大目に見るが、際限なく認めるとどこにいても
+ * 構内になってしまうので上限を置く。
+ */
+const CAMPUS_SLACK_MAX = 120;
+
 /* 到着とみなす条件。入口の半径が 5m でも、測位の誤差ぶんは緩める */
 /** これより狭くは判定しない */
 const ARRIVE_MIN = 20;
@@ -768,6 +786,21 @@ export default function Guide() {
   }, [fix, geoState, accept, startCompass, stopWatch]);
 
   /**
+   * 現在地を確実に動かす。すでに動いていれば何もしない。
+   *
+   * startWatch は現在地ボタン用の切り替えで、すでに取れているときは
+   * 止める。案内を始めるところからそれを呼んでいたため、
+   * 「現在地から案内する」と押した人の現在地を消していた。
+   * 建物の中から一覧の［案内］を押したときも同じことが起きていた。
+   *
+   * 案内側からは、止める意味がない。始めるだけのこちらを使う。
+   */
+  const ensureWatch = useCallback(() => {
+    if (fix || geoState === "on" || geoState === "rough" || geoState === "asking") return;
+    startWatch();
+  }, [fix, geoState, startWatch]);
+
+  /**
    * 現在地を使わないと決めたか。
    *
    * 拒否のままだと知らせが出続け、地図の左上を占め続ける。
@@ -896,7 +929,21 @@ export default function Guide() {
     return Math.min(...campusRings.map((ring) => metersToRing(ring, fix.pos)));
   }, [campusRings, fix]);
 
-  const inCampus = distFromCampus == null ? null : distFromCampus === 0;
+  /**
+   * 構内にいるか。誤差を織り込んで決める。
+   *
+   * 建物の中では衛星が見えにくく、誤差が数十mに広がる。厳密に
+   * 敷地の線の内側かで決めると、23号館の中にいる人の点が外へ出て
+   * 「圏外」になり、現在地からの案内も門からに切り替わってしまう。
+   *
+   * 誤差の輪が敷地に届いているなら、外にいるとは言い切れない。
+   * そのときは中とみなす。ただし誤差そのものが大きいと、どこにいても
+   * 中になってしまうので、織り込む幅には上限を置く。
+   */
+  const inCampus =
+    distFromCampus == null || fix == null
+      ? null
+      : distFromCampus <= Math.min(fix.accuracy, CAMPUS_SLACK_MAX);
 
   /**
    * 守備範囲の外にいるか。
@@ -1044,7 +1091,21 @@ export default function Guide() {
     let startIds: string[] = [];
     let fromGate = false;
     if (trip.origin.kind === "me") {
-      const near = fix && inCampus !== false ? nearestNode(graph, fix.pos, SNAP_MAX)?.id : null;
+      /*
+       * 現在地に近い節点を起点にする。
+       *
+       * 探す輪は誤差に合わせて広げる。建物の中にいると、いちばん近い
+       * 通路の節点まで数十m離れることがあり、50m で切ると見つからない。
+       * 見つからないと門からの案内に切り替わり、
+       * 「現在地から案内しているつもりが門から」になっていた。
+       *
+       * 使わないのは「遠すぎる」と言い切れるときだけにする。
+       * 敷地の線の内外で切ると、誤差で外へ出た建物内の人を落としてしまう。
+       */
+      const snap = fix
+        ? Math.min(Math.max(SNAP_MAX, fix.accuracy), SNAP_MAX_FAR)
+        : SNAP_MAX;
+      const near = fix && !tooFar ? nearestNode(graph, fix.pos, snap)?.id : null;
       if (near) startIds = [near];
       // 現在地がまだ取れていなくても案内は出す。門を起点にして、そう伝える
       if (startIds.length === 0) {
@@ -1082,7 +1143,7 @@ export default function Guide() {
 
     const { steps, meters, minutes } = buildSteps(graph, path, data, trip.dest.title);
     return { path, steps, meters, minutes, goal, startId, fromGate };
-  }, [data, graph, trip, fix, inCampus, entrancesOf]);
+  }, [data, graph, trip, fix, tooFar, entrancesOf]);
 
   /* ---------------- 到着判定 ---------------- */
 
@@ -1884,7 +1945,7 @@ export default function Guide() {
                           setArrived(false);
                           setFocusId(f.properties.tempId);
                           setListOpen(false);
-                          startWatch();
+                          ensureWatch();
                         }}
                         className={`shrink-0 px-2.5 text-[11px] font-bold transition ${
                           on
@@ -1946,7 +2007,7 @@ export default function Guide() {
                           setArrived(false);
                           setFocusId(f.properties.tempId);
                           setListOpen(false);
-                          startWatch();
+                          ensureWatch();
                         }}
                         className={`shrink-0 px-2.5 text-[11px] font-bold transition ${
                           on
@@ -2072,7 +2133,7 @@ export default function Guide() {
               disabled={!dest}
               onClick={() => {
                 if (!dest) return;
-                if (origin.kind === "me") startWatch();
+                if (origin.kind === "me") ensureWatch();
                 setTrip({ origin, dest });
                 setArrived(false);
                 setPanel(false);
