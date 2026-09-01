@@ -17,7 +17,9 @@
  *   ここに印があっても、照合そのものを飛ばすわけではない。
  */
 
-const KEY = "kitmap.trusted.v1";
+/** 覚えた端末の記録。版を上げるときにも消すので、外からも使えるようにする */
+export const TRUSTED_KEY = "kitmap.trusted.v1";
+const KEY = TRUSTED_KEY;
 
 /** 期限。これを過ぎたら、同じ端末でももう一度確かめる */
 const DAYS = 60;
