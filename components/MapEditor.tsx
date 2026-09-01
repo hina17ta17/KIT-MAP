@@ -199,8 +199,13 @@ function campusBbox(features: readonly Feature<Polygon, unknown>[]): Bbox {
   return b;
 }
 
-/** 一覧に一度に並べる行数と、[もっと出す] で増える数 */
-const ROW_STEP = 150;
+/**
+ * 一覧に一度に並べる行数と、[もっと出す] で増える数。
+ *
+ * 150行だとタブを開くのに 0.5 秒かかる。60行なら一目で追える量でもある。
+ * 足りなければ下のボタンで増やせる。
+ */
+const ROW_STEP = 60;
 
 /** 外接矩形を度単位で広げる。0.002度 ≒ 200m */
 function padBbox(b: Bbox, pad: number): Bbox {
@@ -1056,6 +1061,21 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
 
   /* ---------------- データ反映 ---------------- */
 
+  /*
+   * 選択が変わっても、地図へ渡すデータは作り直さない。
+   *
+   * 以前はここに isSelected を混ぜたコピーを作り、押すたびに
+   * CP 648件・接続 729件・通路・建物を丸ごと渡し直していた。
+   * 一覧の行を一つ押すだけで 0.2 秒止まる原因になっていた。
+   *
+   * そもそも、この地図では MapLibre の層が絵にならない（建物のソースに
+   * 不透明度0.9の色を足しても何も出ないことを確かめてある）。
+   * 選んでいるものの色分けは、上に重ねた SVG のほうで描いている。
+   * 渡し直す意味がないので、データが変わったときだけにする。
+   *
+   * 層と渡し先は残してある。将来この地図で層が描けるようになったとき、
+   * ここへ isSelected を戻せば元どおりになる。
+   */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
@@ -1065,143 +1085,49 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
      * 一度実行し、まだなら落ち着いた時点（idle）でもう一度実行する。
      */
     const apply = () => {
-    // 敷地はここでは渡さない。SVG のほうで描いている
+      // 敷地はここでは渡さない。SVG のほうで描いている
+      (map.getSource("paths") as GeoJSONSource)?.setData(data.paths);
+      (map.getSource("buildings") as GeoJSONSource)?.setData(data.buildings);
 
-    (map.getSource("paths") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: data.paths.features.map((f) => ({
-        ...f,
-        properties: { ...f.properties, isSelected: f.properties.id === selected },
-      })),
-    });
+      const cps = data.checkpoints.features as CheckpointFeature[];
+      const cpPos = new Map(cps.map((f) => [f.properties.id, f.geometry.coordinates]));
 
-    // 全頂点。網目の形が見えるようにする
-    (map.getSource("path-verts") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: data.paths.features.flatMap((f) =>
-        f.geometry.coordinates.map((p) => ({
-          type: "Feature" as const,
-          geometry: { type: "Point" as const, coordinates: p },
-          properties: {},
-        })),
-      ),
-    });
+      const cpSrc = map.getSource("checkpoints") as GeoJSONSource | undefined;
+      // ?. で握り潰すと「何も起きない」だけになるので、欠けていたら記録する
+      if (!cpSrc) {
+        console.error("[CP] ソース checkpoints が存在しません", {
+          sources: Object.keys(map.getStyle()?.sources ?? {}),
+          layers: (map.getStyle()?.layers ?? []).map((l) => l.id),
+        });
+      } else {
+        cpSrc.setData({
+          type: "FeatureCollection",
+          features: cps.map((f) => ({
+            ...f,
+            properties: {
+              ...f.properties,
+              color: checkpointKindOf(f.properties.kind).color,
+            },
+          })),
+        });
+      }
 
-    // 端点を点として出す。つながっていない端点は赤く大きく表示して気づけるようにする
-    const dangling = findDangling(data.paths.features as PathFeature[]);
-    const isDangling = (p: Position) =>
-      dangling.some((d) => d[0] === p[0] && d[1] === p[1]);
-    (map.getSource("path-ends") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: data.paths.features.flatMap((f) => {
-        const c = f.geometry.coordinates;
-        if (c.length < 2) return [];
-        return [c[0], c[c.length - 1]].map((p) => ({
-          type: "Feature" as const,
-          geometry: { type: "Point" as const, coordinates: p },
-          properties: { dangling: isDangling(p) },
-        }));
-      }),
-    });
-
-    // 選択状態を描画に反映するため、properties に isSelected を注入したコピーを渡す
-    (map.getSource("buildings") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: data.buildings.features.map((f) => ({
-        ...f,
-        properties: { ...f.properties, isSelected: f.properties.tempId === selected },
-      })),
-    });
-
-    // チェックポイントと、その到着判定範囲
-    const cps = data.checkpoints.features as CheckpointFeature[];
-    const cpPos = new Map(cps.map((f) => [f.properties.id, f.geometry.coordinates]));
-
-    const cpFc: GeoJSON.FeatureCollection = {
-      type: "FeatureCollection",
-      features: cps.map((f) => ({
-        ...f,
-        properties: {
-          ...f.properties,
-          color: checkpointKindOf(f.properties.kind).color,
-          isSelected: f.properties.id === selected || f.properties.id === linkFrom,
-        },
-      })),
-    };
-    const cpSrc = map.getSource("checkpoints") as GeoJSONSource | undefined;
-    // ?. で握り潰すと「何も起きない」だけになるので、欠けていたら記録する
-    if (!cpSrc) {
-      console.error("[CP] ソース checkpoints が存在しません", {
-        sources: Object.keys(map.getStyle()?.sources ?? {}),
-        layers: (map.getStyle()?.layers ?? []).map((l) => l.id),
-      });
-    } else {
-      cpSrc.setData(cpFc);
-    }
-    /* 以前ここに、描けているかを数えて記録する仕掛けを置いていた。
-       queryRenderedFeatures は画面に出ているものを毎回数え直すため、
-       点や線が増えるほど重くなる。しかもこの処理は点を1つ置くたびに
-       走るので、作図が進むほど反応が鈍っていた。原因調べは済んだので外す。 */
-
-    // 親子関係の線。子から各親へ引く（親が複数ならその数だけ出る）
-    (map.getSource("hier") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: cps.flatMap((c) =>
-        c.properties.parents.flatMap((pid) => {
-          const a = cpPos.get(pid);
-          const b = c.geometry.coordinates;
-          if (!a) return [];
+      // 接続の線はチェックポイントの座標から毎回作る。点を動かしても線がずれない
+      (map.getSource("links") as GeoJSONSource)?.setData({
+        type: "FeatureCollection",
+        features: data.links.flatMap((l) => {
+          const a = cpPos.get(l.from);
+          const b = cpPos.get(l.to);
+          if (!a || !b) return []; // 片方が削除済み
           return [
             {
               type: "Feature" as const,
               geometry: { type: "LineString" as const, coordinates: [a, b] },
-              properties: { from: pid, to: c.properties.id },
+              properties: { ...l },
             },
           ];
         }),
-      ),
-    });
-
-    // 接続の線はチェックポイントの座標から毎回作る。点を動かしても線がずれない
-    const linkFeatures = data.links.flatMap((l) => {
-      const a = cpPos.get(l.from);
-      const b = cpPos.get(l.to);
-      if (!a || !b) return []; // 片方が削除済み
-      return [
-        {
-          type: "Feature" as const,
-          geometry: { type: "LineString" as const, coordinates: [a, b] },
-          properties: { ...l, isSelected: l.id === selected },
-        },
-      ];
-    });
-    (map.getSource("links") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: linkFeatures,
-    });
-    (map.getSource("cp-area") as GeoJSONSource)?.setData({
-      type: "FeatureCollection",
-      features: cps.map((f) => ({
-        type: "Feature" as const,
-        geometry: {
-          type: "Polygon" as const,
-          coordinates: [circlePolygon(f.geometry.coordinates, f.properties.radius)],
-        },
-        properties: { color: checkpointKindOf(f.properties.kind).color },
-      })),
-    });
-
-    /*
-     * ラベルはここでは作らない。
-     *
-     * 以前は MapLibre のマーカー（建物42＋CP名648＝690個）で出していた。
-     * マーカーは1コマごとに全部の位置を書き換えるので、地図を動かすたびに
-     * 690回の書き換えが走り、実測で1コマ127ms（約8fps）まで落ちていた。
-     * 座標の計算そのものは648個で0.3msしかかからず、重かったのは
-     * 置いた要素の数のほう。
-     *
-     * いまは地図の上に重ねた層で、画面に出ているものだけを描いている。
-     */
+      });
     };
 
     apply();
@@ -1213,7 +1139,97 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
         map.off("idle", apply);
       };
     }
-  }, [data, selected, ready, linkFrom, showBuildingLabels, showCpLabels]);
+  }, [data, ready]);
+
+  /**
+   * 選んだものに左右されない図形。
+   *
+   * 上の効果と分けてある。選択が変わるたびにここまで作り直していたため、
+   * 一覧の行を一つ押すだけで、CP 648個ぶんの到着範囲（1つ33点の円、
+   * 合わせて2万点あまり）と、通路の全頂点と、親子の線を、
+   * まるごと組み直していた。押すたびに0.1秒止まる原因。
+   *
+   * これらは何を選んでいても同じものになる。データが変わったときだけでいい。
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const apply = () => {
+      // 通路の全頂点。網目の形が見えるようにする
+      (map.getSource("path-verts") as GeoJSONSource)?.setData({
+        type: "FeatureCollection",
+        features: data.paths.features.flatMap((f) =>
+          f.geometry.coordinates.map((p) => ({
+            type: "Feature" as const,
+            geometry: { type: "Point" as const, coordinates: p },
+            properties: {},
+          })),
+        ),
+      });
+
+      // 端点。つながっていないものは赤く大きく出して気づけるようにする
+      const dangling = findDangling(data.paths.features as PathFeature[]);
+      const isDangling = (p: Position) => dangling.some((d) => d[0] === p[0] && d[1] === p[1]);
+      (map.getSource("path-ends") as GeoJSONSource)?.setData({
+        type: "FeatureCollection",
+        features: data.paths.features.flatMap((f) => {
+          const c = f.geometry.coordinates;
+          if (c.length < 2) return [];
+          return [c[0], c[c.length - 1]].map((p) => ({
+            type: "Feature" as const,
+            geometry: { type: "Point" as const, coordinates: p },
+            properties: { dangling: isDangling(p) },
+          }));
+        }),
+      });
+
+      const cps = data.checkpoints.features as CheckpointFeature[];
+      const cpPos = new Map(cps.map((f) => [f.properties.id, f.geometry.coordinates]));
+
+      // 親子関係の線。子から各親へ引く（親が複数ならその数だけ出る）
+      (map.getSource("hier") as GeoJSONSource)?.setData({
+        type: "FeatureCollection",
+        features: cps.flatMap((c) =>
+          c.properties.parents.flatMap((pid) => {
+            const a = cpPos.get(pid);
+            if (!a) return [];
+            return [
+              {
+                type: "Feature" as const,
+                geometry: {
+                  type: "LineString" as const,
+                  coordinates: [a, c.geometry.coordinates],
+                },
+                properties: { from: pid, to: c.properties.id },
+              },
+            ];
+          }),
+        ),
+      });
+
+      // 到着とみなす範囲の円
+      (map.getSource("cp-area") as GeoJSONSource)?.setData({
+        type: "FeatureCollection",
+        features: cps.map((f) => ({
+          type: "Feature" as const,
+          geometry: {
+            type: "Polygon" as const,
+            coordinates: [circlePolygon(f.geometry.coordinates, f.properties.radius)],
+          },
+          properties: { color: checkpointKindOf(f.properties.kind).color },
+        })),
+      });
+    };
+
+    apply();
+    if (!map.isStyleLoaded()) {
+      map.once("idle", apply);
+      return () => {
+        map.off("idle", apply);
+      };
+    }
+  }, [data, ready]);
 
   /* ---------------- 地図の上に重ねる描画 ---------------- */
 
