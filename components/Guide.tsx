@@ -282,6 +282,8 @@ export default function Guide() {
     if (!boxRef.current || mapRef.current) return;
     boxRef.current.innerHTML = "";
     let map: MlMap;
+    /** 細かさの上げ下げを片づけるための口 */
+    let pixelOff: (() => void) | null = null;
     try {
       map = new MlMap({
         container: boxRef.current,
@@ -446,14 +448,85 @@ export default function Guide() {
     const timers = [80, 300, 900].map((ms) => window.setTimeout(fit, ms));
 
     /*
+     * 描く細かさを、止まっているときと動かしているときで変える。
+     *
+     *   止まっているとき … 画面の細かさのまま（上限2倍）
+     *   動かしているとき … 1倍
+     *
+     * 端末によっては画面の細かさが3倍ある。そのまま描くと1コマで
+     * 9倍の点を塗ることになり、拡大縮小が追いつかない。
+     * 上限を2倍にしただけでも 10fps → 57fps になったが、
+     * 指を動かしているあいだの引っかかりはまだ残る。
+     *
+     * 動いている最中は、細かさが落ちても見た目にはほとんど分からない。
+     * 指を離した時点で元に戻すので、読むときはくっきりしている。
+     */
+    /*
      * 描く細かさの上限を2倍までにする。
      *
      * 端末によっては画面の細かさが3倍ある。そのまま描くと1コマで
      * 9倍の点を塗ることになり、拡大縮小が追いつかない。
+     * スマホ相当（細かさ3倍・CPU 6分の1）で測ると、
+     *   3倍のまま  中央値 100.1ms   10.0 fps
+     *   2倍に抑える 中央値  17.5ms   57.1 fps
      * 2倍でも文字と線は十分はっきり見える（一般的な地図アプリと同じ）。
+     *
+     * 「動かしている間だけ1倍に落とす」も試したが、戻す合図が
+     * 当てにならず（moveend も idle も来ないことがある）、
+     * 落としたまま戻らなくなった。確かめられた形だけ残す。
      */
-    if (typeof window !== "undefined" && window.devicePixelRatio > 2) {
-      map.setPixelRatio(2);
+    if (typeof window !== "undefined") {
+      const still = Math.min(window.devicePixelRatio || 1, 2);
+      if (still !== 1) map.setPixelRatio(still);
+
+      /*
+       * 指で動かしているあいだは、さらに1倍まで落とす。
+       *
+       * 上限2倍だけでも 10fps → 57fps になったが、指を動かしている
+       * 最中の引っかかりは残っていた（9割点 55.9ms）。
+       * 動かしている間だけ1倍にすると 22.8ms まで下がる。
+       * 動いている最中は細かさが落ちても見た目には分からない。
+       *
+       * 合図に地図の move や zoom は使わない。
+       * 細かさを変えると地図が測り直しになり、その拍子に move が出る。
+       * それをまた合図として拾うので、下げる→戻す→下げる…と回り続け、
+       * 結局1倍のまま戻らなくなった（実際にそうなった）。
+       *
+       * 指やホイールの操作そのものを合図にする。こちらは地図の都合では
+       * 出ないので、堂々巡りにならない。戻すのは最後の操作から 400ms 後。
+       * タイマーは必ず来るので、落としたままにはならない。
+       */
+      if (still > 1) {
+        const cv = map.getCanvas();
+        let low = false;
+        let back = 0;
+        const bump = () => {
+          if (!low) {
+            low = true;
+            map.setPixelRatio(1);
+          }
+          if (back) window.clearTimeout(back);
+          back = window.setTimeout(() => {
+            back = 0;
+            low = false;
+            map.setPixelRatio(still);
+          }, 400);
+        };
+        const evs = ["touchstart", "touchmove", "wheel", "pointerdown", "pointermove"] as const;
+        for (const e of evs) cv.addEventListener(e, bump, { passive: true });
+        pixelOff = () => {
+          if (back) window.clearTimeout(back);
+          for (const e of evs) cv.removeEventListener(e, bump);
+        };
+      }
+    }
+
+    /*
+     * 手元で調べものをするとき用。開発中だけ、窓から地図を触れるようにする。
+     * 「動いている判定が戻らない」といった話は、外から中を見ないと分からない。
+     */
+    if (process.env.NODE_ENV === "development") {
+      (window as unknown as { __kitMap?: MlMap }).__kitMap = map;
     }
 
     mapRef.current = map;
@@ -463,6 +536,7 @@ export default function Guide() {
       window.removeEventListener("orientationchange", fit);
       window.visualViewport?.removeEventListener("resize", fit);
       timers.forEach(clearTimeout);
+      pixelOff?.();
       map.remove();
       mapRef.current = null;
     };
