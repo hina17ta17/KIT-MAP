@@ -203,8 +203,6 @@ const EN: Record<string, string> = {
   "この端末を確かめました。次からは求めません。":
     "This device is verified. We will not ask again here.",
   "続けて、所属を入れてください。": "Next, enter your details.",
-  "［START］のあと、所属を入れ、認証アプリ（Authenticator）で本人確認をします。":
-    "After START you enter your details, then verify with an authenticator app.",
   "最後に、認証アプリで本人確認をしてください。": "Last step: verify with your authenticator app.",
   "認証が完了しました。管理者の承認をお待ちください。":
     "Verification complete. Please wait for an administrator to approve you.",
