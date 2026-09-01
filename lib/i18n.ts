@@ -158,7 +158,6 @@ const EN: Record<string, string> = {
     "Already registered. Enter the 6-digit code from your app.",
   "メールアドレスかパスワードが違います": "Wrong email or password",
   "パスワードの条件を満たしていません": "Password does not meet the requirement",
-  "学年・クラス・組をすべて選んでください": "Please choose year, class and group",
   "6桁の数字を入れてください": "Enter the 6-digit code",
   "6桁の数字が合いません。アプリの表示を確かめて、もう一度入れてください":
     "That code did not match. Check your app and try again.",
@@ -168,9 +167,6 @@ const EN: Record<string, string> = {
     "Email sending limit reached. Please wait a while and try again.",
   "サーバーに接続できません。": "Cannot reach the server.",
   "1号館": "Bldg. 1",
-  "送り直す": "Send again",
-  "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
-    "Still nothing? Contact an administrator — they can verify you instead.",
   /* 申請の段どり（4段）。順番は 記入 → 所属 → 本人確認 → パスワード */
   "申請は4つの段どりで進みます。": "Applying takes four steps.",
   "メールアドレスと氏名": "Email address and name",
@@ -202,10 +198,6 @@ const EN: Record<string, string> = {
     "Enter the 6-digit code from Microsoft Authenticator. We will not ask again on this device.",
   "この端末を確かめました。次からは求めません。":
     "This device is verified. We will not ask again here.",
-  "続けて、所属を入れてください。": "Next, enter your details.",
-  "最後に、認証アプリで本人確認をしてください。": "Last step: verify with your authenticator app.",
-  "認証が完了しました。管理者の承認をお待ちください。":
-    "Verification complete. Please wait for an administrator to approve you.",
   // メールで確かめていた頃の言い換えは、まとめて外してある。
   // このアプリはメールを一通も送らない。本人確認は認証アプリ、
   // パスワードを忘れた人は管理者が supabase/set_password.sql で決め直す。
