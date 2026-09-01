@@ -210,8 +210,15 @@ const EN: Record<string, string> = {
   "パスワードを忘れた（メールで入る）": "Forgot your password? Sign in by email",
   "先にメールアドレスを入れてください": "Enter your email address first",
   "パスワードを決め直しました。": "Your password has been changed.",
-  "大学から配られたメールアドレスと氏名を入れて［START］を押すと、本人確認のメールが届きます。":
-    "Enter the email address the university gave you and your name, then press START. A verification email will arrive.",
+  // 申請の段どり。メールは送らないので、届くのを待たせない
+  "申請は3つの段どりで進みます。": "Applying takes three steps.",
+  "大学のメールアドレス・氏名・パスワードを入れる":
+    "Enter your university email address, name and a password",
+  "Microsoft Authenticator で本人確認をする": "Verify who you are with Microsoft Authenticator",
+  "学年・クラス・名列番号を入れて申請する":
+    "Enter your year, class and roll number, then apply",
+  "メールは送りません。2が終わるまで、申請は管理者に届きません。":
+    "No email is sent. Your application does not reach an administrator until step 2 is done.",
   "パスワードは半角6〜20字にしてください":
     "The password must be 6 to 20 single-byte characters",
   "半角の英数字・記号だけで入力してください": "Use single-byte letters, numbers and symbols only",
