@@ -199,13 +199,59 @@ function campusBbox(features: readonly Feature<Polygon, unknown>[]): Bbox {
   return b;
 }
 
+/** 一覧の1行の高さ（px）。行の隙間を含む */
+const ROW_H = 28;
+/** 一覧の枠の高さ（px）。これを超えたぶんはスクロールで見る */
+const LIST_H = 320;
+
 /**
- * 一覧に一度に並べる行数と、[もっと出す] で増える数。
+ * 長い一覧を、見えているところだけ描いて出す。
  *
- * 150行だとタブを開くのに 0.5 秒かかる。60行なら一目で追える量でもある。
- * 足りなければ下のボタンで増やせる。
+ * CP 648行・接続 729行を素直に並べると、タブを開くだけで 0.5 秒止まる。
+ * かといって行数を絞ると、下のほうが見られなくなる。
+ *
+ * 枠の高さは決めておき、中身は全行ぶんの高さを持たせる。
+ * そうすればスクロール棒は全行ぶんの長さになり、どこへでも辿り着ける。
+ * 実際に作る要素は、いま枠に入っている十数行と、その前後の余裕だけ。
+ *
+ * 行の高さを揃える必要があるので、行の中身は1行に収める（はみ出しは …）。
  */
-const ROW_STEP = 60;
+function VirtualList<T>({
+  items,
+  render,
+  keyOf,
+}: {
+  items: T[];
+  render: (item: T, index: number) => React.ReactNode;
+  keyOf: (item: T, index: number) => string;
+}) {
+  const [top, setTop] = useState(0);
+  const total = items.length;
+  const box = Math.min(LIST_H, Math.max(ROW_H, total * ROW_H));
+
+  // 前後に数行ぶん余分に作る。速く送ったときに白い帯が出ないように
+  const pad = 5;
+  const first = Math.max(0, Math.floor(top / ROW_H) - pad);
+  const last = Math.min(total, first + Math.ceil(box / ROW_H) + pad * 2);
+
+  return (
+    <div
+      className="overflow-y-auto overscroll-contain rounded ring-1 ring-slate-200"
+      style={{ height: box }}
+      onScroll={(e) => setTop(e.currentTarget.scrollTop)}
+    >
+      <div style={{ height: total * ROW_H, position: "relative" }}>
+        <div style={{ position: "absolute", top: first * ROW_H, left: 0, right: 0 }}>
+          {items.slice(first, last).map((it, i) => (
+            <div key={keyOf(it, first + i)} style={{ height: ROW_H, padding: "0 2px 4px" }}>
+              {render(it, first + i)}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** 外接矩形を度単位で広げる。0.002度 ≒ 200m */
 function padBbox(b: Bbox, pad: number): Bbox {
@@ -227,15 +273,6 @@ export type EditorSource = "live" | "base";
 export default function MapEditor({ source = "live" }: { source?: EditorSource }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
-  /**
-   * 一覧に一度に並べる行数。
-   *
-   * CP 648 行・接続 729 行を全部並べると、タブを開くだけで 0.7 秒止まる。
-   * 出す数を絞って、足りなければ押して増やす。
-   * **減るのは画面に並ぶ行だけで、持っているデータは何も変わらない。**
-   */
-  const [rowLimit, setRowLimit] = useState(ROW_STEP);
-
   const [ready, setReady] = useState(false);
   /**
    * 地図の実体。ref とは別に state でも持つ。
@@ -2842,59 +2879,52 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
                             レベル2以上なのに親が無いため、<b>どこからも入れません。</b>
                           </div>
                         )}
-                        <ul className="space-y-1">
-                          {(data.checkpoints.features as CheckpointFeature[]).slice(0, rowLimit).map((f) => {
+                        {/* 全件そのまま。枠の中をスクロールして辿る */}
+                        <VirtualList
+                          items={data.checkpoints.features as CheckpointFeature[]}
+                          keyOf={(f) => f.properties.id}
+                          render={(f) => {
                             const k = checkpointKindOf(f.properties.kind);
                             const target = (data.buildings.features as BuildingFeature[]).find(
                               (b) => b.properties.tempId === f.properties.linkedTo,
                             );
                             return (
-                              <li key={f.properties.id}>
-                                <button
-                                  onClick={() => flyToCp(f)}
-                                  title="クリックすると地図がその位置へ移動します"
-                                  className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
-                                    selected === f.properties.id
-                                      ? "bg-orange-100 ring-orange-400"
-                                      : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
-                                  }`}
-                                >
-                                  <span
-                                    className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
-                                    style={{ backgroundColor: k.color }}
-                                  />
-                                  <span className="font-mono text-slate-500">{f.properties.id}</span>
-                                  {f.properties.level > 1 && (
-                                    <span className="ml-1 rounded bg-violet-100 px-1 text-[9px] font-bold text-violet-800">
-                                      Lv{f.properties.level}
-                                    </span>
-                                  )}
-                                  <span className="ml-1.5 text-slate-900">
-                                    {f.properties.name || k.label}
+                              <button
+                                onClick={() => flyToCp(f)}
+                                title="クリックすると地図がその位置へ移動します"
+                                className={`flex h-full w-full items-center gap-1 overflow-hidden whitespace-nowrap rounded px-2 text-left text-[11px] ring-1 transition ${
+                                  selected === f.properties.id
+                                    ? "bg-orange-100 ring-orange-400"
+                                    : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: k.color }}
+                                />
+                                <span className="shrink-0 font-mono text-slate-500">
+                                  {f.properties.id}
+                                </span>
+                                {f.properties.level > 1 && (
+                                  <span className="shrink-0 rounded bg-violet-100 px-1 text-[9px] font-bold text-violet-800">
+                                    Lv{f.properties.level}
                                   </span>
-                                  <span className="ml-1 text-slate-500">{f.properties.radius}m</span>
-                                  {target && (
-                                    <span className="ml-1 text-emerald-700">
-                                      → {buildingLabel(target.properties)}
-                                    </span>
-                                  )}
-                                </button>
-                              </li>
+                                )}
+                                <span className="truncate text-slate-900">
+                                  {f.properties.name || k.label}
+                                </span>
+                                <span className="shrink-0 text-slate-500">
+                                  {f.properties.radius}m
+                                </span>
+                                {target && (
+                                  <span className="truncate text-emerald-700">
+                                    → {buildingLabel(target.properties)}
+                                  </span>
+                                )}
+                              </button>
                             );
-                          })}
-                        </ul>
-
-                        {data.checkpoints.features.length > rowLimit && (
-                          <button
-                            onClick={() => setRowLimit((v) => v + ROW_STEP)}
-                            className="mt-1 w-full rounded bg-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-300"
-                          >
-                            残り {data.checkpoints.features.length - rowLimit} 件を出す
-                            <span className="ml-1 font-normal text-slate-500">
-                              （並べる行を減らしているだけで、データは全部あります）
-                            </span>
-                          </button>
-                        )}
+                          }}
+                        />
                       </>
                     )}
                   </section>
@@ -2943,46 +2973,40 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
                           </div>
                         )}
 
-                        <ul className="space-y-1">
-                          {data.links.slice(0, rowLimit).map((l) => {
+                        {/* 全件そのまま。枠の中をスクロールして辿る */}
+                        <VirtualList
+                          items={data.links}
+                          keyOf={(l) => l.id}
+                          render={(l) => {
                             const k = pathKindOf(l.kind);
                             const a = cpById.get(l.from);
                             const b = cpById.get(l.to);
                             return (
-                              <li key={l.id}>
-                                <button
-                                  onClick={() => setSelected(l.id)}
-                                  className={`w-full rounded px-2 py-1 text-left text-[11px] ring-1 transition ${
-                                    selected === l.id
-                                      ? "bg-orange-100 ring-orange-400"
-                                      : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
-                                  } ${l.enabled ? "" : "opacity-50"}`}
-                                >
-                                  <span
-                                    className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
-                                    style={{ backgroundColor: k.color }}
-                                  />
-                                  <span className="text-slate-900">
-                                    {a?.properties.name || l.from} → {b?.properties.name || l.to}
-                                  </span>
-                                  <span className="ml-1 text-slate-500">{Math.round(linkLength(l))}m</span>
-                                  {!l.enabled && <span className="ml-1 text-slate-500">（除外）</span>}
-                                </button>
-                              </li>
+                              <button
+                                onClick={() => setSelected(l.id)}
+                                className={`flex h-full w-full items-center gap-1 overflow-hidden whitespace-nowrap rounded px-2 text-left text-[11px] ring-1 transition ${
+                                  selected === l.id
+                                    ? "bg-orange-100 ring-orange-400"
+                                    : "bg-slate-50 ring-slate-200 hover:bg-slate-100"
+                                } ${l.enabled ? "" : "opacity-50"}`}
+                              >
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: k.color }}
+                                />
+                                <span className="truncate text-slate-900">
+                                  {a?.properties.name || l.from} → {b?.properties.name || l.to}
+                                </span>
+                                <span className="shrink-0 text-slate-500">
+                                  {Math.round(linkLength(l))}m
+                                </span>
+                                {!l.enabled && (
+                                  <span className="shrink-0 text-slate-500">（除外）</span>
+                                )}
+                              </button>
                             );
-                          })}
-                        </ul>
-                        {data.links.length > rowLimit && (
-                          <button
-                            onClick={() => setRowLimit((v) => v + ROW_STEP)}
-                            className="mt-1 w-full rounded bg-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-300"
-                          >
-                            残り {data.links.length - rowLimit} 件を出す
-                            <span className="ml-1 font-normal text-slate-500">
-                              （並べる行を減らしているだけで、データは全部あります）
-                            </span>
-                          </button>
-                        )}
+                          }}
+                        />
                       </>
                     )}
                   </section>
