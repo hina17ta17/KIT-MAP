@@ -65,7 +65,6 @@ type Me = {
   /** 名列番号。組から置き換えた */
   seat_no: number;
   verified: boolean;
-  mail_verified: boolean;
 };
 
 export default function LoginPage() {
@@ -245,7 +244,7 @@ export default function LoginPage() {
     }
   };
 
-  /* ---------------- ③ 認証アプリを登録する ---------------- */
+  /* ---------------- ② 認証アプリで本人確認 ---------------- */
 
   const enroll = async () => {
     setMsg(null);
@@ -315,7 +314,7 @@ export default function LoginPage() {
     }
   };
 
-  /* ---------------- ④ 所属とパスワード ---------------- */
+  /* ---------------- ③ 所属を入れて申請 ---------------- */
 
   const finish = async () => {
     setMsg(null);
@@ -975,7 +974,9 @@ function translate(e: unknown): string {
   if (/already registered|already been registered/i.test(m))
     return "このメールアドレスは登録済みです。［ログイン］から入ってください";
   if (/rate limit|too many requests/i.test(m))
-    return "メールの送信上限に達しています。しばらく待ってからお試しください";
+    // メールは送らないので、送信上限の話は出さない。
+    // 短い間に何度も押したときに出る
+    return "しばらく待ってから、もう一度お試しください";
   if (/invalid totp|invalid code|challenge/i.test(m))
     return "6桁の数字が合いません。アプリの表示を確かめて、もう一度入れてください";
   if (/factor.*already|already enrolled/i.test(m))

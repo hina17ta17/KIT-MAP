@@ -155,7 +155,6 @@ const EN: Record<string, string> = {
   "申請は受け付けています。管理者が承認すると学内情報が見られるようになります。":
     "Your application is in. Campus information opens once an administrator approves it.",
   "承認済みです。下のボタンから使えます。": "Approved. Use the button below.",
-  "メールアドレスと氏名の両方が要ります": "Both email and full name are required",
   "このメールアドレスでは申請できません": "This email address cannot be used",
   "このメールアドレスは登録済みです。［ログイン］から入ってください":
     "This address is already registered. Please use Log in.",
@@ -170,21 +169,11 @@ const EN: Record<string, string> = {
     "That code did not match. Check your app and try again.",
   "認証アプリの登録に失敗しました。もう一度お試しください":
     "Could not register the authenticator app. Please try again.",
-  "メールの送信上限に達しています。しばらく待ってからお試しください":
+  "しばらく待ってから、もう一度お試しください":
     "Email sending limit reached. Please wait a while and try again.",
   "サーバーに接続できません。": "Cannot reach the server.",
   "1号館": "Bldg. 1",
-  "メールで本人確認": "Verify by email",
-  "メールに届いた6桁": "6-digit code from the email",
-  "メールに届いた6桁を入れてください。": "Enter the 6-digit code from the email.",
-  "入力したメールアドレスへ確認のメールを送りました。届いた6桁の数字を入れてください。":
-    "We sent a verification email to that address. Enter the 6-digit code from it.",
-  "メールに数字がなくリンクだけのときは、そのリンクを開けば同じように進めます。":
-    "If the email has a link instead of a code, opening the link works the same way.",
   "送り直す": "Send again",
-  "送り直しました。メールを確かめてください。": "Sent again. Please check your inbox.",
-  "届かないときは、迷惑メールに入っていないか確かめてください。数分かかることもあります。":
-    "If it has not arrived, check your spam folder. It can take a few minutes.",
   "それでも届かない場合は、管理者に連絡してください。管理者の側で確認済みにできます。":
     "Still nothing? Contact an administrator — they can verify you instead.",
   パスワード: "Password",
@@ -193,23 +182,20 @@ const EN: Record<string, string> = {
     "Enter the 6-digit code from Microsoft Authenticator. We will not ask again on this device.",
   "この端末を確かめました。次からは求めません。":
     "This device is verified. We will not ask again here.",
-  "メールで確かめる": "Confirm by email",
   "続けて、所属を入れてください。": "Next, enter your details.",
   "メールアドレス・氏名・パスワードが要ります": "Email, name and password are all required",
   "［START］のあと、所属を入れ、認証アプリ（Authenticator）で本人確認をします。":
     "After START you enter your details, then verify with an authenticator app.",
-  "メールを確かめました。所属を入れてください。": "Email confirmed. Now enter your details.",
   "最後に、認証アプリで本人確認をしてください。": "Last step: verify with your authenticator app.",
   "認証が完了しました。管理者の承認をお待ちください。":
     "Verification complete. Please wait for an administrator to approve you.",
-  "これを終えると認証が完了し、管理者の承認待ちになります。":
-    "Once this is done your verification is complete and an administrator will review it.",
-  決める: "Set",
-  "新しいパスワード": "New password",
-  "新しいパスワードを決めてください。": "Choose a new password.",
-  "パスワードを忘れた（メールで入る）": "Forgot your password? Sign in by email",
-  "先にメールアドレスを入れてください": "Enter your email address first",
-  "パスワードを決め直しました。": "Your password has been changed.",
+  // メールで確かめていた頃の言い換えは、まとめて外してある。
+  // このアプリはメールを一通も送らない。本人確認は認証アプリ、
+  // パスワードを忘れた人は管理者が supabase/set_password.sql で決め直す。
+  // 使われない文でも、辞書に置いておくと配信されるファイルに載ってしまう。
+  // メールで入る道と、画面からのパスワード再設定は無くした。
+  // その頃の言い換えは、画面のどこからも使われないので外してある。
+  // 忘れた人は管理者が supabase/set_password.sql で決め直して本人に伝える。
   // 申請の段どり。メールは送らないので、届くのを待たせない
   "申請は3つの段どりで進みます。": "Applying takes three steps.",
   "大学のメールアドレス・氏名・パスワードを入れる":
