@@ -58,16 +58,29 @@ const ENTRIES: Entry[] = [
     sub: "その日の提供状況と品名",
     allowed: canManageCafeteria,
   },
-  {
-    id: "edit",
-    href: "/edit",
-    icon: "✏️",
-    label: "作図ツール",
-    sub: "建物・出入口・通路を描き直す",
-    // 手元でだけ動かす道具。公開ビルドには /edit 自体が入らないので、
-    // 出しても行き先が無い。開発中だけ並べる
-    allowed: (r) => r === "admin_l3" && process.env.NODE_ENV === "development",
-  },
+  /*
+   * 作図ツールは、手元でだけ動かす道具。
+   *
+   * 以前はここに項目を書き、出すかどうかを allowed の中で決めていた。
+   * それだと画面には出ないが、名前も行き先も配信されるファイルに残り、
+   * 中身を読める人には「/edit という道具が在る」と分かってしまう。
+   *
+   * 条件を配列を作るところに移す。`process.env.NODE_ENV` は
+   * 組み立てのときに文字へ置き換わるので、公開ビルドでは
+   * この中身ごと消える（消えていることは build のあとに確かめる）。
+   */
+  ...(process.env.NODE_ENV === "development"
+    ? [
+        {
+          id: "edit" as const,
+          href: "/edit",
+          icon: "✏️",
+          label: "作図ツール",
+          sub: "建物・出入口・通路を描き直す",
+          allowed: (r: Role | null) => r === "admin_l3",
+        },
+      ]
+    : []),
 ];
 
 /** 画面の見出し。右上には必ず地図へ戻る道を置く */
