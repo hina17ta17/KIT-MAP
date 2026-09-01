@@ -27,7 +27,7 @@ import {
 } from "@/lib/appdata";
 import { ROLE_LABEL, ROLE_SHORT, canViewCampusInfo, type Role } from "@/lib/auth";
 import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
-import { buildGraph, buildSteps, findBestPath, nearestNode } from "@/lib/route";
+import { buildGraph, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
 import MapOverlay, { type LabelHit } from "./MapOverlay";
 import Customize from "./Customize";
@@ -1096,6 +1096,32 @@ export default function Guide() {
     [data],
   );
 
+  /**
+   * 現在地に寄せた起点の節点。
+   *
+   * 位置は数mおきに届く。そのたびに経路を丸ごと組み直していたため、
+   * 実測で1回あたり 8.5ms（節点を探す 1.0 + 経路 5.6 + 手順の文 2.0）を
+   * 使っていた。指で拡大縮小している最中にこれが割り込むと、
+   * 動きが引っかかる。
+   *
+   * 経路が変わるのは「寄せた先の節点が変わったとき」だけ。
+   * ここで節点だけを求めておき、経路のほうはその節点が変わったときに
+   * 組み直す。数m動いただけでは組み直さない。
+   */
+  const meNode = useMemo(() => {
+    if (!fix || tooFar) return { main: null as string | null, out: null as string | null };
+    /*
+     * 探す輪は誤差に合わせて広げる。建物の中にいると、いちばん近い
+     * 通路の節点まで数十m離れることがあり、50m で切ると見つからない。
+     */
+    const snap = Math.min(Math.max(SNAP_MAX, fix.accuracy), SNAP_MAX_FAR);
+    return {
+      main: graph ? (nearestNode(graph, fix.pos, snap)?.id ?? null) : null,
+      // 外だけの網は、選んでいるときしか要らない
+      out: avoidInside && graphOut ? (nearestNode(graphOut, fix.pos, snap)?.id ?? null) : null,
+    };
+  }, [graph, graphOut, fix, tooFar, avoidInside]);
+
   const route = useMemo(() => {
     if (!data || !graph || !trip) return null;
 
@@ -1104,20 +1130,13 @@ export default function Guide() {
     let fromGate = false;
     if (trip.origin.kind === "me") {
       /*
-       * 現在地に近い節点を起点にする。
+       * 現在地に寄せた節点を起点にする（上の meNode で求めてある）。
        *
-       * 探す輪は誤差に合わせて広げる。建物の中にいると、いちばん近い
-       * 通路の節点まで数十m離れることがあり、50m で切ると見つからない。
-       * 見つからないと門からの案内に切り替わり、
-       * 「現在地から案内しているつもりが門から」になっていた。
-       *
-       * 使わないのは「遠すぎる」と言い切れるときだけにする。
-       * 敷地の線の内外で切ると、誤差で外へ出た建物内の人を落としてしまう。
+       * 見つからないときは門からの案内に切り替わる。
+       * 「現在地から案内しているつもりが門から」にならないよう、
+       * 使わないのは「遠すぎる」と言い切れるときだけにしてある。
        */
-      const snap = fix
-        ? Math.min(Math.max(SNAP_MAX, fix.accuracy), SNAP_MAX_FAR)
-        : SNAP_MAX;
-      const near = fix && !tooFar ? nearestNode(graph, fix.pos, snap)?.id : null;
+      const near = avoidInside && graphOut ? meNode.out : meNode.main;
       if (near) startIds = [near];
       // 現在地がまだ取れていなくても案内は出す。門を起点にして、そう伝える
       if (startIds.length === 0) {
@@ -1178,9 +1197,33 @@ export default function Guide() {
       (id) => (usedGraph.cp.get(id)?.properties.level ?? 1) >= 2,
     );
 
-    const { steps, meters, minutes } = buildSteps(usedGraph, path, data, P(trip.dest.title), lang);
-    return { path, steps, meters, minutes, goal, startId, fromGate, inside, outdoorFailed };
-  }, [data, graph, graphOut, avoidInside, trip, fix, tooFar, entrancesOf, P, lang]);
+    /*
+     * 距離と時間だけを数える。
+     *
+     * 以前は手順の文を作る buildSteps を呼んでいたが、その文は画面に
+     * 出していない。中身では点ごとに43件の建物との内外判定をするので、
+     * 1回あたり 2.0ms かかっていた。要るのは長さだけなので、足すだけにする。
+     */
+    let meters = 0;
+    for (let i = 1; i < path.length; i++) {
+      const a = usedGraph.pos.get(path[i - 1]);
+      const b = usedGraph.pos.get(path[i]);
+      if (a && b) meters += metersBetween(a, b);
+    }
+    // 分速80m（不動産表示の基準）。切り上げ
+    const minutes = Math.max(1, Math.ceil(meters / 80));
+
+    return {
+      path,
+      meters: Math.round(meters),
+      minutes,
+      goal,
+      startId,
+      fromGate,
+      inside,
+      outdoorFailed,
+    };
+  }, [data, graph, graphOut, avoidInside, trip, meNode, entrancesOf]);
 
   /* ---------------- 到着判定 ---------------- */
 
