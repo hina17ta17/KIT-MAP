@@ -272,14 +272,6 @@ export default function Guide() {
   /** 実際に案内中の組み合わせ。[スタート]を押して確定する */
   const [trip, setTrip] = useState<{ origin: Origin; dest: SearchHit } | null>(null);
   const [arrived, setArrived] = useState(false);
-  /**
-   * 道順の手順を開いているか。
-   *
-   * 手順は前から作ってあったのに、画面のどこにも出していなかった。
-   * 建物の中を通る道すじを引いても、それが案内として読めなかった。
-   * ただし常に開くと地図が隠れるので、押したときだけ出す。
-   */
-  const [showSteps, setShowSteps] = useState(false);
   /** 到着の数え直しを促す合図。現在地が更新されなくても数え終われるように */
   const [recheck, setRecheck] = useState(0);
   const inRangeSince = useRef<number | null>(null);
@@ -2177,7 +2169,6 @@ export default function Guide() {
                 setArrived(false);
                 setFocusId(null);
                 setPickedFrom(null);
-                setShowSteps(false);
               }}
               className="shrink-0 rounded-full bg-slate-900 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 active:scale-95"
             >
@@ -2192,43 +2183,6 @@ export default function Guide() {
               <span className="opacity-80">{T("建物の中では")}</span>
               <span className="text-[13px]">{floorLabelIn(lang, trip.dest.sub)}</span>
             </div>
-          )}
-
-          {/*
-            道順。建物の中を通るところも文にして出す。
-            長い経路では手順が20を超えるので、開いたときだけ出し、
-            中は自分で送れるようにする。
-          */}
-          {route && !("error" in route) && route.steps.length > 1 && (
-            <>
-              <button
-                onClick={() => setShowSteps((v) => !v)}
-                className="mt-1.5 flex w-fit items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 shadow-md transition hover:bg-white active:scale-95"
-              >
-                <span className="text-[13px]">{showSteps ? "▾" : "▸"}</span>
-                {showSteps ? T("道順を閉じる") : T("道順を見る")}
-                <span className="text-slate-400">{route.steps.length}</span>
-              </button>
-              {showSteps && (
-                <ol className="mt-1.5 max-h-56 overflow-y-auto overscroll-contain rounded-2xl bg-white/95 p-2 shadow-md">
-                  {route.steps.map((st, i) => (
-                    <li
-                      key={i}
-                      className={`flex gap-2 rounded-lg px-2 py-1.5 text-[11px] leading-snug ${
-                        st.door
-                          ? "font-bold text-emerald-800"
-                          : st.inside
-                            ? "text-sky-800"
-                            : "text-slate-700"
-                      }`}
-                    >
-                      <span className="shrink-0 text-slate-400">{i + 1}</span>
-                      <span className="min-w-0">{st.text}</span>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </>
           )}
 
           {/* 経路を追って動かしたあと、最初の画角へ戻す。
