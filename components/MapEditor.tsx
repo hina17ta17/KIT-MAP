@@ -273,6 +273,10 @@ export type EditorSource = "live" | "base";
 export default function MapEditor({ source = "live" }: { source?: EditorSource }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
+  /** 番号でまとめて消すときの範囲。入力中は文字で持つ */
+  const [delFrom, setDelFrom] = useState("");
+  const [delTo, setDelTo] = useState("");
+
   const [ready, setReady] = useState(false);
   /**
    * 地図の実体。ref とは別に state でも持つ。
@@ -1743,6 +1747,72 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
     setSelected(null);
   };
 
+  /** CPの番号。C-0042 → 42。番号でないものは null */
+  const cpNumber = (id: string): number | null => {
+    const m = /^C-0*(\d+)$/.exec(id);
+    return m ? Number(m[1]) : null;
+  };
+
+  /**
+   * 番号の範囲でまとめて消す。
+   *
+   * 1つずつ選んで消していくと、何百もある範囲では終わらない。
+   * 消したあとの後始末（親の付け替え、つながっていた接続）は
+   * 1つずつ消すときと同じにする。ここだけ違うと、
+   * どこからも入れないCPや、片側の無い接続が残る。
+   */
+  const removeCpRange = (from: number, to: number) => {
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    const doomed = new Set(
+      (data.checkpoints.features as CheckpointFeature[])
+        .filter((f) => {
+          const n = cpNumber(f.properties.id);
+          return n !== null && n >= lo && n <= hi;
+        })
+        .map((f) => f.properties.id),
+    );
+    if (doomed.size === 0) {
+      setNotice({ kind: "warn", text: `${lo} 〜 ${hi} に当てはまるCPはありません` });
+      return;
+    }
+    const cutLinks = data.links.filter((l) => doomed.has(l.from) || doomed.has(l.to)).length;
+    if (
+      !window.confirm(
+        `C-${lo} 〜 C-${hi} のCP ${doomed.size} 件を削除します。\n` +
+          `つながっていた接続 ${cutLinks} 本も一緒に消えます。\n\nよろしいですか？`,
+      )
+    )
+      return;
+
+    setData((prev) => ({
+      ...prev,
+      checkpoints: {
+        type: "FeatureCollection",
+        features: (prev.checkpoints.features as CheckpointFeature[])
+          .filter((f) => !doomed.has(f.properties.id))
+          // 消したCPを親に持つ子から、その親を外す
+          .map((f) =>
+            f.properties.parents.some((p) => doomed.has(p))
+              ? {
+                  ...f,
+                  properties: {
+                    ...f.properties,
+                    parents: f.properties.parents.filter((p) => !doomed.has(p)),
+                  },
+                }
+              : f,
+          ),
+      },
+      links: prev.links.filter((l) => !doomed.has(l.from) && !doomed.has(l.to)),
+    }));
+    setSelected(null);
+    setNotice({
+      kind: "ok",
+      text: `CP ${doomed.size} 件と接続 ${cutLinks} 本を削除しました`,
+    });
+  };
+
   const selectedLink = useMemo(
     () => data.links.find((l) => l.id === selected) ?? null,
     [data.links, selected],
@@ -2858,6 +2928,51 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
                     <h2 className="mb-1 text-xs font-bold text-slate-900">
                       チェックポイント（{data.checkpoints.features.length}）
                     </h2>
+
+                    {/*
+                      番号でまとめて消す。
+                      何百もある範囲を1つずつ選んでいては終わらない。
+                      つながっていた接続と、親の指定も一緒に片づける。
+                    */}
+                    {data.checkpoints.features.length > 0 && (
+                      <div className="mb-1.5 rounded bg-slate-100 p-1.5">
+                        <div className="mb-1 text-[10px] font-bold text-slate-500">
+                          番号の範囲でまとめて消す
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] text-slate-500">C-</span>
+                          <input
+                            value={delFrom}
+                            onChange={(e) => setDelFrom(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                            inputMode="numeric"
+                            placeholder="から"
+                            className="w-16 rounded border border-slate-300 px-1.5 py-1 text-[11px]"
+                          />
+                          <span className="text-[11px] text-slate-500">〜 C-</span>
+                          <input
+                            value={delTo}
+                            onChange={(e) => setDelTo(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                            inputMode="numeric"
+                            placeholder="まで"
+                            className="w-16 rounded border border-slate-300 px-1.5 py-1 text-[11px]"
+                          />
+                          <button
+                            onClick={() => {
+                              removeCpRange(Number(delFrom), Number(delTo));
+                              setDelFrom("");
+                              setDelTo("");
+                            }}
+                            disabled={!delFrom || !delTo}
+                            className="ml-auto rounded bg-red-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-red-700 disabled:bg-slate-300"
+                          >
+                            消す
+                          </button>
+                        </div>
+                        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                          両端を含みます。押す前に、何件消えるかを確かめる画面が出ます。
+                        </p>
+                      </div>
+                    )}
 
                     {data.checkpoints.features.length === 0 ? (
                       <p className="text-[11px] leading-relaxed text-slate-500">
