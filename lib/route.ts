@@ -9,6 +9,7 @@
 import type { Position } from "geojson";
 import type { AppData } from "./appdata";
 import { metersBetween } from "./geo";
+import { placeName, type Lang } from "./i18n";
 import type { CheckpointFeature } from "./features";
 
 export type Graph = {
@@ -226,10 +227,38 @@ export type Step = {
   meters: number;
   /** 目印にする建物名。無ければ空 */
   landmark: string;
+  /**
+   * 建物の出入りを告げるだけの手順か。
+   *
+   * 短い区間は直前の手順に足してまとめるが、これに足すと
+   * 「◯号館 に入る」の文が距離の文に置き換わって消えてしまう。
+   * 足す相手から外すために印を持たせる。
+   */
+  door: boolean;
+  /**
+   * この手順が建物の中を進むものか。
+   *
+   * 中を通る道すじ（レベル2以上の点）を引いてあるのに、
+   * 外を歩くときと同じ「◯号館の角を」と言っていた。
+   * 中と外で言い方を変えるために持たせる。
+   */
+  inside: boolean;
   text: string;
 };
 
 const COMPASS = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
+const COMPASS_EN = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+
+/** 曲がり方の言い方。日本語と英語で語順が違うので、対で持つ */
+const TURN: Record<string, string> = {
+  "Uターンして": "make a U-turn and ",
+  "右後方へ": "turn sharp right and ",
+  "左後方へ": "turn sharp left and ",
+  "右折して": "turn right and ",
+  "左折して": "turn left and ",
+  "右斜め前へ": "bear right and ",
+  "左斜め前へ": "bear left and ",
+};
 
 /** 2点間の方位（度・北が0・時計回り） */
 function bearing(a: Position, b: Position): number {
@@ -265,14 +294,40 @@ export function buildSteps(
   path: string[],
   data: AppData,
   destName: string,
+  lang: Lang = "ja",
 ): { steps: Step[]; meters: number; minutes: number } {
   const pts = path.map((id) => graph.pos.get(id)!).filter(Boolean);
   let total = 0;
   for (let i = 1; i < pts.length; i++) total += metersBetween(pts[i - 1], pts[i]);
 
   const round10 = (m: number) => Math.max(10, Math.round(m / 10) * 10);
-  const format = (s: Step) =>
-    `${s.landmark ? `${s.landmark}の角を ` : ""}${s.turn}${round10(s.meters)}m 進む`;
+  const en = lang === "en";
+  /** 建物の名前。英語のときは言い換える */
+  const nm = (s: string) => (s ? placeName(lang, s) : s);
+
+  const format = (s: Step) => {
+    const m = round10(s.meters);
+    if (!en) {
+      return s.inside
+        ? `${s.landmark}の中を ${s.turn}${m}m 進む`
+        : `${s.landmark ? `${s.landmark}の角を ` : ""}${s.turn}${m}m 進む`;
+    }
+    // 英語は「どこで」「どう曲がって」「何m」の順にする
+    const where = s.inside
+      ? `Inside ${nm(s.landmark)}, `
+      : s.landmark
+        ? `At ${nm(s.landmark)}, `
+        : "";
+    return `${where}${s.turn}go ${m} m`;
+  };
+
+  /*
+   * 各点が、どの建物の中にあるか（外なら空）。
+   *
+   * 建物の中を通る道すじが引いてあっても、案内の文では外と区別が
+   * つかなかった。入る・出るをはさみ、中を進む区間は言い方を変える。
+   */
+  const inB = pts.map((p) => insideBuilding(p, data));
 
   const steps: Step[] = [];
 
@@ -280,7 +335,11 @@ export function buildSteps(
     let segStart = 0;
     let prevB = bearing(pts[0], pts[1]);
     // 最初の区間だけは方角で言う（「北へ 60m」）
-    let segTurn = `${COMPASS[Math.round(prevB / 45) % 8]}へ `;
+    const heading = (b: number) =>
+      en
+        ? `head ${COMPASS_EN[Math.round(b / 45) % 8]} and `
+        : `${COMPASS[Math.round(b / 45) % 8]}へ `;
+    let segTurn = heading(prevB);
 
     /** segStart〜endIdx をひとつの手順にまとめて積む */
     const emit = (endIdx: number, nextTurn: string) => {
@@ -288,15 +347,19 @@ export function buildSteps(
       for (let i = segStart + 1; i <= endIdx; i++) m += metersBetween(pts[i - 1], pts[i]);
       if (m >= 1) {
         const last = steps[steps.length - 1];
-        if (m < 10 && last) {
-          // 10m未満の区間は独立させず、直前の手順に足す
+        if (m < 10 && last && !last.door) {
+          // 10m未満の区間は独立させず、直前の手順に足す。
+          // ただし出入りの手順には足さない（その文が消えてしまう）
           last.meters += m;
           last.text = format(last);
         } else {
+          const here = inB[segStart];
           const s: Step = {
             turn: segTurn,
             meters: m,
-            landmark: nearLandmark(pts[segStart], data),
+            landmark: here || nearLandmark(pts[segStart], data),
+            inside: !!here,
+            door: false,
             text: "",
           };
           s.text = format(s);
@@ -308,15 +371,43 @@ export function buildSteps(
     };
 
     for (let i = 1; i < pts.length - 1; i++) {
+      // 建物の内と外が入れ替わるところで区切り、出入りを1手順として挟む
+      if (inB[i] !== inB[i - 1]) {
+        emit(i, "");
+        const name = inB[i] || inB[i - 1];
+        steps.push({
+          turn: "",
+          meters: 0,
+          landmark: name,
+          inside: !!inB[i],
+          door: true,
+          text: en
+            ? inB[i]
+              ? `Enter ${nm(name)}`
+              : `Leave ${nm(name)}`
+            : inB[i]
+              ? `${name} に入る`
+              : `${name} から出る`,
+        });
+        // 区切った直後は、また方角で言い直す
+        segTurn = heading(bearing(pts[i], pts[i + 1]));
+      }
       const b = bearing(pts[i], pts[i + 1]);
       const word = turnWord(b - prevB);
-      if (word) emit(i, word); // 30度以上曲がるところで区切る
+      if (word) emit(i, en ? (TURN[word] ?? word) : word); // 30度以上曲がるところで区切る
       prevB = b;
     }
     emit(pts.length - 1, "");
   }
 
-  steps.push({ turn: "", meters: 0, landmark: "", text: `${destName} に到着` });
+  steps.push({
+    turn: "",
+    meters: 0,
+    landmark: "",
+    inside: false,
+    door: true,
+    text: en ? `Arrive at ${destName}` : `${destName} に到着`,
+  });
 
   return {
     steps,
@@ -324,6 +415,28 @@ export function buildSteps(
     // 分速80m（不動産表示の基準）。切り上げ
     minutes: Math.max(1, Math.ceil(total / 80)),
   };
+}
+
+/**
+ * その点が入っている建物の名前。外なら空。
+ *
+ * 建物の中を通る道すじを、案内の文で言い分けるために使う。
+ * 点が輪の内側かどうかを、辺との交差の数で決める（奇数なら内側）。
+ */
+function insideBuilding(at: Position, data: AppData): string {
+  for (const b of data.buildings.features) {
+    const ring = b.geometry.coordinates[0];
+    let hit = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > at[1] !== yj > at[1] && at[0] < ((xj - xi) * (at[1] - yi)) / (yj - yi) + xi) {
+        hit = !hit;
+      }
+    }
+    if (hit) return b.properties.name || (b.properties.code ? `${b.properties.code}号館` : "");
+  }
+  return "";
 }
 
 /** 指定した点の近くにある建物名。50m以内でいちばん近いもの */

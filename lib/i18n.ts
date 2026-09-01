@@ -18,6 +18,8 @@ const EN: Record<string, string> = {
   現在地: "My location",
   案内: "Route",
   "案内をはじめる": "Start",
+  "道順を見る": "Show directions",
+  "道順を閉じる": "Hide directions",
   "案内を消す": "Clear route",
   "案内を終える": "Finish",
   "地図に戻る": "Back to map",
