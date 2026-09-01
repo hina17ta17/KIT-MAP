@@ -301,6 +301,15 @@ export default function Guide() {
          * 8px なら多少ぶれても押したと受け取れ、地図を動かす操作とも混ざらない。
          */
         clickTolerance: 8,
+        /*
+         * タイルの入れ替わりを、じわっと重ねない。
+         *
+         * 既定では新しいタイルを 300ms かけて重ねながら出す。
+         * 拡大縮小のあいだは縮尺が変わり続けるので、その重ね描きが
+         * 毎コマ走り、指の動きに追いつかなくなる。
+         * 入れ替わりが少し硬くなるが、動きのほうを取る。
+         */
+        fadeDuration: 0,
         // 既定の出典表示は畳まれて「ⓘ」ボタンになる。
         // ボタンを消したいが出典表示は地理院タイルの利用条件で必須なので、
         // 自前で「畳まない」ものを付け直して、小さな文字として常時出す。
@@ -435,6 +444,17 @@ export default function Guide() {
     window.visualViewport?.addEventListener("resize", fit);
     // 初回描画のあとレイアウトが確定することがあるので、少し遅らせても測る
     const timers = [80, 300, 900].map((ms) => window.setTimeout(fit, ms));
+
+    /*
+     * 描く細かさの上限を2倍までにする。
+     *
+     * 端末によっては画面の細かさが3倍ある。そのまま描くと1コマで
+     * 9倍の点を塗ることになり、拡大縮小が追いつかない。
+     * 2倍でも文字と線は十分はっきり見える（一般的な地図アプリと同じ）。
+     */
+    if (typeof window !== "undefined" && window.devicePixelRatio > 2) {
+      map.setPixelRatio(2);
+    }
 
     mapRef.current = map;
     return () => {

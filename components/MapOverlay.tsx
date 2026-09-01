@@ -337,6 +337,31 @@ function MapOverlayInner({
     if (run.length > 1) runs.push(run);
 
     /*
+     * 画面の上で重なる点を落とす。
+     *
+     * 経路の点は 2m ほどの間隔で並んでいる。引いていない縮尺では
+     * それが 1px 未満になり、同じ場所に何十回も打つことになる。
+     * 経路は中央値141点・最大443点あり、それを太さ30・20・12・6の
+     * 4本重ねて毎コマ描いていた。
+     *
+     * 1.5px 以内の点は見た目が変わらないので落とす。
+     * 寄れば点の間隔が広がるので、拡大したときは落ちない。
+     * 端の点は必ず残す（線が途中で終わって見えるため）。
+     */
+    const THIN_PX = 1.5;
+    const thin = (pts: { x: number; y: number }[]) => {
+      if (pts.length <= 2) return pts;
+      const out = [pts[0]];
+      for (let i = 1; i < pts.length - 1; i++) {
+        const l = out[out.length - 1];
+        if (Math.abs(pts[i].x - l.x) + Math.abs(pts[i].y - l.y) >= THIN_PX) out.push(pts[i]);
+      }
+      out.push(pts[pts.length - 1]);
+      return out;
+    };
+    const thinRuns = runs.map(thin);
+
+    /*
      * 誤差の円も、画面より大きくは描かない。
      * 粗い測り方だと誤差が数kmになることがあり、寄った状態では
      * 半径が数万pxの円になる。画面いっぱいを超えた先は見えないので、
@@ -346,7 +371,7 @@ function MapOverlayInner({
 
     return {
       buildings,
-      routeRuns: runs,
+      routeRuns: thinRuns,
       goal: drawn ? p(drawn.goal.geometry.coordinates) : null,
       start: drawn && graph ? p(graph.pos.get(drawn.startId)!) : null,
       maxR,
