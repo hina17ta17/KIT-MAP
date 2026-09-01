@@ -48,17 +48,20 @@ export function buildGraph(data: AppData): Graph {
     add(l.to, l.from, m, m);
   }
 
-  // 親子関係も通れる辺として扱う（親を通れば子に入れる）
-  for (const c of cps) {
-    for (const p of c.properties.parents ?? []) {
-      const a = pos.get(p);
-      const b = pos.get(c.properties.id);
-      if (!a || !b) continue;
-      const m = metersBetween(a, b);
-      add(p, c.properties.id, m, m);
-      add(c.properties.id, p, m, m);
-    }
-  }
+  /*
+   * 親子関係は、歩ける道として足さない。
+   *
+   * 親子は「どの入口から入れるか」の指定であって、道ではない。
+   * 実際、親子の組 1380 本のうち線が引いてあるのは 29 本だけで、
+   * 距離は中央値 47m・最長 141m ある。
+   *
+   * これを直線の辺として入れていたため、建物の中の点から
+   * 遠くの入口へ 77m まっすぐ飛ぶ、といった道すじが選ばれていた。
+   * 画面では「途中が飛ばされた」ように見える。
+   *
+   * 歩ける道は、引いてある接続だけ。親子はそちらで表す。
+   * 4177 点すべてが接続だけでひと続きになっていることは確かめてある。
+   */
 
   return { pos, adj, cp };
 }
