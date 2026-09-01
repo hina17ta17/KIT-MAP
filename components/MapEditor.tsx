@@ -1851,6 +1851,87 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
     return a && b ? metersBetween(a, b) : 0;
   };
 
+  /**
+   * 書き出す形の links。
+   *
+   * 経路グラフの辺。線の形はCPの座標から作る。
+   * 落とすボタンと、公開データへ直に書き込むボタンで同じものを使う。
+   * 別々に組み立てると、片方だけ直したときに食い違う。
+   */
+  const linksForExport = useCallback(
+    () => ({
+      type: "FeatureCollection" as const,
+      features: data.links.flatMap((l) => {
+        const a = cpById.get(l.from)?.geometry.coordinates;
+        const b = cpById.get(l.to)?.geometry.coordinates;
+        if (!a || !b) return [];
+        return [
+          {
+            type: "Feature" as const,
+            geometry: { type: "LineString" as const, coordinates: [a, b] },
+            properties: { ...l, lengthM: Math.round(linkLength(l)) },
+          },
+        ];
+      }),
+    }),
+    [data.links, cpById, linkLength],
+  );
+
+  /**
+   * いま画面に出ている下書きを、そのまま公開データに書き込む。
+   *
+   * 手元でだけ動く口（/api/publish）へ渡す。落として手で置く手順が
+   * 要らなくなるので、「いつの下書きを公開したのか」を取り違えない。
+   */
+  const publishDraft = async () => {
+    const unlinked = graph.unreachable.length + graph.isolated.length;
+    const ok = window.confirm(
+      [
+        "いま画面に出ている下書きを、公開データ（public/data）に書き込みます。",
+        "",
+        `  敷地 ${data.campus.features.length} / 場所 ${data.buildings.features.length}`,
+        `  CP ${data.checkpoints.features.length} / 接続 ${data.links.length}`,
+        "",
+        unlinked > 0
+          ? `※ つながっていない点が ${unlinked} 点あります`
+          : "※ すべてつながっています",
+        "",
+        "前のデータは上書きされます（git から戻せます）。よろしいですか？",
+      ].join("\n"),
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campus: data.campus,
+          buildings: data.buildings,
+          paths: data.paths,
+          checkpoints: data.checkpoints,
+          links: linksForExport(),
+        }),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        wrote?: { name: string; features: number; bytes: number }[];
+      };
+      if (!res.ok || !j.ok) throw new Error(j.error ?? "書き込めませんでした");
+      setNotice({
+        kind: "ok",
+        text:
+          "公開データに書き込みました: " +
+          (j.wrote ?? []).map((w) => `${w.name} ${w.features}件`).join(" / "),
+      });
+    } catch (e) {
+      setNotice({ kind: "warn", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /* ---------------- 部屋（建物の中身） ---------------- */
 
   /** 選択中の建物にある部屋。階の低い順に並べる */
@@ -3637,6 +3718,25 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
             </p>
           </div>
 
+          {/*
+            いま出ている下書きを、そのまま公開データにする。
+            落として手で置く手順が要らないので、いつの下書きを
+            公開したのか取り違えない。手元でだけ動く。
+          */}
+          <button
+            onClick={() => void publishDraft()}
+            disabled={busy}
+            className="mb-1.5 w-full rounded bg-rose-600 px-2 py-2 text-[11px] font-bold text-white hover:bg-rose-700 disabled:bg-slate-300"
+          >
+            この下書きを公開データにする
+          </button>
+          <p className="mb-2 text-[10px] leading-relaxed text-slate-500">
+            public/data の5つのファイルを、いまの中身で書き換えます。
+            そのあと私に「デプロイして」と言ってください。
+            <br />
+            下の書き出しは、控えを手元に残したいときに使ってください。
+          </p>
+
           <div className="grid grid-cols-2 gap-1.5">
             <button
               onClick={() => downloadJson("campus.geojson", data.campus)}
@@ -3663,24 +3763,7 @@ export default function MapEditor({ source = "live" }: { source?: EditorSource }
               checkpoints.geojson
             </button>
             <button
-              onClick={() =>
-                downloadJson("links.geojson", {
-                  type: "FeatureCollection",
-                  // 経路グラフの辺。線の形はCPの座標から作って書き出す
-                  features: data.links.flatMap((l) => {
-                    const a = cpById.get(l.from)?.geometry.coordinates;
-                    const b = cpById.get(l.to)?.geometry.coordinates;
-                    if (!a || !b) return [];
-                    return [
-                      {
-                        type: "Feature",
-                        geometry: { type: "LineString", coordinates: [a, b] },
-                        properties: { ...l, lengthM: Math.round(linkLength(l)) },
-                      },
-                    ];
-                  }),
-                })
-              }
+              onClick={() => downloadJson("links.geojson", linksForExport())}
               className="col-span-2 rounded bg-sky-600 px-2 py-1.5 text-[11px] font-bold text-white hover:bg-sky-700"
             >
               links.geojson（経路グラフ）

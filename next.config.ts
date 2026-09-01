@@ -14,8 +14,14 @@ const nextConfig: NextConfig = {
    *
    * 画面の中で隠すだけでは、URL を直に叩けば開けてしまう。
    * 作図は地図データを作る作業で、公開サイトで行うものではない。
+   *
+   * dev.ts も入れる。画面は page.dev.tsx だが、下書きを公開データへ
+   * 書き込む口は route.dev.ts で拡張子が違う。片方だけだと、その口は
+   * 開発中でも見つからない（実際に 404 になった）。
    */
-  pageExtensions: DEV ? ["tsx", "ts", "jsx", "js", "dev.tsx"] : ["tsx", "ts", "jsx", "js"],
+  pageExtensions: DEV
+    ? ["tsx", "ts", "jsx", "js", "dev.tsx", "dev.ts"]
+    : ["tsx", "ts", "jsx", "js"],
 
   // 開発中にスマホ実機など LAN 上の端末から開けるようにする。
   // 指定しないと HMR がブロックされ、警告が出続ける。
