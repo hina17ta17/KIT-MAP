@@ -1074,6 +1074,18 @@ export default function Guide() {
   /* ---------------- 経路 ---------------- */
 
   const graph = useMemo(() => (data ? buildGraph(data) : null), [data]);
+  /**
+   * 建物の中を通らない網。
+   *
+   * 中を通る道すじのほうが近いことは多いが、開いていない時間帯や
+   * 入りたくない事情もある。外だけの道すじも出せるようにする。
+   */
+  const graphOut = useMemo(
+    () => (data ? buildGraph(data, { outdoorOnly: true }) : null),
+    [data],
+  );
+  /** 建物の中を通らない道すじを選んでいるか */
+  const [avoidInside, setAvoidInside] = useState(false);
 
   /** 建物IDから、その場所の出入口CP一覧 */
   const entrancesOf = useCallback(
@@ -1128,22 +1140,47 @@ export default function Guide() {
     const ents = entrancesOf(trip.dest.buildingId);
     if (ents.length === 0) return { error: "目的地の入口が登録されていません" as const };
 
-    // 出入口の組み合わせをすべて見比べて、道なりでいちばん短くなるものを選ぶ。
-    // 直線で近い出入口が道なりでも近いとはかぎらない
-    const found = findBestPath(
-      graph,
-      startIds,
-      ents.map((e) => e.properties.id),
-    );
+    const goalIds = ents.map((e) => e.properties.id);
+
+    /*
+     * 出入口の組み合わせをすべて見比べて、道なりでいちばん短くなるものを選ぶ。
+     * 直線で近い出入口が道なりでも近いとはかぎらない。
+     *
+     * 「外だけ」を選んでいるときは、建物の中の点を外した網で探す。
+     * その網に無い出入口は起点・終点から除く。外だけでは行けない相手も
+     * あるので（実測で83通り）、見つからなければ中を通る道すじに戻し、
+     * そのことを画面で伝える。
+     */
+    const useOut = avoidInside && graphOut !== null;
+    const g = useOut ? graphOut! : graph;
+    const has = (id: string) => g.pos.has(id);
+    let found =
+      useOut
+        ? findBestPath(g, startIds.filter(has), goalIds.filter(has))
+        : findBestPath(g, startIds, goalIds);
+
+    let usedGraph = g;
+    let outdoorFailed = false;
+    if (!found && useOut) {
+      // 外だけでは行けない。中を通る道すじに戻す
+      found = findBestPath(graph, startIds, goalIds);
+      usedGraph = graph;
+      outdoorFailed = true;
+    }
     if (!found) return { error: "経路が見つかりませんでした" as const };
 
     const path = found.path;
     const startId = path[0];
     const goal = ents.find((e) => e.properties.id === path[path.length - 1]) ?? ents[0];
 
-    const { steps, meters, minutes } = buildSteps(graph, path, data, P(trip.dest.title), lang);
-    return { path, steps, meters, minutes, goal, startId, fromGate };
-  }, [data, graph, trip, fix, tooFar, entrancesOf, P, lang]);
+    /** この道すじが建物の中を通るか */
+    const inside = path.some(
+      (id) => (usedGraph.cp.get(id)?.properties.level ?? 1) >= 2,
+    );
+
+    const { steps, meters, minutes } = buildSteps(usedGraph, path, data, P(trip.dest.title), lang);
+    return { path, steps, meters, minutes, goal, startId, fromGate, inside, outdoorFailed };
+  }, [data, graph, graphOut, avoidInside, trip, fix, tooFar, entrancesOf, P, lang]);
 
   /* ---------------- 到着判定 ---------------- */
 
@@ -2169,6 +2206,7 @@ export default function Guide() {
                 setArrived(false);
                 setFocusId(null);
                 setPickedFrom(null);
+                setAvoidInside(false);
               }}
               className="shrink-0 rounded-full bg-slate-900 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 active:scale-95"
             >
@@ -2182,6 +2220,27 @@ export default function Guide() {
             <div className="mt-1.5 flex w-fit items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white shadow">
               <span className="opacity-80">{T("建物の中では")}</span>
               <span className="text-[13px]">{floorLabelIn(lang, trip.dest.sub)}</span>
+            </div>
+          )}
+
+          {/*
+            建物の中を通る道すじのときだけ、外だけで行く道すじに替えられる。
+            中を通らない道すじなら出す意味が無いので出さない。
+          */}
+          {route && !("error" in route) && (route.inside || avoidInside) && (
+            <button
+              onClick={() => setAvoidInside((v) => !v)}
+              className={`mt-1.5 flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold shadow-md transition active:scale-95 ${
+                avoidInside ? "bg-sky-600 text-white" : "bg-white text-slate-700"
+              }`}
+            >
+              <span className="text-[13px]">{avoidInside ? "🚶" : "🏢"}</span>
+              {avoidInside ? T("建物の中も通る") : T("建物の中を通らない")}
+            </button>
+          )}
+          {route && !("error" in route) && route.outdoorFailed && (
+            <div className="mt-1.5 w-fit rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold text-amber-900 shadow">
+              {T("外だけでは行けないので、中を通っています")}
             </div>
           )}
 

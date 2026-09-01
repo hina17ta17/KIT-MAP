@@ -18,6 +18,10 @@ const EN: Record<string, string> = {
   現在地: "My location",
   案内: "Route",
   "案内をはじめる": "Start",
+  "建物の中を通らない": "Avoid going inside",
+  "建物の中も通る": "Allow going inside",
+  "外だけでは行けないので、中を通っています":
+    "There is no outdoor-only route, so this one goes inside.",
   "案内を消す": "Clear route",
   "案内を終える": "Finish",
   "地図に戻る": "Back to map",

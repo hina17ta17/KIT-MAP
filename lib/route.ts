@@ -19,8 +19,16 @@ export type Graph = {
   cp: Map<string, CheckpointFeature>;
 };
 
-export function buildGraph(data: AppData): Graph {
-  const cps = data.checkpoints.features as CheckpointFeature[];
+/**
+ * 経路の網を組む。
+ *
+ * outdoorOnly を立てると、建物の中の点（レベル2以上）を外して組む。
+ * 「中を通らない道すじ」を出すために使う。中を通れないぶん遠回りになり、
+ * 行き先によっては道が無くなる（実測で 409 通り中 83 通りは出せない）。
+ */
+export function buildGraph(data: AppData, opts?: { outdoorOnly?: boolean }): Graph {
+  const all = data.checkpoints.features as CheckpointFeature[];
+  const cps = opts?.outdoorOnly ? all.filter((c) => c.properties.level < 2) : all;
   const pos = new Map<string, Position>();
   const cp = new Map<string, CheckpointFeature>();
   for (const c of cps) {
