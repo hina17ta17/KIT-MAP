@@ -177,26 +177,57 @@ export default function LoginPage() {
       setSeat(p.seat_no ? String(p.seat_no) : "");
 
       /*
-       * 知らない端末から入ったときは、認証アプリで確かめてもらう。
+       * 認証アプリが登録されているかは、席の情報の列ではなく
+       * 認証の仕組みそのものに訊く。
        *
-       * 一度確かめた端末では次から求めない。毎回だと使ってもらえず、
-       * 一度きりだと、パスワードが漏れた時点でどこからでも入れてしまう。
-       *
-       * 申請の途中の人は、そもそもこのあと認証アプリを通るので対象外。
+       * profiles.verified は、申請の画面を通ったときだけ立つ。
+       * データベースから直に権限を付けた人（最初の管理者など）は
+       * 立っていないので、列だけを見ると「登録済みかどうか」を
+       * 取り違える。実際に登録されている factor を数える。
        */
-      if (p.role !== "pending" && p.verified && !isTrustedDevice(data.user.id)) {
-        setStep("verify");
-        setLoading(false);
-        return;
+      let hasFactor = false;
+      try {
+        const { data: fl } = await supabase.auth.mfa.listFactors();
+        hasFactor = (fl?.totp ?? []).some((x) => x.status === "verified");
+      } catch {
+        // 訊けないときは「未登録」として扱う。登録をうながす側に倒す
       }
 
-      // 申請の続きを求めるのは、まだ承認待ちの人だけ。
-      // すでに権限がある人（管理者など）を所属の記入で止めない
-      if (p.role !== "pending") setStep("done");
-      // 先に本人確認。通ってから所属を書いてもらう
-      else if (!p.verified) setStep("mfa");
-      else if (!p.grade || !p.class_code || !p.seat_no) setStep("detail");
-      else setStep("done");
+      /*
+       * どこへ進ませるかを、ここで一本にまとめる。
+       *
+       * 以前は「承認済みなら done」と先に決めていたため、
+       * 承認済みで認証アプリが未登録の人が、どの枝にも入らないまま
+       * done に落ちていた。6桁を入れる画面がどこにも出ず、
+       * 登録し直す道もない状態になっていた（最初の管理者がこれ）。
+       */
+      if (!hasFactor) {
+        // まだ認証アプリが無い人は、承認済みでも登録から。
+        // 下の管理メニューは出たままなので、締め出しにはならない
+        setStep("mfa");
+      } else if (p.role !== "pending") {
+        /*
+         * 知らない端末から入ったときは、認証アプリで確かめてもらう。
+         * 一度確かめた端末では次から求めない。毎回だと使ってもらえず、
+         * 一度きりだと、パスワードが漏れた時点でどこからでも入れてしまう。
+         */
+        setStep(isTrustedDevice(data.user.id) ? "done" : "verify");
+      } else if (!p.grade || !p.class_code || !p.seat_no) {
+        setStep("detail");
+      } else {
+        setStep("done");
+      }
+    } else {
+      /*
+       * 席はあるのに情報が作れなかった。
+       *
+       * ここで黙るとログインの画面が出たままになり、
+       * 入っているのに入れないように見える。何が起きたかを出す。
+       */
+      setMsg({
+        kind: "err",
+        text: "利用者の情報を読み込めませんでした。一度ログアウトして、入り直してください。",
+      });
     }
     setLoading(false);
   }, []);
@@ -305,8 +336,13 @@ export default function LoginPage() {
       setCode("");
       // いま確かめたので、この端末は覚えてよい
       if (u.user?.id) trustDevice(u.user.id);
-      setStep("detail");
-      setMsg({ kind: "ok", text: T("本人確認ができました。最後に所属を入れてください。") });
+      /*
+       * 次にどこへ行くかは reload に決めさせる。
+       * ここで "detail" と決め打つと、すでに権限のある人まで
+       * 所属の記入へ押し込んでしまう。
+       */
+      await reload();
+      setMsg({ kind: "ok", text: T("本人確認ができました。") });
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -733,16 +769,24 @@ function Wizard(props: {
   finish: () => Promise<void>;
   busy: boolean;
 }) {
-  const { t: T, lang, step, mfa, code, setCode, enroll, verifyMfa, busy } = props;
+  const { t: T, lang, step, me, mfa, code, setCode, enroll, verifyMfa, busy } = props;
+  /* 申請の途中の人には段の番号を出す。すでに権限のある人には意味が無い */
+  const applying = me.role === "pending";
 
   if (step === "mfa") {
     return (
       <div className="mt-4">
-        <Head n={2} total={3} text={T("認証アプリで本人確認")} />
+        {applying ? (
+          <Head n={2} total={3} text={T("認証アプリで本人確認")} />
+        ) : (
+          <Head text={T("認証アプリで本人確認")} />
+        )}
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
           {T("Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。")}
           <br />
-          {T("これができたら、所属の記入に進めます。")}
+          {applying
+            ? T("これができたら、所属の記入に進めます。")
+            : T("この端末を、次から確かめるのに使います。")}
           <br />
         </p>
 
@@ -880,12 +924,15 @@ function Pick({
   );
 }
 
-function Head({ n, total, text }: { n: number; total: number; text: string }) {
+/** 見出し。段の番号は、申請の途中の人にだけ出す */
+function Head({ n, total, text }: { n?: number; total?: number; text: string }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">
-        {n} / {total}
-      </span>
+      {n != null && total != null && (
+        <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">
+          {n} / {total}
+        </span>
+      )}
       <span className="text-sm font-bold text-slate-900">{text}</span>
     </div>
   );

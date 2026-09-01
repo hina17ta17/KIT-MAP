@@ -210,6 +210,8 @@ const EN: Record<string, string> = {
   "半角の英数字・記号だけで入力してください": "Use single-byte letters, numbers and symbols only",
   "［START］のあと、Microsoft Authenticator で本人確認をし、所属を入れます。":
     "After START you verify with Microsoft Authenticator, then enter your details.",
+  "この端末を、次から確かめるのに使います。":
+    "It will be used to confirm this device from next time.",
   "Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。":
     "Scan the QR with Microsoft Authenticator and enter the 6-digit code.",
   "接続先が設定されていないため、ログインと申請を受け付けられません。":
