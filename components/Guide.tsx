@@ -30,6 +30,7 @@ import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
 import MapOverlay, { type LabelHit } from "./MapOverlay";
+import { PerfHud } from "./PerfHud";
 import Customize from "./Customize";
 import { EMPTY_CUSTOM, colorOf, loadCustom, saveCustom, type Custom } from "@/lib/custom";
 import { GROUP_LABEL, compareOrder, orderKey } from "@/lib/order";
@@ -1700,6 +1701,9 @@ export default function Guide() {
 
       {/* 建物の名前・経路・現在地。
           地図が動くたびの組み直しは、この中だけで起きる */}
+      {/* ?perf=1 を付けて開いたときだけ、動きの重さを画面に出す */}
+      <PerfHud />
+
       <MapOverlay
         map={mapRef.current}
         ready={ready}

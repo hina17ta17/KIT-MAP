@@ -38,9 +38,30 @@ export type LabelBox = { x: number; y: number; w: number; h: number };
  * 11px の太字なら、全角はほぼ文字の高さ分、半角はその6割ほどの幅になる。
  * 左右の余白 16px を足したものを、その名前の占める幅とみなす。
  */
-export function labelBox(text: string, x: number, y: number): LabelBox {
+/**
+ * 名前の幅を覚えておく。
+ *
+ * 幅は文字で決まるので、地図を動かしても変わらない。それなのに
+ * 1文字ずつ正規表現にかけ直していた。建物42件ぶんで、
+ * 日本語なら1コマ196回、英語では499回。60コマ/秒なら
+ * 英語で毎秒3万回になる。英語に切り替えると重くなっていた正体。
+ *
+ * 同じ文字なら答えは同じなので、一度測ったら覚えておく。
+ */
+const widthCache = new Map<string, number>();
+
+function textWidth(text: string): number {
+  const hit = widthCache.get(text);
+  if (hit !== undefined) return hit;
   let w = 16;
+  // 半角（英数字・記号・半角カナ）は狭く、それ以外は広く見積もる
   for (const ch of text) w += /[ -~｡-ﾟ]/.test(ch) ? 6.6 : 11;
+  widthCache.set(text, w);
+  return w;
+}
+
+export function labelBox(text: string, x: number, y: number): LabelBox {
+  const w = textWidth(text);
   const h = 19;
   return { x: x - w / 2, y: y - h / 2, w, h };
 }
@@ -202,6 +223,21 @@ function MapOverlayInner({
     return m;
   }, [data, placeName, customNames]);
 
+  /**
+   * 名前の置き場所（緯度経度）を、一度だけ求めて覚えておく。
+   *
+   * 重心は建物の形で決まるので、地図を動かしても変わらない。
+   * それなのに毎コマ、42件ぶん・頂点384個を足し直していた。
+   * 60コマ/秒なら毎秒2万3千回。建物が変わったときだけでよい。
+   */
+  const centerOf = useMemo(() => {
+    const m = new Map<string, Position>();
+    for (const f of data?.buildings.features ?? []) {
+      m.set(f.properties.tempId, centroid(f.geometry.coordinates[0]));
+    }
+    return m;
+  }, [data]);
+
   const view = useMemo(() => {
     if (!map || !ready || !data) return null;
     void tick;
@@ -234,7 +270,7 @@ function MapOverlayInner({
 
     const cands = data.buildings.features
       .map((f) => {
-        const at = centroid(f.geometry.coordinates[0]);
+        const at = centerOf.get(f.properties.tempId) ?? centroid(f.geometry.coordinates[0]);
         return {
           f,
           at,
@@ -384,7 +420,7 @@ function MapOverlayInner({
      * ここに現在地を混ぜると、GPSが届くたびに全部やり直しになる。
      * 現在地の点だけは、下で別に作る。
      */
-  }, [map, ready, data, tick, route, graph, highlight, areaOf, zoomOnlyAt, zoomOnlyNames, nameOf, favs]);
+  }, [map, ready, data, tick, route, graph, highlight, areaOf, zoomOnlyAt, zoomOnlyNames, nameOf, favs, centerOf]);
 
   /**
    * 現在地の点と、誤差の円。
