@@ -14,7 +14,14 @@
 import Link from "next/link";
 import { canManage, canManageAll, canManageCafeteria, canReadFeedback, type Role } from "@/lib/auth";
 
-export type AdminPageId = "approve" | "rooms" | "schedule" | "cafeteria" | "feedback" | "edit";
+export type AdminPageId =
+  | "approve"
+  | "roster"
+  | "rooms"
+  | "schedule"
+  | "cafeteria"
+  | "feedback"
+  | "edit";
 
 type Entry = {
   id: AdminPageId;
@@ -33,6 +40,15 @@ const ENTRIES: Entry[] = [
     label: "承認・権限の管理",
     sub: "利用申請の承認と、権限の変更",
     allowed: canManage,
+  },
+  {
+    id: "roster",
+    href: "/admin/roster",
+    icon: "📒",
+    label: "名簿",
+    sub: "xlsx から学生・教授の名簿を取り込む",
+    // 学籍番号と氏名が並ぶので、副管理者（2.1・2.2）と管理者だけ
+    allowed: canManageAll,
   },
   {
     id: "rooms",
