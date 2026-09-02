@@ -63,6 +63,12 @@ const EN: Record<string, string> = {
   "この端末では現在地を使えません": "Location is not available on this device",
   "屋内では取得しにくくなります。窓際か屋外でお試しください":
     "Hard to get indoors. Try near a window or outside.",
+  /* 描く土台が落ちたとき */
+  "地図を読み込み直しています": "Reloading the map",
+  "端末の空きが少なくなったため、地図の描画がいったん止まりました。すぐに戻ります。":
+    "The map stopped drawing because the device ran low on memory. It will come back shortly.",
+  "いますぐ出し直す": "Reload now",
+
   /* 学内の情報の引き出し */
   "みんなの感想": "Feedback",
   "使っている人から届いた声": "What people told us",

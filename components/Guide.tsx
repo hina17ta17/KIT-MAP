@@ -205,6 +205,15 @@ export default function Guide() {
 
   const [data, setData] = useState<AppData | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
+  /**
+   * 地図を作り直すための番号。
+   *
+   * これを進めると、地図を作る処理がもう一度走る。
+   * 描く土台（WebGL）が落ちて戻ってきたときに使う。
+   */
+  const [mapKey, setMapKey] = useState(0);
+  /** いま土台が落ちているか。落ちているあいだは、その旨を出す */
+  const [glLost, setGlLost] = useState(false);
 
   const [fix, setFix] = useState<Fix | null>(null);
   /** 向いている方角。真北を0として時計回りの度数。分からなければ null */
@@ -607,18 +616,52 @@ export default function Guide() {
       (window as unknown as { __kitMap?: MlMap }).__kitMap = map;
     }
 
+    /*
+     * 描く土台（WebGL）が落ちたときの手当て。
+     *
+     * ■ 何が起きるか
+     *   地図は WebGL で描いている。端末の持ち物が足りなくなると、
+     *   ブラウザはこの土台を取り上げる。取り上げられると地図だけが
+     *   真っ白になり、そのままでは二度と戻らない。
+     *   写真タイルを何百枚も持つ地図では、めずらしくない。
+     *   Safari のプライベートモードのように使える量が少ない所では、なおさら。
+     *
+     * ■ preventDefault が要る
+     *   これを呼ばないと、ブラウザは「戻さなくてよい」と判断する。
+     *   呼んでおくと、余裕ができたときに戻す合図（restored）をくれる。
+     *
+     * ■ 戻ったら作り直す
+     *   戻ってきた土台に、前の地図の中身は残っていない。
+     *   作り直すのがいちばん確実なので、番号を進めて丸ごと組み直す。
+     *   出発地・目的地・お気に入りといった、この画面が覚えているものは
+     *   地図の外に置いてあるので、作り直しても消えない。
+     */
+    const cv = map.getCanvas();
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      setGlLost(true);
+    };
+    const onRestored = () => {
+      setGlLost(false);
+      setMapKey((k) => k + 1);
+    };
+    cv.addEventListener("webglcontextlost", onLost);
+    cv.addEventListener("webglcontextrestored", onRestored);
+
     mapRef.current = map;
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", fit);
       window.removeEventListener("orientationchange", fit);
       window.visualViewport?.removeEventListener("resize", fit);
+      cv.removeEventListener("webglcontextlost", onLost);
+      cv.removeEventListener("webglcontextrestored", onRestored);
       timers.forEach(clearTimeout);
       pixelOff?.();
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [mapKey]);
 
   /**
    * ページ自体が拡大されるのを止める。
@@ -1799,6 +1842,36 @@ export default function Guide() {
         </div>
       )}
 
+      {/*
+        描く土台が落ちて、地図が白くなっているとき。
+
+        ふつうは、余裕ができるとブラウザが自分で戻してくれて、
+        こちらもそれを合図に作り直す。戻ってこないこともあるので、
+        手で出し直せる道も出しておく。
+        白いまま何も言わないのが、いちばん困る。
+      */}
+      {glLost && !fatal && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-100/95 p-6">
+          <div className="max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
+            <b className="text-sm text-slate-900">{T("地図を読み込み直しています")}</b>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
+              {T(
+                "端末の空きが少なくなったため、地図の描画がいったん止まりました。すぐに戻ります。",
+              )}
+            </p>
+            <button
+              onClick={() => {
+                setGlLost(false);
+                setMapKey((k) => k + 1);
+              }}
+              className="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white active:scale-95"
+            >
+              {T("いますぐ出し直す")}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 建物の名前・経路・現在地。
           地図が動くたびの組み直しは、この中だけで起きる */}
       {/* ?perf=1 を付けて開いたときだけ、動きの重さを画面に出す */}
@@ -1827,31 +1900,57 @@ export default function Guide() {
         hitRef={hitRef}
       />
 
-      {/* 右上に、いま誰で入っているかを出す。押すと自分の状態と
-          ログアウトを見られる画面へ行く */}
-      {email && (
-        <a
-          href="/login"
-          className="absolute right-3 top-20 z-10 flex max-w-[11rem] items-center gap-2 rounded-full bg-white py-1.5 pl-2 pr-3 shadow-md transition hover:bg-white active:scale-95"
-          title={`${email}（${ROLE_LABEL[role ?? "pending"]}）`}
-        >
-          <span
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${
-              canViewCampusInfo(role) ? "bg-blue-600" : "bg-amber-500"
-            }`}
-          >
-            {email.slice(0, 1).toUpperCase()}
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-[11px] font-bold leading-tight text-slate-800">
-              {email}
-            </span>
-            <span className="block truncate text-[9px] leading-tight text-slate-500">
-              {SHORT_ROLE[role ?? "pending"]}でログイン中
-            </span>
-          </span>
-        </a>
-      )}
+      {/*
+        右上に、いま誰で入っているかを出す。
+
+        ■ 学生は押せない
+          押した先（/login）には管理の行き先が並ぶ。学生には使えるものが
+          一つも無いので、行っても用のない画面を見るだけになる。
+          「押せそうなのに何も起きない」より、はじめから押せない形にする。
+
+        ■ 押せる人
+          承認を待っている人（まだ手続きの途中）と、
+          何かしら管理を任されている人。どちらもその先に用がある。
+
+        押せるときは <a>、押せないときは <div>。見た目は同じにして、
+        押せる合図（指の形・押したときの縮み）だけを外す。
+      */}
+      {email &&
+        (() => {
+          const canGo = role === "pending" || (role !== null && role !== "student");
+          const look =
+            "absolute right-3 top-20 z-10 flex max-w-[11rem] items-center gap-2 rounded-full bg-white py-1.5 pl-2 pr-3 shadow-md";
+          const inner = (
+            <>
+              <span
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${
+                  canViewCampusInfo(role) ? "bg-blue-600" : "bg-amber-500"
+                }`}
+              >
+                {email.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] font-bold leading-tight text-slate-800">
+                  {email}
+                </span>
+                <span className="block truncate text-[9px] leading-tight text-slate-500">
+                  {SHORT_ROLE[role ?? "pending"]}でログイン中
+                </span>
+              </span>
+            </>
+          );
+          const title = `${email}（${ROLE_LABEL[role ?? "pending"]}）`;
+
+          return canGo ? (
+            <a href="/login" className={`${look} transition active:scale-95`} title={title}>
+              {inner}
+            </a>
+          ) : (
+            <div className={look} title={title}>
+              {inner}
+            </div>
+          );
+        })()}
 
       {/* 学内の情報。
           ボタンの列の中に入れると、列の幅と高さに縛られて

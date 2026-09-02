@@ -51,6 +51,19 @@ export default function RosterPage() {
   const [rows, setRows] = useState<Sending[] | null>(null);
   const [report, setReport] = useState<Report | null>(null);
 
+  /** 一人ずつ手で入れる欄 */
+  const [manualOpen, setManualOpen] = useState(false);
+  const [one, setOne] = useState({
+    kind: "学生",
+    email: "",
+    name: "",
+    grade: "",
+    class_code: "",
+    seat_no: "",
+    student_no: "",
+    number: "",
+  });
+
   const load = useCallback(async () => {
     if (!supabaseReady) return;
     const supabase = createClient();
@@ -151,6 +164,49 @@ export default function RosterPage() {
     }
   };
 
+  /**
+   * 手で入れた一人を送る。
+   *
+   * 通す・弾くの判定は xlsx と同じ import_roster に任せる。
+   * ここだけ甘い決まりにすると、名簿の中身が揃わなくなる。
+   */
+  const sendOne = async () => {
+    setMsg(null);
+    setBusy(true);
+    try {
+      const row = { row: 1, ...one };
+      const { data, error } = await createClient().rpc("import_roster", { p_rows: [row] });
+      if (error) throw error;
+      const rep = data as Report;
+      if (rep.rejected.length > 0) {
+        setMsg({ kind: "err", text: `入れられません: ${rep.rejected[0].why}` });
+      } else {
+        setMsg({ kind: "ok", text: `${one.name} さんを入れました。` });
+        setOne((o) => ({
+          ...o,
+          email: "",
+          name: "",
+          grade: "",
+          class_code: "",
+          seat_no: "",
+          student_no: "",
+          number: "",
+        }));
+        await load();
+      }
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/12_roster_import.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveDomain = async () => {
     setMsg(null);
     setBusy(true);
@@ -228,7 +284,7 @@ export default function RosterPage() {
         <input
           value={studentDomain}
           onChange={(e) => setStudentDomain(e.target.value)}
-          placeholder="st.example.ac.jp"
+          placeholder="（学生のドメイン）"
           className="mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
         />
         <label className="mt-2 block text-[10px] font-bold text-slate-500">教授・教員</label>
@@ -295,6 +351,136 @@ export default function RosterPage() {
         )}
       </section>
 
+      {/*
+        一人ずつ手で入れる。
+
+        xlsx を作るまでもない一人や、あとから増えた一人のため。
+        通す・弾くの判定は xlsx と同じもの（import_roster）を通す。
+        ここだけ甘い決まりにすると、名簿の中身が揃わなくなる。
+      */}
+      <section className="mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-slate-900">一人ずつ手で入れる</div>
+          <button
+            onClick={() => setManualOpen((v) => !v)}
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+          >
+            {manualOpen ? "閉じる" : "手で入れる"}
+          </button>
+        </div>
+
+        {manualOpen && (
+          <div className="mt-2">
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  ["学生", "学生"],
+                  ["教授", "教授"],
+                  ["その他", "その他"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setOne((o) => ({ ...o, kind: id }))}
+                  className={`rounded-lg px-2 py-2 text-[11px] font-bold transition active:scale-95 ${
+                    one.kind === id
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <Field label="メールアドレス">
+              <input
+                value={one.email}
+                onChange={(e) => setOne((o) => ({ ...o, email: e.target.value }))}
+                autoComplete="off"
+                className={manualInput}
+              />
+            </Field>
+            <Field label="名前">
+              <input
+                value={one.name}
+                onChange={(e) => setOne((o) => ({ ...o, name: e.target.value }))}
+                autoComplete="off"
+                className={manualInput}
+              />
+            </Field>
+
+            {one.kind === "学生" ? (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <Field label="学年">
+                    <input
+                      value={one.grade}
+                      onChange={(e) =>
+                        setOne((o) => ({ ...o, grade: e.target.value.replace(/\D/g, "").slice(0, 1) }))
+                      }
+                      inputMode="numeric"
+                      placeholder="1〜4"
+                      className={manualInput}
+                    />
+                  </Field>
+                  <Field label="クラス">
+                    <input
+                      value={one.class_code}
+                      onChange={(e) =>
+                        setOne((o) => ({ ...o, class_code: e.target.value.toUpperCase().slice(0, 4) }))
+                      }
+                      placeholder="CC"
+                      className={manualInput}
+                    />
+                  </Field>
+                  <Field label="名列番号">
+                    <input
+                      value={one.seat_no}
+                      onChange={(e) =>
+                        setOne((o) => ({ ...o, seat_no: e.target.value.replace(/\D/g, "").slice(0, 3) }))
+                      }
+                      inputMode="numeric"
+                      placeholder="1〜200"
+                      className={manualInput}
+                    />
+                  </Field>
+                </div>
+                <Field label="学籍番号">
+                  <input
+                    value={one.student_no}
+                    onChange={(e) => setOne((o) => ({ ...o, student_no: e.target.value.trim() }))}
+                    autoComplete="off"
+                    className={manualInput}
+                  />
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    メールアドレスの @ より前と同じにしてください
+                  </p>
+                </Field>
+              </>
+            ) : (
+              <Field label="8桁の番号">
+                <input
+                  value={one.number}
+                  onChange={(e) => setOne((o) => ({ ...o, number: e.target.value.trim().slice(0, 8) }))}
+                  autoComplete="off"
+                  placeholder="12345678"
+                  className={`${manualInput} text-center tracking-[0.3em]`}
+                />
+              </Field>
+            )}
+
+            <button
+              onClick={() => void sendOne()}
+              disabled={busy || !one.email.trim() || !one.name.trim()}
+              className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              {busy ? "入れています…" : "この一人を入れる"}
+            </button>
+          </div>
+        )}
+      </section>
+
       {/* 弾いた行 */}
       {report && (
         <section className="mt-4 rounded-xl border border-slate-200 p-3">
@@ -315,6 +501,19 @@ export default function RosterPage() {
         </section>
       )}
     </Shell>
+  );
+}
+
+/** 手で入れる欄の見た目。同じものを何度も書かないでまとめておく */
+const manualInput =
+  "mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500";
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-2">
+      <label className="block text-[10px] font-bold text-slate-500">{label}</label>
+      {children}
+    </div>
   );
 }
 

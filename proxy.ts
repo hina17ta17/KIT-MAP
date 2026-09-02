@@ -20,8 +20,12 @@ import { NextResponse, type NextRequest } from "next/server";
  *
  * 学生に配る URL を一つに保つためのもの。二つ以上の入口があると、
  * 古い版を見ている人が出たり、ブラウザに詐欺サイトと疑われたりする。
+ *
+ * 値はコードに書かず、環境変数から読む（.env.local と Vercel の設定）。
+ * 決めていなければ、送り返しはしない。入れ忘れで全部の入口を
+ * 塞いでしまうより、そのまま通すほうが安全なため。
  */
-const CANONICAL_HOST = "kit-map.vercel.app";
+const CANONICAL_HOST = process.env.NEXT_PUBLIC_CANONICAL_HOST ?? "";
 
 /** 送り返さない相手。手元での開発と、Vercel の入場確認そのもの */
 function isExempt(host: string): boolean {

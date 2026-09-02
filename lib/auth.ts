@@ -24,11 +24,35 @@ export type Role =
   | "admin_l3";
 
 /** 許可するメールドメイン。教職員のドメインが分かったらここに足す */
-export const ALLOWED_DOMAINS = ["st.example.ac.jp", "example.ac.jp"];
+/**
+ * 許可するメールドメイン。
+ *
+ * ■ コードに書かない
+ *   大学のドメインは、このファイルには置かない。GitHub に上げる所には
+ *   学校の情報を残さない、という決まりにしてある。
+ *   値は環境変数から読む。
+ *
+ *     手元    .env.local に NEXT_PUBLIC_ALLOWED_DOMAINS を書く
+ *     本番    Vercel の Environment Variables に同じものを入れる
+ *
+ *   例: NEXT_PUBLIC_ALLOWED_DOMAINS=st.example.ac.jp,example.ac.jp
+ *
+ * ■ 入っていないときは「通す」
+ *   入れ忘れたときに全員を弾くと、いま使えている人までログインできなくなる。
+ *   ここは画面の親切であって、守っているのはデータベース側の
+ *   check_email_domain（01_base.sql）。あちらは必ず効くので、
+ *   ここが空でも大学以外のアドレスは通らない。
+ */
+export const ALLOWED_DOMAINS: string[] = (process.env.NEXT_PUBLIC_ALLOWED_DOMAINS ?? "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
 
 export function isAllowedEmail(email: string): boolean {
   const at = email.lastIndexOf("@");
   if (at < 0) return false;
+  // 決めていないなら、ここでは弾かない（守りはデータベース側）
+  if (ALLOWED_DOMAINS.length === 0) return true;
   const domain = email.slice(at + 1).toLowerCase().trim();
   return ALLOWED_DOMAINS.includes(domain);
 }
