@@ -46,7 +46,14 @@ export async function proxy(request: NextRequest) {
    * localhost:3000 で開いた地図が公開サイトへ飛んでしまう。
    */
   const host = request.headers.get("host") ?? "";
-  if (host && host !== CANONICAL_HOST && !isExempt(host)) {
+  /*
+   * CANONICAL_HOST を先に見るのが要。
+   *
+   * 決めていない（空の）ときに host との比較だけで判断すると、
+   * すべての行き先が「空のホスト」へ送り返され、どこも開けなくなる。
+   * 決めていないなら、送り返しそのものをしない。
+   */
+  if (CANONICAL_HOST && host && host !== CANONICAL_HOST && !isExempt(host)) {
     const to = new URL(request.url);
     to.host = CANONICAL_HOST;
     to.protocol = "https:";
