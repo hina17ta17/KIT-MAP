@@ -36,6 +36,7 @@ import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import {
+  AFFILIATIONS,
   AFFILIATION_LABEL,
   CLASS_CODES,
   GRADES,
@@ -281,6 +282,115 @@ export default function AdminPage() {
               "（supabase/reset_all_including_admin.sql をまだ入れていない場合は、先に入れてください）"
             : String(e),
       });
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 身分を直す。
+   *
+   * 申請のときに本人が選んだものなので、選び間違いがある。
+   * 権限とは別物で、ここを変えても権限は動かない。
+   * 直接書き換えるだけ。RLS の「承認の権限を持つ人は書ける」に任せる。
+   */
+  const applyAffiliation = async (a: Affiliation, id: string) => {
+    setMsg(null);
+    setBusy(true);
+    try {
+      const { error } = await createClient()
+        .from("profiles")
+        .update({ affiliation: a })
+        .eq("id", id);
+      if (error) throw error;
+      await load();
+      const who = rows.find((x) => x.id === id);
+      setMsg({
+        kind: "ok",
+        text: `${who?.full_name || who?.email || ""} の身分を「${AFFILIATION_LABEL[a]}」にしました`,
+      });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? e.message +
+              "（supabase/migrations/016_affiliation.sql をまだ入れていない場合は、先に入れてください）"
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 選んだ身分の人を、まとめて消す。
+   *
+   * 身分は自己申告なので、管理者が「教授」を選んでいることもある。
+   * 巻き込む人数を数えて、確認のときにそのまま見せる。
+   */
+  const resetAffiliation = async (a: Affiliation) => {
+    setMsg(null);
+    const targets = rows.filter(
+      (r) => (r.affiliation ?? "student") === a && r.role !== "admin_l3",
+    );
+    if (targets.length === 0) {
+      setMsg({ kind: "err", text: `「${AFFILIATION_LABEL[a]}」の人がいません` });
+      return;
+    }
+    const admins = targets.filter((r) => r.role.startsWith("admin_"));
+
+    const first = window.confirm(
+      [
+        `身分が「${AFFILIATION_LABEL[a]}」の ${targets.length} 名を消します。`,
+        "",
+        ...(admins.length > 0
+          ? [
+              `※ この中に管理者が ${admins.length} 名います。`,
+              ...admins.slice(0, 8).map((r) => `    ・${r.full_name || r.email}（${ROLE_LABEL[r.role]}）`),
+              "  身分は本人が選んだものなので、権限とは関わりなく消えます。",
+              "",
+            ]
+          : []),
+        "この人たちから、ログイン・パスワード・本人確認・大学の情報が",
+        "すべて消え、申請の最初からやり直しになります。元には戻せません。",
+        "",
+        "いちばん上の権限の人と、あなた自身は残ります。",
+        "",
+        "続けますか？",
+      ].join("\n"),
+    );
+    if (!first) return;
+
+    const second = window.confirm(
+      [
+        `本当に実行しますか？（${targets.length} 名が消えます）`,
+        "",
+        "これが最後の確認です。押すと元に戻せません。",
+      ].join("\n"),
+    );
+    if (!second) return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("reset_by_affiliation", {
+        p_affiliation: a,
+        p_password: password || null,
+      });
+      if (error) throw error;
+      setPicked([]);
+      setOpen(null);
+      await load();
+      setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。` });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? e.message +
+              "（supabase/migrations/017_reset_by_affiliation.sql をまだ入れていない場合は、先に入れてください）"
+            : String(e),
+      });
+    } finally {
       setBusy(false);
     }
   };
@@ -668,6 +778,43 @@ export default function AdminPage() {
                       </p>
                     </>
                   )}
+
+                  {/*
+                    身分を直す。
+
+                    申請のときに本人が選んだものなので、選び間違いがある。
+                    学生でない人が学生を選ぶと、学年・クラス・名列番号を
+                    求められたままになる。ここで直せるようにしておく。
+
+                    権限とは別物。ここを変えても権限は動かない。
+                  */}
+                  <div className="mt-3 border-t border-slate-700 pt-2">
+                    <div className="mb-1.5 text-[10px] font-bold text-slate-400">
+                      身分を直す
+                      <span className="ml-1.5 font-normal text-slate-500">
+                        いまは「{AFFILIATION_LABEL[r.affiliation ?? "student"]}」
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {AFFILIATIONS.map((a) => {
+                        const current = a.id === (r.affiliation ?? "student");
+                        return (
+                          <button
+                            key={a.id}
+                            disabled={busy || current}
+                            onClick={() => void applyAffiliation(a.id, r.id)}
+                            className={`rounded-lg px-2.5 py-2 text-[11px] font-bold transition active:scale-95 ${
+                              current
+                                ? "bg-white text-slate-900"
+                                : "bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-40"
+                            }`}
+                          >
+                            {a.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -748,6 +895,50 @@ export default function AdminPage() {
             ? "処理中…"
             : `いちばん上を除く全員（${rows.filter((r) => r.role !== "admin_l3").length} 名）を消す`}
         </button>
+      </div>
+
+      {/*
+        身分ごとに消す。
+
+        身分は申請のときに本人が選んだもので、権限とは別物。
+        管理者が「教授」を選んでいることもあるので、
+        巻き込む人数はボタンの上に出し、確認のときにも名前を並べる。
+      */}
+      <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3">
+        <div className="text-xs font-bold text-red-900">身分ごとに消す</div>
+        <p className="mt-1 text-[11px] leading-relaxed text-red-800">
+          申請のときに<b>本人が選んだ身分</b>で選び出して消します。権限とは別のものなので、
+          管理者が入っていることがあります。数はボタンに出しています。
+          <br />
+          いちばん上の権限の人と、あなた自身は残ります。
+        </p>
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          placeholder="あなたのログインパスワード"
+          autoComplete="current-password"
+          className="mt-2 w-full rounded-xl bg-white px-4 py-2.5 text-sm outline-none ring-1 ring-red-200 focus:ring-2 focus:ring-blue-500"
+        />
+        <div className="mt-2 flex flex-col gap-1.5">
+          {AFFILIATIONS.map((a) => {
+            const targets = rows.filter(
+              (r) => (r.affiliation ?? "student") === a.id && r.role !== "admin_l3",
+            );
+            const admins = targets.filter((r) => r.role.startsWith("admin_"));
+            return (
+              <button
+                key={a.id}
+                onClick={() => void resetAffiliation(a.id)}
+                disabled={busy || targets.length === 0}
+                className="w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {a.label}（{targets.length} 名
+                {admins.length > 0 ? `・うち管理者 ${admins.length} 名` : ""}）を消す
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/*
