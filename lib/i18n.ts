@@ -63,8 +63,15 @@ const EN: Record<string, string> = {
   "この端末では現在地を使えません": "Location is not available on this device",
   "屋内では取得しにくくなります。窓際か屋外でお試しください":
     "Hard to get indoors. Try near a window or outside.",
-  "iPhone：設定 → プライバシー → 位置情報サービス → Safari を「確認」か「許可」に":
-    "iPhone: Settings → Privacy → Location Services → Safari → Ask or Allow",
+  /* 直し方の案内。手順そのものは lib/browser.ts に英語版がある */
+  直し方: "How to fix",
+  "現在地の許可を直す": "Allow location again",
+  "お使いのブラウザを選んでください": "Which browser are you using?",
+  パソコン: "Computer",
+  "HTTPS でないと位置情報は使えません。公開URL（https://）から開いてください":
+    "Location needs HTTPS. Open the public https:// address.",
+  "この端末では位置情報を扱えないようです。建物一覧から目的地を選べます":
+    "This device cannot provide location. You can still pick a destination from the list.",
 
   /* 案内の途中 */
   "計算中…": "Calculating…",

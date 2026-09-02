@@ -35,6 +35,14 @@ import Customize from "./Customize";
 import { EMPTY_CUSTOM, colorOf, loadCustom, saveCustom, type Custom } from "@/lib/custom";
 import { GROUP_LABEL, compareOrder, orderKey } from "@/lib/order";
 import { metersBetween, metersToRing } from "@/lib/geo";
+import {
+  guessBrowser,
+  guessPlatform,
+  locationSteps,
+  locationStepsEn,
+  type BrowserKind,
+  type Platform,
+} from "@/lib/browser";
 
 /**
  * ここまでを「このアプリの守備範囲」とする距離（メートル）。
@@ -509,28 +517,33 @@ export default function Guide() {
        *   5回押しただけで 18 回 作り直していた。
        * 押しはじめの数コマがそれに食われるので、狙った所に当たらない。
        *
-       * なので、触れただけでは落とさない。
-       *   ・指が 10px 以上動いた
+       * ■ 落とすのは「拡大縮小のとき」だけ
+       *
+       * はじめは、指が動いたら一本指でも落としていた。
+       * これも測ってみると、一本指で動かしているだけの最中に
+       * _resizeCanvas が出ていた（一本指で動かす30コマ中 12ms）。
+       *
+       * 一本指で動かすのは、地図としては絵をずらしているだけで重くない。
+       * 実測でも 90番目のコマが 20ms、32ms を超えたのは 123コマ中 3コマ。
+       * 落とす値打ちがないのに、作り直しの分だけ損をしていた。
+       *
+       * 重いのは拡大縮小のほう。縮尺が変わると絵を作り直すので、
+       * 塗る点の数がそのまま効く。そこでだけ落とす。
+       *
        *   ・二本目の指が触れた（＝拡大縮小）
        *   ・ホイールを回した
-       * このどれかになって、はじめて落とす。
-       * 短く押すだけなら作り直しは 0 回で済み、押した所にそのまま当たる。
-       * 動かし続けているあいだの軽さは、これまでどおり。
+       *
+       * 押すだけ、動かすだけなら作り直しは 0 回。
+       * いちばんよく使う二つの操作が、どちらも作り直しなしになる。
        */
       if (still > 1) {
         const cv = map.getCanvas();
 
-        /** 指が「動かしている」とみなす距離（画面の点） */
-        const MOVED = 10;
         /** 最後に動かしてから、細かさを戻すまでの間 */
         const BACK_MS = 350;
 
         let low = false;
         let back = 0;
-        /** 触れはじめた場所。ここからどれだけ動いたかを見る */
-        let sx = 0;
-        let sy = 0;
-        let holding = false;
 
         const drop = () => {
           if (low) return;
@@ -547,59 +560,20 @@ export default function Guide() {
           }, BACK_MS);
         };
 
+        /** 二本目の指が触れたら拡大縮小。そこではじめて落とす */
         const onTouchStart = (e: TouchEvent) => {
-          // 二本目が触れた時点で、もう拡大縮小。待つ意味がない
-          if (e.touches.length >= 2) {
-            holding = false;
-            drop();
-            later();
-            return;
-          }
-          const t = e.touches[0];
-          if (!t) return;
-          sx = t.clientX;
-          sy = t.clientY;
-          holding = true;
+          if (e.touches.length < 2) return;
+          drop();
+          later();
         };
         const onTouchMove = (e: TouchEvent) => {
-          if (low) {
-            later();
-            return;
-          }
-          if (e.touches.length >= 2) {
-            drop();
-            later();
-            return;
-          }
-          const t = e.touches[0];
-          if (!holding || !t) return;
-          if (Math.hypot(t.clientX - sx, t.clientY - sy) < MOVED) return;
+          if (e.touches.length < 2) return;
           drop();
+          // 動かし続けているあいだは、戻す時刻を後ろにずらし続ける
           later();
         };
+        /* 指を離したら、そこから数えて戻す */
         const onTouchEnd = () => {
-          holding = false;
-          if (low) later();
-        };
-
-        /* パソコン。押しながら動かしたときだけ落とす */
-        const onMouseDown = (e: MouseEvent) => {
-          sx = e.clientX;
-          sy = e.clientY;
-          holding = true;
-        };
-        const onMouseMove = (e: MouseEvent) => {
-          if (!holding) return;
-          if (low) {
-            later();
-            return;
-          }
-          if (Math.hypot(e.clientX - sx, e.clientY - sy) < MOVED) return;
-          drop();
-          later();
-        };
-        const onMouseUp = () => {
-          holding = false;
           if (low) later();
         };
         const onWheel = () => {
@@ -609,24 +583,18 @@ export default function Guide() {
 
         cv.addEventListener("touchstart", onTouchStart, { passive: true });
         cv.addEventListener("touchmove", onTouchMove, { passive: true });
-        cv.addEventListener("mousedown", onMouseDown, { passive: true });
         cv.addEventListener("wheel", onWheel, { passive: true });
-        // 指や手が地図の外へ出ても必ず受け取れるよう、離す合図は窓で拾う
+        // 指が地図の外へ出ても必ず受け取れるよう、離す合図は窓で拾う
         window.addEventListener("touchend", onTouchEnd, { passive: true });
         window.addEventListener("touchcancel", onTouchEnd, { passive: true });
-        window.addEventListener("mousemove", onMouseMove, { passive: true });
-        window.addEventListener("mouseup", onMouseUp, { passive: true });
 
         pixelOff = () => {
           if (back) window.clearTimeout(back);
           cv.removeEventListener("touchstart", onTouchStart);
           cv.removeEventListener("touchmove", onTouchMove);
-          cv.removeEventListener("mousedown", onMouseDown);
           cv.removeEventListener("wheel", onWheel);
           window.removeEventListener("touchend", onTouchEnd);
           window.removeEventListener("touchcancel", onTouchEnd);
-          window.removeEventListener("mousemove", onMouseMove);
-          window.removeEventListener("mouseup", onMouseUp);
         };
       }
     }
@@ -1014,6 +982,28 @@ export default function Guide() {
   const [geoMuted, setGeoMuted] = useState(false);
   /** 直し方を開いているか。既定は畳む（開いたままだと地図が隠れる） */
   const [geoHelp, setGeoHelp] = useState(false);
+  /**
+   * 直し方を、どのブラウザのぶんで出すか。
+   *
+   * 最初の候補は名乗りから決めるが、当てにはしない。
+   * iPhone の Chrome は中身が Safari と同じで紛らわしいので、
+   * 違っていれば本人が選び直せるようにしておく。
+   */
+  const [helpBrowser, setHelpBrowser] = useState<BrowserKind>("safari");
+  const [helpPlatform, setHelpPlatform] = useState<Platform>("ios");
+  /**
+   * 名乗りから当てるのは、はじめて開いたときの一度だけ。
+   * 二度目からは、本人が選び直した結果をそのまま残す。
+   */
+  const guessed = useRef(false);
+  const toggleGeoHelp = useCallback(() => {
+    if (!guessed.current) {
+      guessed.current = true;
+      setHelpBrowser(guessBrowser());
+      setHelpPlatform(guessPlatform());
+    }
+    setGeoHelp((v) => !v);
+  }, []);
   const geoMutedRef = useRef(false);
   geoMutedRef.current = geoMuted;
 
@@ -2034,14 +2024,12 @@ export default function Guide() {
                 {/* 詳しい説明は畳んでおく。開いたままだと地図が見えなくなる */}
                 {geoHelp && (
                   <span className="mt-1 block text-[10px] leading-relaxed text-slate-400">
-                    {geoState === "denied" &&
-                      "iPhone：設定 → プライバシー → 位置情報サービス → Safari を「確認」か「許可」に"}
                     {geoState === "timeout" &&
-                      "屋内では取得しにくくなります。窓際か屋外でお試しください"}
+                      T("屋内では取得しにくくなります。窓際か屋外でお試しください")}
                     {geoState === "insecure" &&
-                      "Safari などは HTTPS でないと位置情報を許可しません。公開URL（https://）から開いてください"}
+                      T("HTTPS でないと位置情報は使えません。公開URL（https://）から開いてください")}
                     {geoState === "unavailable" &&
-                      "この端末では位置情報を扱えないようです。建物一覧から目的地を選べます"}
+                      T("この端末では位置情報を扱えないようです。建物一覧から目的地を選べます")}
                   </span>
                 )}
 
@@ -2051,14 +2039,14 @@ export default function Guide() {
                       onClick={startWatch}
                       className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white active:scale-95"
                     >
-                      {geoState === "denied" ? "許可し直したら押す" : "もう一度試す"}
+                      {geoState === "denied" ? T("許可し直したら押す") : T("もう一度試す")}
                     </button>
                   )}
                   <button
-                    onClick={() => setGeoHelp((v) => !v)}
+                    onClick={toggleGeoHelp}
                     className="text-[10px] text-slate-400 underline active:scale-95"
                   >
-                    {geoHelp ? "閉じる" : "直し方"}
+                    {geoHelp && geoState !== "denied" ? T("閉じる") : T("直し方")}
                   </button>
                 </span>
               </div>
@@ -2076,6 +2064,94 @@ export default function Guide() {
             </div>
           )}
       </div>
+
+      {/*
+        現在地を拒否されたときの直し方。
+        手順はブラウザごとに別物なので、まずどちらかを選んでもらう。
+        狭い吹き出しに詰め込むと読めないので、開いたら前面に出す。
+      */}
+      {geoHelp && geoState === "denied" && !geoMuted && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className="max-h-full w-full max-w-xs overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl">
+            <h2 className="text-sm font-bold tracking-tight text-slate-900">
+              {T("現在地の許可を直す")}
+            </h2>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+              {T("お使いのブラウザを選んでください")}
+            </p>
+
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {(["safari", "chrome"] as const).map((b) => (
+                <button
+                  key={b}
+                  onClick={() => setHelpBrowser(b)}
+                  className={`rounded-xl px-3 py-2 text-xs font-bold transition active:scale-95 ${
+                    helpBrowser === b
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {b === "safari" ? "Safari" : "Google Chrome"}
+                </button>
+              ))}
+            </div>
+
+            {/* 端末は名乗りから決めているが、外れることがあるので選び直せる */}
+            <div className="mt-1.5 flex gap-1.5">
+              {(
+                [
+                  ["ios", "iPhone / iPad"],
+                  ["android", "Android"],
+                  ["desktop", T("パソコン")],
+                ] as const
+              ).map(([p, label]) => (
+                <button
+                  key={p}
+                  onClick={() => setHelpPlatform(p)}
+                  className={`flex-1 rounded-lg px-1 py-1.5 text-[10px] font-bold transition active:scale-95 ${
+                    helpPlatform === p
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <ol className="mt-3 flex flex-col gap-2">
+              {(lang === "en" ? locationStepsEn : locationSteps)(helpBrowser, helpPlatform).map(
+                (s, i) => (
+                  <li key={i} className="flex gap-2 text-[11px] leading-relaxed text-slate-700">
+                    <span className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[9px] font-bold text-white">
+                      {i + 1}
+                    </span>
+                    <span className="min-w-0">{s}</span>
+                  </li>
+                ),
+              )}
+            </ol>
+
+            <div className="mt-4 flex gap-1.5">
+              <button
+                onClick={() => {
+                  setGeoHelp(false);
+                  startWatch();
+                }}
+                className="flex-1 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-bold text-white active:scale-95"
+              >
+                {T("許可し直したら押す")}
+              </button>
+              <button
+                onClick={() => setGeoHelp(false)}
+                className="rounded-xl bg-slate-100 px-3 py-2.5 text-xs font-bold text-slate-600 active:scale-95"
+              >
+                {T("閉じる")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ログイン。フェーズ2で実際に動くようにする */}
       {login && (

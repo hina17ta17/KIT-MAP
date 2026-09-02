@@ -10,9 +10,9 @@
  * RLS が空を返すので、ここでは権限の分岐を最小限にしている。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
-import { canViewCampusInfo, type Role } from "@/lib/auth";
+import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
 
 type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free";
 
@@ -431,22 +431,62 @@ function Timetable({ date, periods }: { date: Date; periods: Period[] }) {
   );
 }
 
-/** 学科を選び、その学科の授業を出す */
+/**
+ * 学科を選び、その学科の授業を出す。
+ *
+ * 学生は申請のときに自分の学科（クラス記号）を出しているので、
+ * ここで改めて選ばせない。読み込んだ時点でその学科の授業を出す。
+ * 毎回17個の中から自分の学科を探させるのは、分かっていることを
+ * もう一度たずねているだけで、時間割を見るまでが遠くなる。
+ *
+ * 他の学科も見たいときのために「学科を選び直す」は残す。
+ * 学科を持たない人（食堂の担当や教職員）は、これまでどおり選ぶところから。
+ */
 function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
   const [facs, setFacs] = useState<Faculty[]>([]);
   const [depts, setDepts] = useState<Dept[]>([]);
   const [dept, setDept] = useState<Dept | null>(null);
   const [rows, setRows] = useState<ClassRow[] | null>(null);
+  /**
+   * 自分の学科を、もう当てはめたか。
+   *
+   * 当てはめるのは一度だけ。これが無いと「選び直す」で戻った瞬間に
+   * また自分の学科へ引き戻され、他の学科を見られなくなる。
+   */
+  const applied = useRef(false);
 
   useEffect(() => {
     void (async () => {
       const supabase = createClient();
-      const [f, d] = await Promise.all([
+      const [f, d, u] = await Promise.all([
         supabase.from("faculties").select("id, name").order("sort_order"),
         supabase.from("departments").select("id, faculty_id, name").order("sort_order"),
+        supabase.auth.getUser(),
       ]);
+      const list = (d.data as Dept[]) ?? [];
       setFacs((f.data as Faculty[]) ?? []);
-      setDepts((d.data as Dept[]) ?? []);
+      setDepts(list);
+
+      if (applied.current || !u.data.user) return;
+      const { data: me } = await supabase
+        .from("profiles")
+        .select("class_code")
+        .eq("id", u.data.user.id)
+        .single();
+
+      /*
+       * profiles には "CC" のようなクラス記号しか入っていない。
+       * departments には記号の列が無いので、名前で突き合わせる。
+       * 17学科すべて、記号と名前が1対1で対応していることは確認済み。
+       */
+      const code = (me as { class_code?: string } | null)?.class_code;
+      if (!code) return;
+      const name = CLASS_CODES.find((c) => c.code === code)?.name;
+      const mine = name ? list.find((x) => x.name === name) : undefined;
+      if (mine) {
+        applied.current = true;
+        setDept(mine);
+      }
     })();
   }, []);
 
