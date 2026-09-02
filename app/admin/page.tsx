@@ -16,8 +16,14 @@
  *   まとめて変えたいときのために、印を付ける道も残してある。
  *   印を付けたときだけ、下にボタンが出る。
  *
- * すでに使っている人の権限を変えるときは操作パスワードが要る。
- * 押し間違いで一括降格させる事故を、ひと手間で防ぐため。
+ * すでに使っている人の権限を変えるときは、操作している本人の
+ * ログインパスワードを打ってもらう。押し間違いで一括降格させる事故を、
+ * ひと手間で防ぐため。
+ *
+ * 以前は別に決めた共通の合言葉だった。覚えるものが増えるうえ、
+ * 決めていないと権限がまったく変えられなくなる。いつも使っている
+ * ログインのパスワードなら、そのどちらも起きない。
+ * 合っているかはデータベース側で確かめる（check_my_password）。
  *
  * ■ いちばん上の権限は、この画面には出さない
  *   一覧にも、付けられる権限の並びにも出さない。
@@ -75,7 +81,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<"new" | "setup" | "existing">("new");
   /** チェックを入れた人 */
   const [picked, setPicked] = useState<string[]>([]);
-  /** 既存を変えるときの合言葉。一度打てば、この画面にいる間は覚えておく */
+  /** 既存を変えるときの本人確認。一度打てば、この画面にいる間は覚えておく */
   const [password, setPassword] = useState("");
   /**
    * いま権限の欄を開いている人。
@@ -428,7 +434,7 @@ export default function AdminPage() {
         {shown.map((r) => {
           const on = picked.includes(r.id);
           const here = open === r.id;
-          /* すでに承認した人を触るときは合言葉が要る（データベース側の決まり） */
+          /* すでに承認した人を触るときは、本人のログインパスワードが要る（データベース側の決まり） */
           const needsPw = r.role !== "pending";
           return (
             <li key={r.id}>
@@ -535,11 +541,12 @@ export default function AdminPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         type="password"
-                        placeholder="操作パスワード"
+                        placeholder="あなたのログインパスワード"
+                        autoComplete="current-password"
                         className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       <p className="mt-1 text-[10px] text-slate-500">
-                        一度承認した人を変えるには必要です
+                        一度承認した人を変えるには、ご自身のログインパスワードが要ります
                       </p>
                     </>
                   )}
@@ -638,7 +645,8 @@ export default function AdminPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               type="password"
-              placeholder="操作パスワード（承認済みの人を変えるとき）"
+              placeholder="あなたのログインパスワード（承認済みの人を変えるとき）"
+              autoComplete="current-password"
               className="mb-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
             />
           )}

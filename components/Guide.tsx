@@ -494,30 +494,139 @@ export default function Guide() {
        * 結局1倍のまま戻らなくなった（実際にそうなった）。
        *
        * 指やホイールの操作そのものを合図にする。こちらは地図の都合では
-       * 出ないので、堂々巡りにならない。戻すのは最後の操作から 400ms 後。
+       * 出ないので、堂々巡りにならない。戻すのは最後の操作から 350ms 後。
        * タイマーは必ず来るので、落としたままにはならない。
+       *
+       * ■ 触れた瞬間には落とさない
+       *
+       * はじめは touchstart でそのまま落としていた。これが
+       * 「Chrome で押した感じが悪い」の正体だった。
+       *
+       * setPixelRatio は中で resize() を呼ぶ。canvas の裏側を作り直す
+       * 重い処理で、Chrome では GPU の描画先ごと取り直しになる。
+       * ただ押しただけでも、指が触れた瞬間と 400ms 後の二度これが走る。
+       * 実際に Chrome（画面3倍・CPU 4分の1）で測ると、
+       *   5回押しただけで 18 回 作り直していた。
+       * 押しはじめの数コマがそれに食われるので、狙った所に当たらない。
+       *
+       * なので、触れただけでは落とさない。
+       *   ・指が 10px 以上動いた
+       *   ・二本目の指が触れた（＝拡大縮小）
+       *   ・ホイールを回した
+       * このどれかになって、はじめて落とす。
+       * 短く押すだけなら作り直しは 0 回で済み、押した所にそのまま当たる。
+       * 動かし続けているあいだの軽さは、これまでどおり。
        */
       if (still > 1) {
         const cv = map.getCanvas();
+
+        /** 指が「動かしている」とみなす距離（画面の点） */
+        const MOVED = 10;
+        /** 最後に動かしてから、細かさを戻すまでの間 */
+        const BACK_MS = 350;
+
         let low = false;
         let back = 0;
-        const bump = () => {
-          if (!low) {
-            low = true;
-            map.setPixelRatio(1);
-          }
+        /** 触れはじめた場所。ここからどれだけ動いたかを見る */
+        let sx = 0;
+        let sy = 0;
+        let holding = false;
+
+        const drop = () => {
+          if (low) return;
+          low = true;
+          map.setPixelRatio(1);
+        };
+        const later = () => {
           if (back) window.clearTimeout(back);
           back = window.setTimeout(() => {
             back = 0;
+            if (!low) return;
             low = false;
             map.setPixelRatio(still);
-          }, 400);
+          }, BACK_MS);
         };
-        const evs = ["touchstart", "touchmove", "wheel", "pointerdown", "pointermove"] as const;
-        for (const e of evs) cv.addEventListener(e, bump, { passive: true });
+
+        const onTouchStart = (e: TouchEvent) => {
+          // 二本目が触れた時点で、もう拡大縮小。待つ意味がない
+          if (e.touches.length >= 2) {
+            holding = false;
+            drop();
+            later();
+            return;
+          }
+          const t = e.touches[0];
+          if (!t) return;
+          sx = t.clientX;
+          sy = t.clientY;
+          holding = true;
+        };
+        const onTouchMove = (e: TouchEvent) => {
+          if (low) {
+            later();
+            return;
+          }
+          if (e.touches.length >= 2) {
+            drop();
+            later();
+            return;
+          }
+          const t = e.touches[0];
+          if (!holding || !t) return;
+          if (Math.hypot(t.clientX - sx, t.clientY - sy) < MOVED) return;
+          drop();
+          later();
+        };
+        const onTouchEnd = () => {
+          holding = false;
+          if (low) later();
+        };
+
+        /* パソコン。押しながら動かしたときだけ落とす */
+        const onMouseDown = (e: MouseEvent) => {
+          sx = e.clientX;
+          sy = e.clientY;
+          holding = true;
+        };
+        const onMouseMove = (e: MouseEvent) => {
+          if (!holding) return;
+          if (low) {
+            later();
+            return;
+          }
+          if (Math.hypot(e.clientX - sx, e.clientY - sy) < MOVED) return;
+          drop();
+          later();
+        };
+        const onMouseUp = () => {
+          holding = false;
+          if (low) later();
+        };
+        const onWheel = () => {
+          drop();
+          later();
+        };
+
+        cv.addEventListener("touchstart", onTouchStart, { passive: true });
+        cv.addEventListener("touchmove", onTouchMove, { passive: true });
+        cv.addEventListener("mousedown", onMouseDown, { passive: true });
+        cv.addEventListener("wheel", onWheel, { passive: true });
+        // 指や手が地図の外へ出ても必ず受け取れるよう、離す合図は窓で拾う
+        window.addEventListener("touchend", onTouchEnd, { passive: true });
+        window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+        window.addEventListener("mousemove", onMouseMove, { passive: true });
+        window.addEventListener("mouseup", onMouseUp, { passive: true });
+
         pixelOff = () => {
           if (back) window.clearTimeout(back);
-          for (const e of evs) cv.removeEventListener(e, bump);
+          cv.removeEventListener("touchstart", onTouchStart);
+          cv.removeEventListener("touchmove", onTouchMove);
+          cv.removeEventListener("mousedown", onMouseDown);
+          cv.removeEventListener("wheel", onWheel);
+          window.removeEventListener("touchend", onTouchEnd);
+          window.removeEventListener("touchcancel", onTouchEnd);
+          window.removeEventListener("mousemove", onMouseMove);
+          window.removeEventListener("mouseup", onMouseUp);
         };
       }
     }
