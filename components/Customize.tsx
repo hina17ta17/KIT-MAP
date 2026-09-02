@@ -9,6 +9,8 @@
 
 import { Fragment, useMemo, useState } from "react";
 import type { AppData } from "@/lib/appdata";
+import { createClient, supabaseReady } from "@/lib/supabase/client";
+import type { Lang } from "@/lib/i18n";
 import { LABEL_COLORS, colorOf, type Custom } from "@/lib/custom";
 import { GROUP_LABEL, compareOrder, orderKey } from "@/lib/order";
 
@@ -16,13 +18,15 @@ type Props = {
   open: boolean;
   /** 言葉の言い換え。英語に切り替えているときはこの画面も英語にする */
   t: (ja: string) => string;
+  /** いまの言葉。感想と一緒に預けて、読むときの手がかりにする */
+  lang: Lang;
   onClose: () => void;
   data: AppData | null;
   value: Custom;
   onChange: (next: Custom) => void;
 };
 
-export default function Customize({ open, onClose, data, value, onChange, t }: Props) {
+export default function Customize({ open, onClose, data, value, onChange, t, lang }: Props) {
   const [q, setQ] = useState("");
 
   /**
@@ -199,7 +203,14 @@ export default function Customize({ open, onClose, data, value, onChange, t }: P
               className="mt-2 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none placeholder:text-slate-400"
             />
 
-            <ul className="mt-2 space-y-1.5 pb-2">
+            {/*
+              建物の一覧は、この中だけで送る。
+
+              そのまま並べると40件以上が縦に伸び、この画面の下に置いたものへ
+              指が届かなくなる（感想の欄が、実際にそうなっていた）。
+              高さを決めて、中で送るようにする。
+            */}
+            <ul className="mt-2 max-h-72 space-y-1.5 overflow-y-auto pb-2">
               {shown.map((p, i) => {
                 const v = value.names[p.id] ?? "";
                 // 区切りが変わったところに見出しを出す（建物一覧と同じ形）
@@ -252,8 +263,149 @@ export default function Customize({ open, onClose, data, value, onChange, t }: P
               )}
             </ul>
           </section>
+
+          {/* ---------------- 感想 ---------------- */}
+          <section className="mt-4 border-t border-slate-200 pt-3">
+            <Feedback t={t} lang={lang} />
+          </section>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 感想を送る。
+ *
+ * ■ 名前を取らない
+ *   誰が書いたかを残さない。ログインしているかどうかも見ない。
+ *   残すと「誰が何を書いたか」が分かってしまい、思ったことを
+ *   そのまま書けなくなる。書いてもらうことが目的なので、
+ *   たどれないことを決まりとして先に置く。
+ *
+ * ■ ここに置いた理由
+ *   カスタマイズは「この人自身の設定」を触る場所で、
+ *   地図の操作を邪魔しない。感想もその並びに置くのが自然だった。
+ *   案内の途中に出すと、急いでいる人の邪魔になる。
+ */
+function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
+  const [open, setOpen] = useState(false);
+  const [body, setBody] = useState("");
+  const [rating, setRating] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const MAX = 2000;
+  const left = MAX - body.length;
+
+  // 送り先が無いときは、書かせてから捨てることになる。出さない
+  if (!supabaseReady) return null;
+
+  const send = async () => {
+    const text = body.trim();
+    if (!text) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const { error } = await createClient().from("feedback").insert({
+        body: text,
+        rating,
+        lang,
+      });
+      if (error) throw error;
+      setDone(true);
+      setBody("");
+      setRating(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("送れませんでした"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done)
+    return (
+      <div className="rounded-xl bg-emerald-50 p-3">
+        <p className="text-xs font-bold text-emerald-900">{t("ありがとうございました")}</p>
+        <p className="mt-1 text-[10px] leading-relaxed text-emerald-800">
+          {t("いただいた内容は、名前が分からない形で届いています。")}
+        </p>
+        <button
+          onClick={() => setDone(false)}
+          className="mt-2 text-[10px] font-bold text-emerald-700 underline"
+        >
+          {t("もう一つ送る")}
+        </button>
+      </div>
+    );
+
+  if (!open)
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
+      >
+        {t("感想を送る（名前は伝わりません）")}
+      </button>
+    );
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold text-slate-900">{t("感想を送る")}</h3>
+        <button
+          onClick={() => setOpen(false)}
+          className="rounded-lg px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100"
+        >
+          {t("閉じる")}
+        </button>
+      </div>
+      <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
+        {t("名前もアカウントも伝わりません。よかった所も、使いにくい所も、そのまま書いてください。")}
+      </p>
+
+      {/* 星。付けなくても送れる */}
+      <div className="mt-2 flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            onClick={() => setRating(rating === n ? null : n)}
+            aria-label={`${n}`}
+            className={`h-8 w-8 rounded-lg text-sm transition active:scale-90 ${
+              rating !== null && n <= rating
+                ? "bg-amber-100 text-amber-600"
+                : "bg-slate-100 text-slate-300"
+            }`}
+          >
+            ★
+          </button>
+        ))}
+        {rating !== null && (
+          <span className="ml-1 text-[10px] font-bold text-slate-500">{rating} / 5</span>
+        )}
+      </div>
+
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value.slice(0, MAX))}
+        rows={4}
+        placeholder={t("例：目的の教室まで迷わず行けました。夜は地図が見づらいです。")}
+        className="mt-2 w-full rounded-xl bg-slate-100 px-3 py-2.5 text-xs leading-relaxed outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+      />
+      <div className="mt-0.5 text-right text-[10px] text-slate-400">
+        {t("残り")} {left}
+      </div>
+
+      {err && <p className="mt-1 rounded-lg bg-red-50 p-2 text-[10px] text-red-800">{err}</p>}
+
+      <button
+        onClick={() => void send()}
+        disabled={busy || body.trim().length === 0}
+        className="mt-1 w-full rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+      >
+        {busy ? t("送っています…") : t("送る")}
+      </button>
     </div>
   );
 }

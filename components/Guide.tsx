@@ -1736,6 +1736,7 @@ export default function Guide() {
 
       <Customize
         t={T}
+        lang={lang}
         open={customOpen}
         onClose={() => setCustomOpen(false)}
         data={data}

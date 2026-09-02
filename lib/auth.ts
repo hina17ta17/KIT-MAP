@@ -174,3 +174,18 @@ export function survivesFullReset(role: Role | null): boolean {
 export function canManageCafeteria(role: Role | null): boolean {
   return role === "admin_l0" || canManageAll(role);
 }
+
+/**
+ * 使っている人からの感想を読めるか。
+ *
+ * 教授（レベル2）・副管理者（2.1・2.2）・いちばん上だけ。
+ * 学生にも、食堂の担当にも見せない。
+ *
+ * 段（rank）では分けられない。食堂の担当と学生は同じ段1で、
+ * 段3以上にすると 2.1・2.2 の扱いが名前まかせになる。
+ * 誰に見せるかをそのまま書くほうが、あとから読んで間違えない。
+ * ここは画面を出し分けるためのもので、守っているのは RLS。
+ */
+export function canReadFeedback(role: Role | null): boolean {
+  return role === "admin_l2" || canManageAll(role);
+}

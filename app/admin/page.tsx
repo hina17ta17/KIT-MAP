@@ -79,6 +79,13 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
 
   const [tab, setTab] = useState<"new" | "setup" | "existing">("new");
+  /**
+   * リセットの一式を開いているか。
+   *
+   * 取り返しのつかない操作なので、ふだんは畳んでおく。
+   * 承認の作業をしているだけの人の指が、届く場所に無いようにする。
+   */
+  const [resetOpen, setResetOpen] = useState(false);
   /** チェックを入れた人 */
   const [picked, setPicked] = useState<string[]>([]);
   /** 既存を変えるときの本人確認。一度打てば、この画面にいる間は覚えておく */
@@ -257,6 +264,81 @@ export default function AdminPage() {
               "（supabase/reset_all_including_admin.sql をまだ入れていない場合は、先に入れてください）"
             : String(e),
       });
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 印を付けた人だけを消す。
+   *
+   * 上の二つは「全員」しか選べない。一人だけ入り直させたい場面のために、
+   * 選んだ人だけを対象にできる道を作る。
+   * 強さは全員リセットと変わらないので、確認は同じく二度たずねる。
+   */
+  const resetPicked = async () => {
+    setMsg(null);
+    if (picked.length === 0) return;
+
+    const names = picked
+      .map((id) => {
+        const r = rows.find((x) => x.id === id);
+        return r ? r.full_name || r.email : id;
+      })
+      .slice(0, 12);
+
+    const first = window.confirm(
+      [
+        `印を付けた ${picked.length} 名を消します。`,
+        "",
+        ...names.map((n) => "  ・" + n),
+        picked.length > names.length ? `  ほか ${picked.length - names.length} 名` : "",
+        "",
+        "この人たちから、次のものが消えます。",
+        "  ・ログイン中の状態",
+        "  ・パスワード",
+        "  ・本人確認（認証アプリ）",
+        "  ・氏名・学年・クラス・名列番号",
+        "  ・承認した権限",
+        "",
+        "申請の最初からやり直しになります。元には戻せません。",
+        "",
+        "続けますか？",
+      ]
+        .filter((s) => s !== "")
+        .join("\n"),
+    );
+    if (!first) return;
+
+    const second = window.confirm(
+      [
+        `本当に実行しますか？（${picked.length} 名が消えます）`,
+        "",
+        "これが最後の確認です。押すと元に戻せません。",
+      ].join("\n"),
+    );
+    if (!second) return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("reset_users", {
+        p_ids: picked,
+        p_password: password || null,
+      });
+      if (error) throw error;
+      setPicked([]);
+      setOpen(null);
+      await load();
+      setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。` });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? e.message +
+              "（supabase/migrations/015_feedback_and_pick_reset.sql をまだ入れていない場合は、先に入れてください）"
+            : String(e),
+      });
+    } finally {
       setBusy(false);
     }
   };
@@ -564,10 +646,30 @@ export default function AdminPage() {
       </ul>
 
       {/*
+        リセットは、ふだんは畳んでおく。
+
+        取り返しのつかない操作が、一覧のすぐ下に赤く二つ並んでいた。
+        承認の作業をしているだけの人が、指を滑らせて届く場所にある。
+        一段はさんで、開いたときだけ出す。
+      */}
+      <button
+        onClick={() => setResetOpen((v) => !v)}
+        className={`mt-6 w-full rounded-xl border px-3 py-2.5 text-xs font-bold transition active:scale-95 ${
+          resetOpen
+            ? "border-red-300 bg-red-50 text-red-900"
+            : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+        }`}
+      >
+        {resetOpen ? "リセットを閉じる" : "リセット（やり直させる）"}
+      </button>
+
+      {resetOpen && (
+        <>
+      {/*
         全員をやり直させる。取り返しがつかないので、
         一覧のいちばん下に置き、色でも他と区別する。
       */}
-      <div className="mt-6 rounded-xl border border-red-300 bg-red-50 p-3">
+      <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3">
         <div className="text-xs font-bold text-red-900">学生と申請者をやり直させる</div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-800">
           学生と申請者から、ログイン・パスワード・本人確認・氏名・学年・クラス・
@@ -611,6 +713,46 @@ export default function AdminPage() {
             : `いちばん上を除く全員（${rows.filter((r) => r.role !== "admin_l3").length} 名）を消す`}
         </button>
       </div>
+
+      {/*
+        選んだ人だけを消す。
+
+        上の二つは「全員」しか選べない。一人だけ入り直させたいときに、
+        関係のない人まで巻き込むことになっていた。
+        印を付けてから、ここで消す。
+      */}
+      <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
+        <div className="text-xs font-bold text-slate-800">選んだ人だけを消す</div>
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+          一覧で名前の左の印を付けてから押します。その人だけが、ログイン・
+          パスワード・本人確認・大学の情報を失い、申請の最初からやり直しになります。
+          <br />
+          いちばん上の権限の人と、あなた自身は選んでも消えません。
+        </p>
+        {picked.length > 0 && (
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="password"
+            placeholder="あなたのログインパスワード"
+            autoComplete="current-password"
+            className="mt-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+          />
+        )}
+        <button
+          onClick={() => void resetPicked()}
+          disabled={busy || picked.length === 0}
+          className="mt-2 w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+        >
+          {busy
+            ? "処理中…"
+            : picked.length === 0
+              ? "印を付けた人はいません"
+              : `印を付けた ${picked.length} 名を消す`}
+        </button>
+      </div>
+        </>
+      )}
 
       {msg && (
         <p

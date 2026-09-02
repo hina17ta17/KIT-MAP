@@ -12,9 +12,9 @@
  */
 
 import Link from "next/link";
-import { canManage, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
+import { canManage, canManageAll, canManageCafeteria, canReadFeedback, type Role } from "@/lib/auth";
 
-export type AdminPageId = "approve" | "rooms" | "schedule" | "cafeteria" | "edit";
+export type AdminPageId = "approve" | "rooms" | "schedule" | "cafeteria" | "feedback" | "edit";
 
 type Entry = {
   id: AdminPageId;
@@ -57,6 +57,14 @@ const ENTRIES: Entry[] = [
     label: "食堂のメニュー",
     sub: "その日の提供状況と品名",
     allowed: canManageCafeteria,
+  },
+  {
+    id: "feedback",
+    href: "/admin/feedback",
+    icon: "✉",
+    label: "みんなの感想",
+    sub: "使っている人から届いた声。名前は分かりません",
+    allowed: canReadFeedback,
   },
   /*
    * 作図ツールは、手元でだけ動かす道具。
