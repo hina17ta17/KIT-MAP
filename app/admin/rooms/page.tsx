@@ -15,7 +15,7 @@ import Link from "next/link";
 import type { FeatureCollection, Polygon } from "geojson";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
-import { type Role } from "@/lib/auth";
+import { type Role, canManageAll } from "@/lib/auth";
 import { guessFloor, floorLabel, type BuildingProps } from "@/lib/features";
 
 type Row = {
@@ -96,7 +96,7 @@ export default function RoomsPage() {
     void load();
   }, [load]);
 
-  const canEdit = role === "admin_l3";
+  const canEdit = canManageAll(role);
 
   const ofTarget = useMemo(
     () => rows.filter((r) => r.building_id === target),

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
-import { ROLE_LABEL, canManageCafeteria, type Role } from "@/lib/auth";
+import { ROLE_LABEL, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -40,6 +40,9 @@ const STATES = [
   { id: "open", label: "活動中", cls: "bg-emerald-600" },
   { id: "closed", label: "活動休止", cls: "bg-slate-600" },
 ] as const;
+
+/** 確かめの文で使う改行 */
+const BR = String.fromCharCode(10);
 
 export default function CafeteriaAdminPage() {
   const [role, setRole] = useState<Role | null>(null);
@@ -187,6 +190,49 @@ export default function CafeteriaAdminPage() {
     setMsg({ kind: "ok", text: `${target.name} の登録を消しました` });
   };
 
+  /**
+   * その日の食堂の登録を、まとめて全部消す。
+   *
+   * 一つずつ消す道は前からあるが、間違えて何品も入れたときに終わらない。
+   * 他の人が入れたぶんも消えるので、二度たずねてから実行する。
+   */
+  const clearAllMenus = async () => {
+    if (!date) return;
+    const n = menus.size;
+    if (n === 0) return;
+    const first = window.confirm(
+      [
+        `${ymd(date)} の食堂の登録を、すべて消します。`,
+        "",
+        `  ${n} 件（品名・値段・提供状況）`,
+        "",
+        "他の人が入れたぶんも消えます。元には戻せません。",
+        "続けますか？",
+      ].join(BR),
+    );
+    if (!first) return;
+    const second = window.confirm(
+      `本当に消しますか？（${n} 件）${BR}${BR}これが最後の確認です。`,
+    );
+    if (!second) return;
+
+    setBusy(true);
+    setMsg(null);
+    const supabase = createClient();
+    const d = ymd(date);
+    const a = await supabase.from("menu_days").delete().eq("on_date", d);
+    const b = await supabase.from("counter_days").delete().eq("on_date", d);
+    setBusy(false);
+    if (a.error || b.error) {
+      setMsg({ kind: "err", text: (a.error ?? b.error)!.message });
+      return;
+    }
+    setMenus(new Map());
+    setName("");
+    setPrice("");
+    setMsg({ kind: "ok", text: `${n} 件の登録を消しました` });
+  };
+
   /* ---------------- 表示 ---------------- */
 
   if (loading) return <Shell>読み込み中…</Shell>;
@@ -217,6 +263,17 @@ export default function CafeteriaAdminPage() {
     <Shell wide>
       <AdminHeader title="食堂のメニュー" />
       <AdminMenu current="cafeteria" role={role} />
+
+      {/* その日ぶんをまとめて消す。他人が入れたぶんも消えるので上位だけ */}
+      {date && canManageAll(role) && menus.size > 0 && (
+        <button
+          onClick={() => void clearAllMenus()}
+          disabled={busy}
+          className="mb-3 w-full rounded-lg bg-red-600 px-2 py-2 text-[11px] font-bold text-white transition hover:bg-red-700 disabled:bg-slate-300"
+        >
+          {ymd(date)} の登録（{menus.size}件）をすべて消す
+        </button>
+      )}
 
       {/* ---- 1. 日を選ぶ ---- */}
       {!date && (

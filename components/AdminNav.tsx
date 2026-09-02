@@ -12,7 +12,7 @@
  */
 
 import Link from "next/link";
-import { canManage, canManageCafeteria, type Role } from "@/lib/auth";
+import { canManage, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
 
 export type AdminPageId = "approve" | "rooms" | "schedule" | "cafeteria" | "edit";
 
@@ -40,7 +40,7 @@ const ENTRIES: Entry[] = [
     icon: "🏫",
     label: "教室の登録",
     sub: "何号館の何階に、どの教室があるか",
-    allowed: (r) => r === "admin_l3",
+    allowed: canManageAll,
   },
   {
     id: "schedule",
@@ -48,7 +48,7 @@ const ENTRIES: Entry[] = [
     icon: "📘",
     label: "予定の登録",
     sub: "授業・イベント・課外活動",
-    allowed: (r) => r === "admin_l1" || r === "admin_l2" || r === "admin_l3",
+    allowed: (r) => r === "admin_l1" || r === "admin_l2" || canManageAll(r),
   },
   {
     id: "cafeteria",
@@ -77,7 +77,7 @@ const ENTRIES: Entry[] = [
           icon: "✏️",
           label: "作図ツール",
           sub: "建物・出入口・通路を描き直す",
-          allowed: (r: Role | null) => r === "admin_l3",
+          allowed: (r: Role | null) => canManageAll(r),
         },
       ]
     : []),

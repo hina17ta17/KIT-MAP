@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
-import { type Role } from "@/lib/auth";
+import { type Role, canManageAll } from "@/lib/auth";
 
 type Kind = "class" | "event" | "activity";
 
@@ -64,6 +64,9 @@ type BatchResult = {
   confirm: { room_id: number; will_remove: Conflict[] }[];
   removed: number;
 };
+
+/** 確かめの文で使う改行。文字そのものを書くと編集で壊れやすい */
+const BR = String.fromCharCode(10);
 
 const KIND_LABEL: Record<Kind, string> = {
   class: "授業",
@@ -443,6 +446,47 @@ export default function SchedulePage() {
     [booked.length, loadBooked],
   );
 
+  /**
+   * その日の予定を、まとめて全部消す。
+   *
+   * 立てた本人でなくても消せるのは、副管理者といちばん上だけ。
+   * 一件ずつ消す道は前からあるが、間違えて大量に入れたときに
+   * 一件ずつでは終わらない。取り返しがつかないので二度たずねる。
+   */
+  const removeAllBooked = useCallback(async () => {
+    if (booked.length === 0) return;
+    const first = window.confirm(
+      [
+        `${date} に入っている予定を、すべて消します。`,
+        "",
+        `  ${booked.length} 件（授業・イベント・課外活動すべて）`,
+        "",
+        "他の人が立てた予定も消えます。元には戻せません。",
+        "続けますか？",
+      ].join(BR),
+    );
+    if (!first) return;
+    const second = window.confirm(
+      `本当に消しますか？（${booked.length} 件）${BR}${BR}これが最後の確認です。`,
+    );
+    if (!second) return;
+
+    setBusy(true);
+    setMsg(null);
+    try {
+      const ids = booked.map((b) => b.id);
+      const { error } = await createClient().from("timetable").delete().in("id", ids);
+      if (error) throw error;
+      const before = booked.length;
+      await loadBooked();
+      setMsg({ kind: "ok", text: `${before} 件の予定を消しました` });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }, [booked, date, loadBooked]);
+
   /* ---------------- 表示 ---------------- */
 
   if (loading) return <Shell>読み込み中…</Shell>;
@@ -461,8 +505,10 @@ export default function SchedulePage() {
     );
 
   // 課外活動とイベントは Lv1 以上、授業は Lv2 以上
-  const canEvent = role === "admin_l1" || role === "admin_l2" || role === "admin_l3";
-  const canClass = role === "admin_l2" || role === "admin_l3";
+  const canEvent = role === "admin_l1" || role === "admin_l2" || canManageAll(role);
+  const canClass = role === "admin_l2" || canManageAll(role);
+  /** 他人が立てた予定も消せるか。副管理者（2.1・2.2）といちばん上だけ */
+  const canDeleteAny = canManageAll(role);
 
   if (!canEvent)
     return (
@@ -934,6 +980,16 @@ export default function SchedulePage() {
         <div className="border-t border-slate-100 pt-3">
           <p className="mb-2 text-[11px] font-bold text-slate-500">
             {date} に入っている予定（{booked.length}件）
+            {/* 他人が立てたものも含めてまとめて消せるのは、副管理者と管理者だけ */}
+            {canDeleteAny && booked.length > 0 && (
+              <button
+                onClick={() => void removeAllBooked()}
+                disabled={busy}
+                className="ml-2 rounded-lg bg-red-600 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-red-700 disabled:bg-slate-300"
+              >
+                この日をすべて消す
+              </button>
+            )}
           </p>
 
           {booked.length === 0 ? (

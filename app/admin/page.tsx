@@ -45,7 +45,16 @@ type Row = {
 };
 
 /** ここから付けられる権限。いちばん上の権限は入れない */
-const ASSIGNABLE: Role[] = ["pending", "student", "admin_l0", "admin_l1", "admin_l2"];
+const ASSIGNABLE: Role[] = [
+  "pending",
+  "student",
+  "admin_l0",
+  "admin_l1",
+  "admin_l2",
+  // 副管理者。2.1 は承認・権限の管理だけができない。2.2 はすべてできる
+  "admin_l21",
+  "admin_l22",
+];
 
 /**
  * 画面に出さない権限。
@@ -118,12 +127,12 @@ export default function AdminPage() {
    */
   const resetAll = async () => {
     setMsg(null);
-    const target = listed.length;
+    const target = listed.filter((r) => r.role === "pending" || r.role === "student").length;
     const first = window.confirm(
       [
         "全員を最初からやり直させます。",
         "",
-        "次のものが、管理者以外のすべての人から消えます。",
+        "次のものが、学生と申請者から消えます（管理者は全員残ります）。",
         "  ・ログイン中の状態",
         "  ・パスワード",
         "  ・本人確認（認証アプリ）",
@@ -184,7 +193,7 @@ export default function AdminPage() {
     const total = rows.length;
     const first = window.confirm(
       [
-        "すべての人の席を消します。管理者（あなた）も含みます。",
+        "管理者も含めて、すべての席を消します。",
         "",
         "消えるもの",
         "  ・ログイン中の状態",
@@ -193,8 +202,9 @@ export default function AdminPage() {
         "  ・氏名・学年・クラス・名列番号",
         "  ・権限（管理者を含む）",
         "",
-        "押すとあなたもログアウトされます。",
-        "承認できる人が誰もいなくなります。",
+        "残るのは、いちばん上の権限の人だけです。",
+        "副管理者（2.1・2.2）も消えます。",
+        "あなたがいちばん上でなければ、あなたも消えてログアウトされます。",
         "",
         "続けますか？",
       ].join("\n"),
@@ -207,9 +217,8 @@ export default function AdminPage() {
         "",
         "これが最後の確認です。押すと元に戻せません。",
         "",
-        "このあと管理者を作り直すには、申請を済ませたうえで",
-        "supabase/set_admin.sql を流す必要があります。",
-        "それをしないと、誰も学内情報を見られません。",
+        "いちばん上の権限の人だけが残ります。",
+        "その人がいなければ、set_admin.sql で作り直す必要があります。",
       ].join("\n"),
     );
     if (!second) return;
@@ -220,6 +229,16 @@ export default function AdminPage() {
       const { data, error } = await supabase.rpc("reset_everything");
       if (error) throw error;
       // 自分の席も消えている。控えを捨ててから入口へ戻す
+      // 自分がいちばん上なら残っている。読み直して確かめる
+      const { data: u } = await supabase.auth.getUser();
+      if (u.user) {
+        setPicked([]);
+        setOpen(null);
+        await load();
+        setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。あなたの席は残っています。` });
+        setBusy(false);
+        return;
+      }
       await supabase.auth.signOut().catch(() => undefined);
       window.alert(`${data ?? 0} 名を消しました。ログイン画面へ戻ります。`);
       window.location.href = "/login";
@@ -542,18 +561,20 @@ export default function AdminPage() {
         一覧のいちばん下に置き、色でも他と区別する。
       */}
       <div className="mt-6 rounded-xl border border-red-300 bg-red-50 p-3">
-        <div className="text-xs font-bold text-red-900">全員を最初からやり直させる</div>
+        <div className="text-xs font-bold text-red-900">学生と申請者をやり直させる</div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-800">
-          管理者以外のすべての人から、ログイン・パスワード・本人確認・氏名・学年・クラス・
-          名列番号・権限が消えます。消された人は申請の最初からやり直しです。
-          <b>元には戻せません。</b>
+          学生と申請者から、ログイン・パスワード・本人確認・氏名・学年・クラス・
+          名列番号が消えます。<b>管理者（食堂・課外活動・教授・副管理者・管理者）は全員残ります。</b>
+          消された人は申請の最初からやり直しです。元には戻せません。
         </p>
         <button
           onClick={() => void resetAll()}
           disabled={busy}
           className="mt-2 w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
         >
-          {busy ? "処理中…" : `全員（${listed.length} 名）をリセットする`}
+          {busy
+            ? "処理中…"
+            : `学生・申請者（${listed.filter((r) => r.role === "pending" || r.role === "student").length} 名）をリセットする`}
         </button>
       </div>
 
@@ -566,19 +587,21 @@ export default function AdminPage() {
           管理者も含めて、すべての席を消す
         </div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-900">
-          申請の途中の人も、承認済みの人も、<b>管理者（あなた）も</b>消えます。
-          パスワード・本人確認・大学の情報がすべて無くなり、全員がログインの
-          最初からやり直しになります。
+          申請の途中の人も、承認済みの人も、<b>副管理者（2.1・2.2）も</b>消えます。
+          パスワード・本人確認・大学の情報がすべて無くなり、ログインの最初から
+          やり直しになります。
           <br />
-          <b>押すとあなたもログアウトされ、承認できる人が誰もいなくなります。</b>
-          そのあと管理者を作り直すには <code>supabase/set_admin.sql</code> が要ります。
+          <b>残るのは、いちばん上の権限の人だけです。</b>
+          あなたがいちばん上でなければ、あなたも消えてログアウトされます。
         </p>
         <button
           onClick={() => void resetEverything()}
           disabled={busy}
           className="mt-2 w-full rounded-lg bg-red-800 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-900 active:scale-95 disabled:bg-slate-300"
         >
-          {busy ? "処理中…" : `管理者を含む全員（${rows.length} 名）を消す`}
+          {busy
+            ? "処理中…"
+            : `いちばん上を除く全員（${rows.filter((r) => r.role !== "admin_l3").length} 名）を消す`}
         </button>
       </div>
 

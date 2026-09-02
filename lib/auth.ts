@@ -17,6 +17,10 @@ export type Role =
   | "admin_l0"
   | "admin_l1"
   | "admin_l2"
+  /** レベル2.1。承認・権限の管理**以外**は、すべてできる */
+  | "admin_l21"
+  /** レベル2.2。すべてできるが、「管理者も消す」では自分も消える */
+  | "admin_l22"
   | "admin_l3";
 
 /** 許可するメールドメイン。教職員のドメインが分かったらここに足す */
@@ -110,6 +114,8 @@ export const ROLE_LABEL: Record<Role, string> = {
   admin_l0: "食堂の担当",
   admin_l1: "課外活動リーダー",
   admin_l2: "教授",
+  admin_l21: "副管理者（承認なし）",
+  admin_l22: "副管理者",
   admin_l3: "管理者",
 };
 
@@ -120,6 +126,8 @@ export const ROLE_SHORT: Record<Role, string> = {
   admin_l0: "食堂",
   admin_l1: "課外活動",
   admin_l2: "教授",
+  admin_l21: "副（承認なし）",
+  admin_l22: "副",
   admin_l3: "管理者",
 };
 
@@ -128,8 +136,32 @@ export function canViewCampusInfo(role: Role | null): boolean {
   return role !== null && role !== "pending";
 }
 
-/** 承認・昇降格ができるか */
+/**
+ * 承認・昇降格ができるか。
+ *
+ * レベル2.1 はここだけができない。人の権限に触れるのは 2.2 と 3 だけ。
+ */
 export function canManage(role: Role | null): boolean {
+  return role === "admin_l3" || role === "admin_l22";
+}
+
+/**
+ * 情報について、いちばん上と同じことができるか。
+ *
+ * 予定・食堂・教室の登録と、他人が立てたものの削除。
+ * 承認・権限の管理はここには含まない（canManage のほう）。
+ */
+export function canManageAll(role: Role | null): boolean {
+  return role === "admin_l3" || role === "admin_l22" || role === "admin_l21";
+}
+
+/**
+ * 「管理者も消す」を実行したときに、その人が残るか。
+ *
+ * いちばん上だけが残る。2.2 は「すべてできるが消える」権限。
+ * 誰も残らないと承認できる人がいなくなるので、必ず一人は残す。
+ */
+export function survivesFullReset(role: Role | null): boolean {
   return role === "admin_l3";
 }
 
@@ -140,5 +172,5 @@ export function canManage(role: Role | null): boolean {
  * 守っているのは RLS のほうで、ここは画面を出し分けるためだけのもの。
  */
 export function canManageCafeteria(role: Role | null): boolean {
-  return role === "admin_l0" || role === "admin_l3";
+  return role === "admin_l0" || canManageAll(role);
 }
