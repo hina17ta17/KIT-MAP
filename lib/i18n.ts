@@ -63,6 +63,20 @@ const EN: Record<string, string> = {
   "この端末では現在地を使えません": "Location is not available on this device",
   "屋内では取得しにくくなります。窓際か屋外でお試しください":
     "Hard to get indoors. Try near a window or outside.",
+  /* 申請のいちばん最初に訊く身分 */
+  "あなたの身分": "Who are you?",
+  "身分（学生・教授・その他）": "Student, teacher or other",
+  学生: "Student",
+  "教授・教員": "Teacher",
+  "学年・クラス・名列番号があります": "You have a year, class and seat number",
+  "授業を受け持っています": "You teach classes",
+  "職員・関係者など": "Staff and others",
+  "選んだ内容によって、このあと訊くことが変わります。ここで選んだものがそのまま権限になるわけではありません。":
+    "What we ask next depends on this. Your choice here does not by itself grant any role.",
+  "一つ戻る": "Back one step",
+  "申請は": "Sign-up takes ",
+  "つの段どりで進みます。": " steps.",
+
   /* 直し方の案内。手順そのものは lib/browser.ts に英語版がある */
   直し方: "How to fix",
   "現在地の許可を直す": "Allow location again",
@@ -179,7 +193,6 @@ const EN: Record<string, string> = {
   "サーバーに接続できません。": "Cannot reach the server.",
   "1号館": "Bldg. 1",
   /* 申請の段どり（4段）。順番は 記入 → 所属 → 本人確認 → パスワード */
-  "申請は4つの段どりで進みます。": "Applying takes four steps.",
   "メールアドレスと氏名": "Email address and name",
   "学年・クラス・名列番号": "Year, class and roll number",
   "Microsoft Authenticator で本人確認": "Verify with Microsoft Authenticator",

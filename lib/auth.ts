@@ -51,6 +51,36 @@ export function checkPassword(pw: string): string | null {
   return null;
 }
 
+/**
+ * 身分。申請のいちばん最初に、本人が選ぶ。
+ *
+ * これは自己申告であって、権限ではない。ここで「教授」を選んでも
+ * それだけで教授の権限は付かない。権限を決めるのは承認する人で、
+ * これは「この人は教授だと言っている」という手がかりにすぎない。
+ * だから Role とは別のものにしてある。
+ *
+ * 学年・クラス・名列番号は学生にしか無いので、
+ * ここで student を選んだ人にだけ訊く。
+ */
+export type Affiliation = "student" | "teacher" | "other";
+
+export const AFFILIATIONS: { id: Affiliation; label: string; sub: string }[] = [
+  { id: "student", label: "学生", sub: "学年・クラス・名列番号があります" },
+  { id: "teacher", label: "教授・教員", sub: "授業を受け持っています" },
+  { id: "other", label: "その他", sub: "職員・関係者など" },
+];
+
+export const AFFILIATION_LABEL: Record<Affiliation, string> = {
+  student: "学生",
+  teacher: "教授・教員",
+  other: "その他",
+};
+
+/** 学年・クラス・名列番号を訊く相手か */
+export function needsClassInfo(a: Affiliation | null): boolean {
+  return a === "student";
+}
+
 /** 学年。申請のときに選ぶ */
 export const GRADES = [1, 2, 3, 4] as const;
 

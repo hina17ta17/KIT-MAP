@@ -35,7 +35,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
-import { CLASS_CODES, GRADES, GROUPS, ROLE_LABEL, ROLE_SHORT, canManage, type Role } from "@/lib/auth";
+import {
+  AFFILIATION_LABEL,
+  CLASS_CODES,
+  GRADES,
+  GROUPS,
+  ROLE_LABEL,
+  ROLE_SHORT,
+  canManage,
+  type Affiliation,
+  type Role,
+} from "@/lib/auth";
 
 type Row = {
   id: string;
@@ -48,6 +58,13 @@ type Row = {
   seat_no: number;
   verified: boolean;
   created_at: string;
+  /**
+   * 申請のときに本人が選んだ身分。
+   *
+   * 自己申告であって権限ではない。何にするかを決めるのはこの画面。
+   * 016 を流す前の人は空で返るので、そのときは学生として扱う。
+   */
+  affiliation: Affiliation | null;
 };
 
 /** ここから付けられる権限。いちばん上の権限は入れない */
@@ -356,8 +373,16 @@ export default function AdminPage() {
    * 途中の人まで承認の一覧に混ざると、確かめていない相手を
    * 承認してしまう。段を分けて、申請の一覧には出そろった人だけを出す。
    */
+  /*
+   * 学年・クラス・名列番号があるかを見るのは、学生のときだけ。
+   *
+   * 教授とその他の人には、そもそも訊いていない。全員に求めると、
+   * その人たちは何を書いても申請の一覧に出てこないまま止まる。
+   */
   const isApplied = (r: Row) =>
-    r.verified && !!r.grade && !!r.class_code && !!r.seat_no;
+    r.verified &&
+    ((r.affiliation ?? "student") !== "student" ||
+      (!!r.grade && !!r.class_code && !!r.seat_no));
 
   /** 本人確認と所属が済み、承認を待っている人 */
   const news = useMemo(
@@ -562,7 +587,9 @@ export default function AdminPage() {
                         本人確認まだ
                       </span>
                     )}
-                    {r.verified && !(r.grade && r.class_code && r.seat_no) && (
+                    {r.verified &&
+                      (r.affiliation ?? "student") === "student" &&
+                      !(r.grade && r.class_code && r.seat_no) && (
                       <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
                         所属まだ
                       </span>
@@ -570,6 +597,15 @@ export default function AdminPage() {
                   </span>
                   <span className="block truncate text-[11px] text-slate-500">{r.email}</span>
                   <span className="mt-0.5 block text-[10px] text-slate-500">
+                    {/*
+                      本人が名乗った身分。学生以外はここで分かるようにしておく。
+                      学生は学年とクラスが続くので、わざわざ書かない。
+                    */}
+                    {r.affiliation && r.affiliation !== "student" && (
+                      <span className="mr-2 rounded bg-indigo-100 px-1 py-0.5 font-bold text-indigo-800">
+                        {AFFILIATION_LABEL[r.affiliation]}
+                      </span>
+                    )}
                     {r.grade ? `${r.grade}年 ` : ""}
                     {r.class_code}
                     {r.seat_no ? ` ${r.seat_no}番` : r.group_no ? `-${r.group_no}` : ""}

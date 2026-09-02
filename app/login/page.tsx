@@ -46,6 +46,7 @@ import { AdminMenu } from "@/components/AdminNav";
 import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
 import { isTrustedDevice, trustDevice } from "@/lib/device";
 import {
+  AFFILIATIONS,
   CLASS_CODES,
   GRADES,
   SEAT_MAX,
@@ -56,6 +57,8 @@ import {
   ROLE_LABEL,
   checkPassword,
   isAllowedEmail,
+  needsClassInfo,
+  type Affiliation,
   type Role,
 } from "@/lib/auth";
 
@@ -67,8 +70,17 @@ import {
  */
 type Step = "mfa" | "password" | "verify" | "done";
 
-/** 席を作る前の段。この間はまだ何もデータベースに書かない */
-type SignupStep = 1 | 2;
+/**
+ * 席を作る前の段。この間はまだ何もデータベースに書かない。
+ *
+ *   1 … 身分（学生・教授・その他）
+ *   2 … メールアドレスと氏名
+ *   3 … 学年・クラス・名列番号（学生だけ）
+ *
+ * 身分を先に訊くのは、そのあと何を訊くかがここで変わるため。
+ * 教授やその他の人に名列番号を訊いても、答えようがない。
+ */
+type SignupStep = 1 | 2 | 3;
 
 type Me = {
   email: string;
@@ -140,8 +152,10 @@ export default function LoginPage() {
 
   /* 申請 */
   const [step, setStep] = useState<Step>("mfa");
-  /** 席を作る前の段。① メールと氏名 → ② 学年・クラス・名列番号 */
+  /** 席を作る前の段。① 身分 → ② メールと氏名 → ③ 学年・クラス・名列番号 */
   const [signupStep, setSignupStep] = useState<SignupStep>(1);
+  /** 申請のいちばん最初に選んでもらう身分。まだ選んでいなければ null */
+  const [affiliation, setAffiliation] = useState<Affiliation | null>(null);
   const [name, setName] = useState("");
   const [grade, setGrade] = useState<number>(0);
   const [classCode, setClassCode] = useState("");
@@ -282,15 +296,25 @@ export default function LoginPage() {
     void reload();
   }, [reload]);
 
-  /* ---------------- ①② 記入 → ③ 席を作って本人確認へ ---------------- */
+  /* ---------------- ①〜③ 記入 → 席を作って本人確認へ ---------------- */
 
   const domainOk = isAllowedEmail(email);
-  /** ① メールアドレスと氏名 */
-  const canStep1 = domainOk && name.trim().length > 0;
-  /** ② 学年・クラス・名列番号 */
+  /** ① 身分 */
+  const canStep1 = affiliation !== null;
+  /** ② メールアドレスと氏名 */
+  const canStep2 = domainOk && name.trim().length > 0;
+  /**
+   * ③ 学年・クラス・名列番号。
+   *
+   * 学生以外には訊かないので、そもそもこの段が無い。
+   * 訊いていないものを「未記入だから進めない」とすると、
+   * 教授とその他の人が先へ進めなくなる。
+   */
   const seatNum = Number(seat);
-  const canStep2 =
-    !!grade && !!classCode && seat.length > 0 && checkSeat(seatNum) === null;
+  const asksClass = needsClassInfo(affiliation);
+  const canStep3 =
+    !asksClass ||
+    (!!grade && !!classCode && seat.length > 0 && checkSeat(seatNum) === null);
 
   /**
    * 席を作り、本人確認へ進む。
@@ -308,7 +332,7 @@ export default function LoginPage() {
    */
   const beginVerify = async () => {
     setMsg(null);
-    if (!canStep1 || !canStep2) return;
+    if (!canStep1 || !canStep2 || !canStep3) return;
     setBusy(true);
     try {
       const supabase = createClient();
@@ -318,9 +342,11 @@ export default function LoginPage() {
         options: {
           data: {
             full_name: name.trim(),
-            grade,
-            class_code: classCode,
-            seat_no: seatNum,
+            affiliation,
+            // 学生以外には訊いていない。0 と空のまま預ける
+            grade: asksClass ? grade : 0,
+            class_code: asksClass ? classCode : "",
+            seat_no: asksClass ? seatNum : 0,
           },
         },
       });
@@ -448,17 +474,35 @@ export default function LoginPage() {
         Number(seat) || (typeof meta.seat_no === "number" ? meta.seat_no : 0);
       const nameV =
         name.trim() || (typeof meta.full_name === "string" ? meta.full_name : "");
+      const affV =
+        affiliation ??
+        (typeof meta.affiliation === "string" ? (meta.affiliation as Affiliation) : "student");
 
+      const base = {
+        full_name: nameV,
+        grade: gradeV,
+        class_code: classV,
+        seat_no: seatV,
+      };
+      const id = u.user?.id ?? "";
+
+      /*
+       * 身分の列は 016 で足したもの。
+       *
+       * 画面を先に配って SQL を後から流すと、そのあいだ列が無い。
+       * そこで落とすと、申請そのものが出せなくなる。
+       * 列が無いと言われたときだけ、身分を外してもう一度送る。
+       * 申請が通ることのほうが大事で、身分はあとから訊けばよい。
+       */
       const { error: e2 } = await supabase
         .from("profiles")
-        .update({
-          full_name: nameV,
-          grade: gradeV,
-          class_code: classV,
-          seat_no: seatV,
-        })
-        .eq("id", u.user?.id ?? "");
-      if (e2) throw e2;
+        .update({ ...base, affiliation: affV })
+        .eq("id", id);
+      if (e2) {
+        if (!/affiliation/i.test(e2.message)) throw e2;
+        const { error: e3 } = await supabase.from("profiles").update(base).eq("id", id);
+        if (e3) throw e3;
+      }
 
       setPw("");
       await reload();
@@ -720,14 +764,41 @@ export default function LoginPage() {
         </>
       ) : (
         <>
-          {/* 申請の段どり。何をどの順で出すかは下の signupStep で分ける */}
-          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            {T("申請は4つの段どりで進みます。")}
-          </p>
+          {/*
+            申請の段どり。
+
+            学生かどうかで段の数が変わる。数え上げにしているのは、
+            学生以外のときに「3.」を飛ばして「4.」が出るのを避けるため。
+          */}
+          <div className="mt-3 flex items-start justify-between gap-2">
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              {T("申請は")}
+              {asksClass ? 5 : 4}
+              {T("つの段どりで進みます。")}
+            </p>
+            {/*
+              一つ前へ戻る。
+
+              下にも「戻る」を置いているが、記入が長くなると画面の外へ出て
+              探すことになる。見出しの横なら、どの段でも同じ場所にある。
+            */}
+            {signupStep > 1 && (
+              <button
+                onClick={() => {
+                  setMsg(null);
+                  setSignupStep((s) => (s === 3 ? 2 : 1));
+                }}
+                className="-mt-0.5 shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+              >
+                ← {T("一つ戻る")}
+              </button>
+            )}
+          </div>
           <ol className="mt-1.5 space-y-0.5 text-[11px] leading-relaxed text-slate-600">
             {[
+              T("身分（学生・教授・その他）"),
               T("メールアドレスと氏名"),
-              T("学年・クラス・名列番号"),
+              ...(asksClass ? [T("学年・クラス・名列番号")] : []),
               T("Microsoft Authenticator で本人確認"),
               T("パスワードを決めて申請"),
             ].map((label, i) => (
@@ -741,6 +812,49 @@ export default function LoginPage() {
           </ol>
 
           {signupStep === 1 ? (
+            <>
+              <Label>{T("あなたの身分")}</Label>
+              <p className="mb-1 pl-1 text-[10px] leading-relaxed text-slate-500">
+                {T("選んだ内容によって、このあと訊くことが変わります。ここで選んだものがそのまま権限になるわけではありません。")}
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {AFFILIATIONS.map((a) => {
+                  const on = affiliation === a.id;
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => setAffiliation(a.id)}
+                      className={`rounded-xl px-3 py-2.5 text-left transition active:scale-95 ${
+                        on ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span
+                        className={`block text-sm font-bold ${on ? "text-white" : "text-slate-800"}`}
+                      >
+                        {T(a.label)}
+                      </span>
+                      <span
+                        className={`block text-[10px] ${on ? "text-blue-100" : "text-slate-500"}`}
+                      >
+                        {T(a.sub)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => {
+                  setMsg(null);
+                  setSignupStep(2);
+                }}
+                disabled={!canStep1}
+                className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {T("次へ")}
+              </button>
+            </>
+          ) : signupStep === 2 ? (
             <>
               <Label>{T("メールアドレス")}</Label>
               <input
@@ -767,15 +881,29 @@ export default function LoginPage() {
                 className={inputCls}
               />
 
+              {/*
+                学生なら学年へ。そうでなければ訊くことがもう無いので、
+                ここで席を作って本人確認へ進む。
+              */}
               <button
                 onClick={() => {
                   setMsg(null);
-                  setSignupStep(2);
+                  if (asksClass) setSignupStep(3);
+                  else void beginVerify();
                 }}
-                disabled={!canStep1}
+                disabled={!canStep2 || busy}
                 className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
               >
-                {T("次へ")}
+                {busy ? T("処理中…") : T("次へ")}
+              </button>
+              <button
+                onClick={() => {
+                  setMsg(null);
+                  setSignupStep(1);
+                }}
+                className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+              >
+                {T("戻る")}
               </button>
             </>
           ) : (
@@ -819,7 +947,7 @@ export default function LoginPage() {
 
               <button
                 onClick={() => void beginVerify()}
-                disabled={!canStep2 || busy}
+                disabled={!canStep3 || busy}
                 className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
               >
                 {busy ? T("処理中…") : T("次へ")}
@@ -827,7 +955,7 @@ export default function LoginPage() {
               <button
                 onClick={() => {
                   setMsg(null);
-                  setSignupStep(1);
+                  setSignupStep(2);
                 }}
                 className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
               >
