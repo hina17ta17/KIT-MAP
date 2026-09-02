@@ -78,6 +78,12 @@ const EN: Record<string, string> = {
   "選んだ内容によって、このあと訊くことが変わります。ここで選んだものがそのまま権限になるわけではありません。":
     "What we ask next depends on this. Your choice here does not by itself grant any role.",
   "一つ戻る": "Back one step",
+  "8桁の番号": "8-digit number",
+  "8桁で入れてください": "Please enter 8 characters",
+  "大学から配られている8桁の番号を入れてください。名簿と突き合わせます。":
+    "Enter the 8-digit number the university gave you. We check it against the roster.",
+  "これができたら、大学の情報を入れて申請します。":
+    "After this you enter your university details and apply.",
   "申請は": "Sign-up takes ",
   "つの段どりで進みます。": " steps.",
 
