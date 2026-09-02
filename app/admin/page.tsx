@@ -169,6 +169,73 @@ export default function AdminPage() {
     }
   };
 
+  /**
+   * すべての席を消す。管理者も含む。
+   *
+   * さきの resetAll は管理者を残すが、こちらは残さない。
+   * 押した本人も消えるので、その場でログアウトされる。
+   *
+   * 承認できる人が誰もいなくなるので、あとで
+   * supabase/set_admin.sql を流して作り直す必要がある。
+   * そのことを、二度の確認の両方で伝える。
+   */
+  const resetEverything = async () => {
+    setMsg(null);
+    const total = rows.length;
+    const first = window.confirm(
+      [
+        "すべての人の席を消します。管理者（あなた）も含みます。",
+        "",
+        "消えるもの",
+        "  ・ログイン中の状態",
+        "  ・パスワード",
+        "  ・本人確認（認証アプリ）",
+        "  ・氏名・学年・クラス・名列番号",
+        "  ・権限（管理者を含む）",
+        "",
+        "押すとあなたもログアウトされます。",
+        "承認できる人が誰もいなくなります。",
+        "",
+        "続けますか？",
+      ].join("\n"),
+    );
+    if (!first) return;
+
+    const second = window.confirm(
+      [
+        `本当に実行しますか？（${total} 名すべてが消えます）`,
+        "",
+        "これが最後の確認です。押すと元に戻せません。",
+        "",
+        "このあと管理者を作り直すには、申請を済ませたうえで",
+        "supabase/set_admin.sql を流す必要があります。",
+        "それをしないと、誰も学内情報を見られません。",
+      ].join("\n"),
+    );
+    if (!second) return;
+
+    setBusy(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("reset_everything");
+      if (error) throw error;
+      // 自分の席も消えている。控えを捨ててから入口へ戻す
+      await supabase.auth.signOut().catch(() => undefined);
+      window.alert(`${data ?? 0} 名を消しました。ログイン画面へ戻ります。`);
+      window.location.href = "/login";
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? e.message +
+              "（supabase/reset_all_including_admin.sql をまだ入れていない場合は、先に入れてください）"
+            : String(e),
+      });
+      setBusy(false);
+    }
+  };
+
   /* いちばん上の権限の人は、そもそも一覧に載せない */
   const listed = useMemo(() => rows.filter((r) => r.role !== HIDDEN), [rows]);
 
@@ -487,6 +554,31 @@ export default function AdminPage() {
           className="mt-2 w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
         >
           {busy ? "処理中…" : `全員（${listed.length} 名）をリセットする`}
+        </button>
+      </div>
+
+      {/*
+        こちらは管理者も含めて全部消す。上のものより強いので下に置き、
+        色もさらに濃くしてある。押すと自分もログアウトされる。
+      */}
+      <div className="mt-3 rounded-xl border-2 border-red-700 bg-red-100 p-3">
+        <div className="text-xs font-bold text-red-900">
+          管理者も含めて、すべての席を消す
+        </div>
+        <p className="mt-1 text-[11px] leading-relaxed text-red-900">
+          申請の途中の人も、承認済みの人も、<b>管理者（あなた）も</b>消えます。
+          パスワード・本人確認・大学の情報がすべて無くなり、全員がログインの
+          最初からやり直しになります。
+          <br />
+          <b>押すとあなたもログアウトされ、承認できる人が誰もいなくなります。</b>
+          そのあと管理者を作り直すには <code>supabase/set_admin.sql</code> が要ります。
+        </p>
+        <button
+          onClick={() => void resetEverything()}
+          disabled={busy}
+          className="mt-2 w-full rounded-lg bg-red-800 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-900 active:scale-95 disabled:bg-slate-300"
+        >
+          {busy ? "処理中…" : `管理者を含む全員（${rows.length} 名）を消す`}
         </button>
       </div>
 
