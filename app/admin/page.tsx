@@ -109,6 +109,66 @@ export default function AdminPage() {
     void load();
   }, [load]);
 
+  /**
+   * 全員を最初からやり直させる。
+   *
+   * ログイン・パスワード・本人確認・所属が消え、申請の最初に戻る。
+   * 取り返しがつかないので、二度たずねてから実行する。
+   * 一度目は何が消えるかを並べ、二度目は人数を出して念を押す。
+   */
+  const resetAll = async () => {
+    setMsg(null);
+    const target = listed.length;
+    const first = window.confirm(
+      [
+        "全員を最初からやり直させます。",
+        "",
+        "次のものが、管理者以外のすべての人から消えます。",
+        "  ・ログイン中の状態",
+        "  ・パスワード",
+        "  ・本人確認（認証アプリ）",
+        "  ・氏名・学年・クラス・名列番号",
+        "  ・承認した権限",
+        "",
+        "消された人は、申請の最初からやり直しになります。",
+        "元には戻せません。",
+        "",
+        "続けますか？",
+      ].join("\n"),
+    );
+    if (!first) return;
+
+    const second = window.confirm(
+      [
+        `本当に実行しますか？（${target} 名が消えます）`,
+        "",
+        "これが最後の確認です。押すと元に戻せません。",
+        "承認済みの人も、もう一度申請と承認が要ります。",
+      ].join("\n"),
+    );
+    if (!second) return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("reset_everyone");
+      if (error) throw error;
+      setPicked([]);
+      setOpen(null);
+      await load();
+      setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。全員が申請からやり直しになります。` });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? e.message + "（supabase/reset_all.sql をまだ入れていない場合は、先に入れてください）"
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /* いちばん上の権限の人は、そもそも一覧に載せない */
   const listed = useMemo(() => rows.filter((r) => r.role !== HIDDEN), [rows]);
 
@@ -409,6 +469,26 @@ export default function AdminPage() {
           </li>
         )}
       </ul>
+
+      {/*
+        全員をやり直させる。取り返しがつかないので、
+        一覧のいちばん下に置き、色でも他と区別する。
+      */}
+      <div className="mt-6 rounded-xl border border-red-300 bg-red-50 p-3">
+        <div className="text-xs font-bold text-red-900">全員を最初からやり直させる</div>
+        <p className="mt-1 text-[11px] leading-relaxed text-red-800">
+          管理者以外のすべての人から、ログイン・パスワード・本人確認・氏名・学年・クラス・
+          名列番号・権限が消えます。消された人は申請の最初からやり直しです。
+          <b>元には戻せません。</b>
+        </p>
+        <button
+          onClick={() => void resetAll()}
+          disabled={busy}
+          className="mt-2 w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
+        >
+          {busy ? "処理中…" : `全員（${listed.length} 名）をリセットする`}
+        </button>
+      </div>
 
       {msg && (
         <p
