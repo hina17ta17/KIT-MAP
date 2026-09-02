@@ -480,15 +480,31 @@ export function loadData(key: DraftKey = STORAGE_KEY): MapData {
   }
 }
 
+/*
+ * 覚えを書くところは、必ず try でくるむ。
+ *
+ * Safari のプライベートモードでは置ける量が 0 のことがあり、
+ * 書こうとしただけで例外が飛ぶ。くるんでいないと、そこから先の
+ * 処理ごと止まって画面が真っ白になる。
+ * 覚えられなくても動きは続けられるので、黙って諦める。
+ */
 export function saveData(data: MapData, key: DraftKey = STORAGE_KEY) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, JSON.stringify(data));
+  try {
+    window.localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // 置けなくても動く。次に開いたときに下書きが無いだけ
+  }
 }
 
 /** 下書きを捨てる。取り込み直して最初からやり直したいとき */
 export function clearData(key: DraftKey = STORAGE_KEY) {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(key);
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // 触れなくても構わない
+  }
 }
 
 /** 既存の仮IDと重ならない次の番号を返す（削除後の再採番はしない） */

@@ -363,7 +363,7 @@ function Cafeteria({ date }: { date: Date }) {
 /* ================= 時間割 ================= */
 
 type Faculty = { id: number; name: string };
-type Dept = { id: number; faculty_id: number; name: string };
+type Dept = { id: number; faculty_id: number; name: string; code: string };
 type Cat = { id: number; name: string };
 type Act = { id: number; category_id: number | null; name: string };
 
@@ -448,6 +448,15 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
   const [dept, setDept] = useState<Dept | null>(null);
   const [rows, setRows] = useState<ClassRow[] | null>(null);
   /**
+   * 自分の学年。0 は未記入。
+   *
+   * 学生なら、自分の学年の授業だけを出す。学年を問わない科目（grade=0）は
+   * どの学年でも出す。学年を持たない人は絞らない。
+   */
+  const [grade, setGrade] = useState(0);
+  /** 学年で絞っているか。「全学年を見る」で外せる */
+  const [byGrade, setByGrade] = useState(true);
+  /**
    * 自分の学科を、もう当てはめたか。
    *
    * 当てはめるのは一度だけ。これが無いと「選び直す」で戻った瞬間に
@@ -460,7 +469,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       const supabase = createClient();
       const [f, d, u] = await Promise.all([
         supabase.from("faculties").select("id, name").order("sort_order"),
-        supabase.from("departments").select("id, faculty_id, name").order("sort_order"),
+        supabase.from("departments").select("id, faculty_id, name, code").order("sort_order"),
         supabase.auth.getUser(),
       ]);
       const list = (d.data as Dept[]) ?? [];
@@ -470,19 +479,26 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       if (applied.current || !u.data.user) return;
       const { data: me } = await supabase
         .from("profiles")
-        .select("class_code")
+        .select("class_code, grade")
         .eq("id", u.data.user.id)
         .single();
 
+      const p = me as { class_code?: string; grade?: number } | null;
+      if (p?.grade) setGrade(p.grade);
+
       /*
-       * profiles には "CC" のようなクラス記号しか入っていない。
-       * departments には記号の列が無いので、名前で突き合わせる。
-       * 17学科すべて、記号と名前が1対1で対応していることは確認済み。
+       * 突き合わせは、まず記号どうしで行う。
+       *
+       * departments には code の列があるので（"CC" など）、
+       * profiles.class_code とそのまま比べられる。
+       * 記号が入っていない学科のために、名前でも探せるようにしておく。
        */
-      const code = (me as { class_code?: string } | null)?.class_code;
+      const code = p?.class_code;
       if (!code) return;
       const name = CLASS_CODES.find((c) => c.code === code)?.name;
-      const mine = name ? list.find((x) => x.name === name) : undefined;
+      const mine =
+        list.find((x) => x.code === code) ??
+        (name ? list.find((x) => x.name === name) : undefined);
       if (mine) {
         applied.current = true;
         setDept(mine);
@@ -497,29 +513,61 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       return;
     }
     void (async () => {
-      const { data } = await createClient()
+      let q = createClient()
         .from("timetable")
         .select(
-          "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id)",
+          "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id, grade)",
         )
         .eq("on_date", ymd(date))
         .eq("period_id", periodId)
         .eq("kind", "class")
         .eq("courses.department_id", dept.id);
+
+      /*
+       * 学年で絞る。0 の科目は「学年を問わない」ので必ず残す。
+       * 学年を持たない人（教職員など）や「全学年を見る」にしたときは絞らない。
+       */
+      if (byGrade && grade) q = q.in("courses.grade", [0, grade]);
+
+      const { data } = await q;
       setRows((data as unknown as ClassRow[]) ?? []);
     })();
-  }, [dept, date, periodId]);
+  }, [dept, date, periodId, byGrade, grade]);
 
   if (dept) {
     return (
       <div>
-        <button
-          onClick={() => setDept(null)}
-          className="mb-2 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600"
-        >
-          ← 学科を選び直す
-        </button>
-        <p className="mb-1.5 text-xs font-bold text-slate-900">{dept.name}</p>
+        {/*
+          いま何を出しているのかを、いちばん上に出す。
+
+          学生には自分の学科と学年で絞ったものを出すので、黙って絞ると
+          「授業が無い」のか「絞られている」のかが分からなくなる。
+          何で絞っているかと、外し方を並べて置く。
+        */}
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-bold text-slate-900">{dept.name}</span>
+          {byGrade && grade > 0 && (
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">
+              {grade}年
+            </span>
+          )}
+          <span className="ml-auto flex gap-1">
+            {grade > 0 && (
+              <button
+                onClick={() => setByGrade((v) => !v)}
+                className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+              >
+                {byGrade ? "全学年を見る" : `${grade}年だけに戻す`}
+              </button>
+            )}
+            <button
+              onClick={() => setDept(null)}
+              className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+            >
+              他の学科
+            </button>
+          </span>
+        </div>
         {rows === null ? (
           <Note>読み込み中…</Note>
         ) : rows.length === 0 ? (

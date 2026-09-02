@@ -80,7 +80,21 @@ export async function loadMapSet(
   const grab = async <T>(name: string, fallback: T): Promise<T> => {
     const path = `${dir}/${name}.geojson`;
     try {
-      const res = await fetch(path, { cache: "no-store" });
+      /*
+       * no-store ではなく no-cache。
+       *
+       * 地図データは合わせて 3.9MB ある。no-store だと毎回まるごと
+       * 取り直しになり、開くたびに 3.9MB 落として組み立て直していた。
+       * 電波の細い所や、プライベートモードのように手元に置ける量が
+       * 少ないところでは、ここで待たされる。
+       *
+       * no-cache は「毎回サーバに確かめるが、変わっていなければ
+       * 手元のものを使う」。配信元は ETag を返すので、変わっていなければ
+       * 304 が返り、本文は流れない（実際に 304 が返ることを確認済み）。
+       * 新しく publish すれば ETag が変わるので、古いものを掴んだまま
+       * になることはない。
+       */
+      const res = await fetch(path, { cache: "no-cache" });
       if (!res.ok) {
         missing.push(`${path}（${res.status}）`);
         return fallback;

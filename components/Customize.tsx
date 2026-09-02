@@ -7,12 +7,32 @@
  * 誰かに送るものではないので、データベースには触らない。
  */
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { AppData } from "@/lib/appdata";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import type { Lang } from "@/lib/i18n";
 import { LABEL_COLORS, colorOf, type Custom } from "@/lib/custom";
 import { GROUP_LABEL, compareOrder, orderKey } from "@/lib/order";
+
+/** 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
+const BR = String.fromCharCode(10);
+
+/**
+ * 書きかけの感想。
+ *
+ * カスタマイズは閉じると丸ごと消える作りなので、書いている途中で
+ * 地図を見に戻ると、それまで書いた文が失われていた。
+ * 「送れなかった」の一部は、これだった。
+ *
+ * 端末には残さない（localStorage を使わない）。感想は名前を取らない
+ * ことにしてあるので、書いたものが端末に残り続けるのは筋が通らない。
+ * このページを開いているあいだだけ覚えておく。
+ */
+const draft: { open: boolean; body: string; rating: number | null } = {
+  open: false,
+  body: "",
+  rating: null,
+};
 
 type Props = {
   open: boolean;
@@ -60,6 +80,31 @@ export default function Customize({ open, onClose, data, value, onChange, t, lan
   }, [places, q, value.names]);
 
   if (!open) return null;
+
+  /**
+   * 付け替えた名前を、まとめて元に戻す。
+   *
+   * 押し間違いで何十件も消えるので、一度たずねる。
+   * 何件戻すのかを出しておくと、思っていた数と違うときに気づける。
+   */
+  const resetNames = () => {
+    if (changed.length === 0) return;
+    const ok = window.confirm(
+      [
+        t("付け替えた名前を、すべて元に戻します。"),
+        "",
+        `${t("戻すもの")}: ${changed.length} ${t("件")}`,
+        ...changed.slice(0, 8).map((p) => `  ${value.names[p.id]} → ${p.original}`),
+        changed.length > 8 ? `  ${t("ほか")} ${changed.length - 8} ${t("件")}` : "",
+        "",
+        t("よろしいですか？"),
+      ]
+        .filter((x) => x !== "")
+        .join(BR),
+    );
+    if (!ok) return;
+    onChange({ ...value, names: {} });
+  };
 
   const setName = (id: string, name: string) => {
     const names = { ...value.names };
@@ -166,7 +211,25 @@ export default function Customize({ open, onClose, data, value, onChange, t, lan
 
           {/* ---------------- 名前の付け替え ---------------- */}
           <section className="mt-4 border-t border-slate-200 pt-3">
-            <h3 className="text-xs font-bold text-slate-900">{t("名前の付け替え")}</h3>
+            {/*
+              リセットは、名前を打ち込む欄より上に置く。
+
+              以前は「変えたもの」の箱の中にしか無く、その箱は一つでも
+              変えていないと出てこなかった。戻したいと思ったときに
+              どこにあるか分からない場所だった。
+              いつも同じ場所にあり、変えていなければ押せない形にする。
+            */}
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold text-slate-900">{t("名前の付け替え")}</h3>
+              <button
+                onClick={resetNames}
+                disabled={changed.length === 0}
+                className="shrink-0 rounded-full px-2 py-1 text-[10px] font-bold transition active:scale-95 disabled:text-slate-300 enabled:bg-slate-100 enabled:text-slate-600 enabled:hover:bg-slate-200"
+              >
+                {t("すべて元に戻す")}
+                {changed.length > 0 ? `（${changed.length}）` : ""}
+              </button>
+            </div>
             <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
               {t(
                 "自分に分かりやすい呼び方に変えられます。地図にはその名前だけが出ます。もとの名前はこの画面で確かめられます。",
@@ -187,12 +250,6 @@ export default function Customize({ open, onClose, data, value, onChange, t, lan
                     </li>
                   ))}
                 </ul>
-                <button
-                  onClick={() => onChange({ ...value, names: {} })}
-                  className="mt-1.5 text-[10px] text-amber-700 underline active:scale-95"
-                >
-                  {t("すべてもとの名前に戻す")}
-                </button>
               </div>
             )}
 
@@ -289,9 +346,9 @@ export default function Customize({ open, onClose, data, value, onChange, t, lan
  *   案内の途中に出すと、急いでいる人の邪魔になる。
  */
 function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
-  const [open, setOpen] = useState(false);
-  const [body, setBody] = useState("");
-  const [rating, setRating] = useState<number | null>(null);
+  const [open, setOpen] = useState(draft.open);
+  const [body, setBody] = useState(draft.body);
+  const [rating, setRating] = useState<number | null>(draft.rating);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -299,26 +356,83 @@ function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
   const MAX = 2000;
   const left = MAX - body.length;
 
+  /*
+   * 書きかけを覚えのほうへ写す。
+   *
+   * 押した瞬間ではなく、描き終わったあとに写す。描いている最中に
+   * 外側のものを書き換えると、React が同じ結果を二度作れなくなる。
+   */
+  useEffect(() => {
+    draft.open = open;
+    draft.body = body;
+    draft.rating = rating;
+  }, [open, body, rating]);
+
   // 送り先が無いときは、書かせてから捨てることになる。出さない
   if (!supabaseReady) return null;
 
+  /**
+   * 送る。
+   *
+   * ■ 送れなかったときに、書いたものを消さない
+   *   前は失敗しても本文をそのまま残していたが、成功と同じ道を通って
+   *   いたので分かりにくかった。成功したときだけ空にする。
+   *
+   * ■ 一度だけ送り直す
+   *   電波が切れかけているときに一度で諦めると「送れなかった」になる。
+   *   間を空けて一度だけやり直す。二度目も駄目なら理由を出す。
+   *
+   * ■ 二重送信を止める
+   *   busy を見ているが、押した瞬間に二度目が入ることがある。
+   *   送っている最中は、そもそも入口で返す。
+   *
+   * ■ 中身の決まりは、送る前に自分で確かめる
+   *   星は1〜5、本文は1〜2000字。データベース側にも同じ決まりがあるが、
+   *   そちらで弾かれると「new row for relation ... violates」という
+   *   読めない文言がそのまま出る。ここで先に、日本語で伝える。
+   */
   const send = async () => {
+    if (busy) return;
     const text = body.trim();
-    if (!text) return;
+    if (!text) {
+      setErr(t("何か書いてから送ってください"));
+      return;
+    }
+    if (text.length > MAX) {
+      setErr(`${t("長すぎます。")}${MAX}${t("字までにしてください")}`);
+      return;
+    }
+    const star = rating !== null && rating >= 1 && rating <= 5 ? rating : null;
+
     setBusy(true);
     setErr(null);
+
+    const once = async () => {
+      const { error } = await createClient()
+        .from("feedback")
+        // ここで .select() を付けてはいけない。
+        // 書いた行を読み返すことになり、読める人が限られるため弾かれる
+        .insert({ body: text, rating: star, lang });
+      return error;
+    };
+
     try {
-      const { error } = await createClient().from("feedback").insert({
-        body: text,
-        rating,
-        lang,
-      });
+      let error = await once();
+      if (error) {
+        // 一度だけ、間を空けてやり直す
+        await new Promise((r) => setTimeout(r, 900));
+        error = await once();
+      }
       if (error) throw error;
       setDone(true);
       setBody("");
       setRating(null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("送れませんでした"));
+      setErr(
+        e instanceof Error && e.message
+          ? `${t("送れませんでした")}（${e.message}）`
+          : t("送れませんでした。電波の届く所でもう一度お試しください"),
+      );
     } finally {
       setBusy(false);
     }
@@ -393,8 +507,13 @@ function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
         placeholder={t("例：目的の教室まで迷わず行けました。夜は地図が見づらいです。")}
         className="mt-2 w-full rounded-xl bg-slate-100 px-3 py-2.5 text-xs leading-relaxed outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
       />
-      <div className="mt-0.5 text-right text-[10px] text-slate-400">
+      <div
+        className={`mt-0.5 text-right text-[10px] ${
+          left <= 0 ? "font-bold text-red-600" : left < 100 ? "text-amber-600" : "text-slate-400"
+        }`}
+      >
         {t("残り")} {left}
+        {left <= 0 && <span className="ml-1">{t("（これ以上は入りません）")}</span>}
       </div>
 
       {err && <p className="mt-1 rounded-lg bg-red-50 p-2 text-[10px] text-red-800">{err}</p>}
