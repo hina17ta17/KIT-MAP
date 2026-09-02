@@ -25,7 +25,7 @@ import {
   type AppData,
   type SearchHit,
 } from "@/lib/appdata";
-import { ROLE_LABEL, ROLE_SHORT, canViewCampusInfo, type Role } from "@/lib/auth";
+import { ROLE_LABEL, ROLE_SHORT, canReadFeedback, canViewCampusInfo, type Role } from "@/lib/auth";
 import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
@@ -1875,6 +1875,35 @@ export default function Guide() {
           <div className="min-h-0 flex-1 overflow-hidden">
             <CampusPanel role={role} onNeedLogin={() => setLogin(true)} />
           </div>
+
+          {/*
+            感想を読める人への入口。
+
+            これまでは地図から直接は行けず、右上の小さな
+            「〜でログイン中」を押して、そこからメニューをたどる
+            必要があった。二回たどらないと届かないので、
+            届いていることに気づけない。ここから一回で行けるようにする。
+
+            読めない権限の人には出さない。押せない行き先が並んでいても
+            迷うだけなので、その人が使えるものだけを見せる。
+          */}
+          {canReadFeedback(role) && (
+            <a
+              href="/admin/feedback"
+              className="mt-2 flex shrink-0 items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5 transition hover:bg-slate-200 active:scale-95"
+            >
+              <span className="text-base">✉</span>
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-slate-800">
+                  {T("みんなの感想")}
+                </span>
+                <span className="block text-[10px] text-slate-500">
+                  {T("使っている人から届いた声")}
+                </span>
+              </span>
+              <span className="ml-auto shrink-0 text-slate-400">›</span>
+            </a>
+          )}
         </div>
       )}
 

@@ -63,6 +63,10 @@ const EN: Record<string, string> = {
   "この端末では現在地を使えません": "Location is not available on this device",
   "屋内では取得しにくくなります。窓際か屋外でお試しください":
     "Hard to get indoors. Try near a window or outside.",
+  /* 学内の情報の引き出し */
+  "みんなの感想": "Feedback",
+  "使っている人から届いた声": "What people told us",
+
   /* 申請のいちばん最初に訊く身分 */
   "あなたの身分": "Who are you?",
   "身分（学生・教授・その他）": "Student, teacher or other",
