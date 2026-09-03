@@ -32,10 +32,34 @@ import { readXlsx, type Row } from "@/lib/xlsx";
 /** xlsx の列。A列から順に */
 const COLS = ["kind", "email", "name", "grade", "class_code", "seat_no", "student_no", "number"] as const;
 
+/** 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
+const BR = String.fromCharCode(10);
+
 type Sending = { row: number } & Record<(typeof COLS)[number], string>;
 type Rejected = { row: number; why: string };
 type Report = { students: number; staff: number; rejected: Rejected[] };
 type Counts = { students: number; teachers: number; others: number };
+type DomainKind = "student" | "teacher" | "other";
+type Domains = Record<DomainKind, string>;
+
+/** ドメイン名確認の中の、身分の並び */
+const DOMAIN_KINDS: { id: DomainKind; label: string; note: string }[] = [
+  {
+    id: "student",
+    label: "学生",
+    note: "このドメインの人だけを学生として扱います。学籍番号は @ の前と同じであることも見ます。",
+  },
+  {
+    id: "teacher",
+    label: "教授・教員",
+    note: "このドメインの人だけを教授として扱います。空のあいだは、教授の行を取り込まず、教授の申請は人に回します（追い返しません）。",
+  },
+  {
+    id: "other",
+    label: "その他",
+    note: "職員・関係者。空にしておくとドメインを見ません（外部のアドレスの人もいるため）。入れると、そのドメインだけを通します。",
+  },
+];
 
 export default function RosterPage() {
   const [role, setRole] = useState<Role | null>(null);
@@ -44,8 +68,13 @@ export default function RosterPage() {
   const [busy, setBusy] = useState(false);
 
   const [counts, setCounts] = useState<Counts | null>(null);
-  const [studentDomain, setStudentDomain] = useState("");
-  const [teacherDomain, setTeacherDomain] = useState("");
+
+  /** ドメイン名確認 */
+  const [domainOpen, setDomainOpen] = useState(false);
+  const [domainKind, setDomainKind] = useState<DomainKind>("student");
+  const [domains, setDomains] = useState<Domains | null>(null);
+  /** いま直している途中の文字。保存するまで反映しない */
+  const [draftDomain, setDraftDomain] = useState("");
 
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Sending[] | null>(null);
@@ -84,14 +113,15 @@ export default function RosterPage() {
     if (canManageAll(r)) {
       const { data: c } = await supabase.rpc("roster_counts");
       if (c) setCounts(c as Counts);
-      const { data: cfg } = await supabase
-        .from("roster_config")
-        .select("student_domain, teacher_domain")
-        .eq("id", 1)
-        .single();
-      if (cfg) {
-        setStudentDomain((cfg as { student_domain: string }).student_domain ?? "");
-        setTeacherDomain((cfg as { teacher_domain: string }).teacher_domain ?? "");
+      const { data: d } = await supabase.rpc("get_domains");
+      if (d) {
+        const got = d as Record<string, string>;
+        const next: Domains = {
+          student: got.student ?? "",
+          teacher: got.teacher ?? "",
+          other: got.other ?? "",
+        };
+        setDomains(next);
       }
     }
     setLoading(false);
@@ -100,6 +130,19 @@ export default function RosterPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /*
+   * 身分を切り替える。
+   *
+   * 直す欄も、その身分のいまの値に入れ直す。学生の欄に打ちかけた
+   * ものが教授に切り替えた先にも残っていると、気づかずに別の身分へ
+   * 入れてしまう。押したときに揃えるので、描いている最中に
+   * 外のものを書き換えることにならない。
+   */
+  const pickKind = (k: DomainKind) => {
+    setDomainKind(k);
+    setDraftDomain(domains?.[k] ?? "");
+  };
 
   /* ---------------- ファイルを読む ---------------- */
 
@@ -207,22 +250,87 @@ export default function RosterPage() {
     }
   };
 
-  const saveDomain = async () => {
+  /**
+   * ドメインを一つ変える。
+   *
+   * ■ 二度たずねる
+   *   ここを間違えると、正しい人が申請できなくなったり、
+   *   名簿が一行も入らなくなったりする。すぐには気づけない種類の
+   *   間違いなので、何から何へ変わるのかを見せて、二度確かめる。
+   *
+   * ■ いま入っている人は切れない
+   *   この操作が触るのは roster_config だけ。席にも権限にも
+   *   触れないので、ログイン中の人はそのまま使い続けられる。
+   *   データベース側の守り（check_email_domain）も、席を作るときと
+   *   アドレスを変えるときにしか動かない。
+   */
+  const changeDomain = async () => {
+    const kind = DOMAIN_KINDS.find((k) => k.id === domainKind);
+    if (!kind) return;
+    /*
+     * domains が読めていなくても、ここで黙って返さない。
+     *
+     * 13_domains.sql を流す前は get_domains が無いので domains は空になる。
+     * そこで返してしまうと、ボタンは押せるのに何も起きない——という
+     * いちばん困る形になる（実際にそうなっていた）。
+     * 空のまま進めて、データベース側の断りを画面に出す。
+     */
+    const before = domains?.[domainKind] ?? "";
+    const after = draftDomain.trim().toLowerCase();
+    if (before.toLowerCase() === after) return;
+
+    const first = window.confirm(
+      [
+        `${kind.label}のドメインを変えます。`,
+        "",
+        `  いま  ${before || "（決めていません）"}`,
+        `  あと  ${after || "（決めていない状態に戻す）"}`,
+        "",
+        "これから席を作る人に効きます。",
+        "いまログインしている人は、そのまま使い続けられます。",
+        "",
+        "続けますか？",
+      ].join(BR),
+    );
+    if (!first) return;
+
+    const second = window.confirm(
+      [
+        `本当に「${after || "（決めていない）"}」にしますか？`,
+        "",
+        "これが最後の確認です。",
+        after
+          ? "このドメイン以外のアドレスでは、新しく申請できなくなります。"
+          : "決めていない状態に戻すと、この身分ではドメインを見なくなります。",
+      ].join(BR),
+    );
+    if (!second) return;
+
     setMsg(null);
     setBusy(true);
     try {
-      const { error } = await createClient()
-        .from("roster_config")
-        .update({
-          student_domain: studentDomain.trim().toLowerCase(),
-          teacher_domain: teacherDomain.trim().toLowerCase(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", 1);
+      const { data, error } = await createClient().rpc("set_domain", {
+        p_kind: domainKind,
+        p_domain: after,
+      });
       if (error) throw error;
-      setMsg({ kind: "ok", text: "ドメインを保存しました。" });
+      const rep = data as { before: string; after: string };
+      setDomains((d) => (d ? { ...d, [domainKind]: rep.after } : d));
+      setMsg({
+        kind: "ok",
+        text: `${kind.label}のドメインを「${rep.before || "（未設定）"}」から「${
+          rep.after || "（未設定）"
+        }」にしました。ログイン中の人はそのままです。`,
+      });
+      await load();
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/13_domains.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -272,35 +380,95 @@ export default function RosterPage() {
         </p>
       </div>
 
-      {/* ドメインの設定 */}
+      {/*
+        ドメイン名確認。
+
+        ふだんは畳んでおく。開くと、身分を選んで、その身分の
+        ドメインだけを見て・直せる。三つまとめて保存できる形にすると、
+        直したつもりのないものまで上書きしてしまう。
+
+        変えるときは二度たずねる。ここを間違えると、正しい人が
+        申請できなくなったり、名簿が一行も入らなくなったりする。
+      */}
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
-        <div className="text-xs font-bold text-slate-900">ドメイン</div>
-        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-          突き合わせに使います。<b>教授のドメインは空</b>にしてあるので、ここに入れてください。
-          空のあいだ、教授の行は取り込まれません（申請のほうも、追い返さずに人へ回します）。
-          その他の人はドメインを見ません。
-        </p>
-        <label className="mt-2 block text-[10px] font-bold text-slate-500">学生</label>
-        <input
-          value={studentDomain}
-          onChange={(e) => setStudentDomain(e.target.value)}
-          placeholder="（学生のドメイン）"
-          className="mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-        />
-        <label className="mt-2 block text-[10px] font-bold text-slate-500">教授・教員</label>
-        <input
-          value={teacherDomain}
-          onChange={(e) => setTeacherDomain(e.target.value)}
-          placeholder="（ここに入れてください）"
-          className="mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          onClick={() => void saveDomain()}
-          disabled={busy}
-          className="mt-2 rounded-lg bg-slate-900 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
-        >
-          ドメインを保存
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-slate-900">ドメイン名確認</div>
+          <button
+            onClick={() => {
+              const next = !domainOpen;
+              setDomainOpen(next);
+              if (next) setDraftDomain(domains?.[domainKind] ?? "");
+            }}
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+          >
+            {domainOpen ? "閉じる" : "ドメイン名確認"}
+          </button>
+        </div>
+
+        {domainOpen && (
+          <div className="mt-2">
+            <div className="grid grid-cols-3 gap-1.5">
+              {DOMAIN_KINDS.map((k) => (
+                <button
+                  key={k.id}
+                  onClick={() => pickKind(k.id)}
+                  className={`rounded-lg px-2 py-2 text-[11px] font-bold transition active:scale-95 ${
+                    domainKind === k.id
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {k.label}
+                </button>
+              ))}
+            </div>
+
+            {(() => {
+              const kind = DOMAIN_KINDS.find((k) => k.id === domainKind)!;
+              const saved = domains?.[domainKind] ?? "";
+              const changed = draftDomain.trim().toLowerCase() !== saved.toLowerCase();
+              return (
+                <>
+                  <p className="mt-2 rounded-lg bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600">
+                    <b>{kind.label}</b>：{kind.note}
+                  </p>
+
+                  <label className="mt-2 block text-[10px] font-bold text-slate-500">
+                    いま決まっているもの
+                  </label>
+                  <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
+                    {saved || "（決めていません）"}
+                  </p>
+
+                  <label className="mt-2 block text-[10px] font-bold text-slate-500">
+                    直す
+                  </label>
+                  <input
+                    value={draftDomain}
+                    onChange={(e) => setDraftDomain(e.target.value)}
+                    autoComplete="off"
+                    placeholder="example.ac.jp"
+                    className="mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                    空にすると「決めていない」に戻ります。
+                    <br />
+                    <b>いまログインしている人は、変えても入ったままです。</b>
+                    この設定は、これから席を作る人にだけ効きます。
+                  </p>
+
+                  <button
+                    onClick={() => void changeDomain()}
+                    disabled={busy || !changed}
+                    className="mt-2 w-full rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+                  >
+                    {busy ? "変えています…" : changed ? `${kind.label}のドメインを変える` : "変わっていません"}
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+        )}
       </section>
 
       {/* xlsx を選ぶ */}
