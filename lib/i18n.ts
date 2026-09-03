@@ -73,6 +73,77 @@ const EN: Record<string, string> = {
   "みんなの感想": "Feedback",
   "使っている人から届いた声": "What people told us",
 
+  /* 権限の呼び名（ROLE_LABEL / ROLE_SHORT）。
+     同じ言葉が両方に出るものは、一つで足りる */
+  "承認待ち": "Awaiting approval",
+  "学生・教職員": "Student / staff",
+  "食堂の担当": "Cafeteria staff",
+  "課外活動リーダー": "Club leader",
+  教授: "Professor",
+  "副管理者（承認なし）": "Sub-admin (no approvals)",
+  副管理者: "Sub-admin",
+  管理者: "Administrator",
+  // 「学生」は下（申請の欄）にすでにある
+  食堂: "Cafeteria",
+  課外活動: "Clubs",
+  "副（承認なし）": "Sub (no approvals)",
+  副: "Sub",
+  "{r}でログイン中": "Signed in as {r}",
+
+  /* 学内の情報（CampusPanel） */
+  "サーバーに接続できていません。しばらくしてから開き直してください。":
+    "Cannot reach the server. Please try opening this again in a moment.",
+  "学内の情報は、管理者の承認を受けた学生・教職員だけが見られます。":
+    "Campus information is only for students and staff approved by an administrator.",
+  "ログイン / 利用を申請": "Sign in / apply",
+  "← 戻る": "← Back",
+  "食堂のメニュー": "Cafeteria menu",
+  "その日の提供状況": "What is being served",
+  時間割: "Timetable",
+  "授業と課外活動": "Classes and clubs",
+  空き教室: "Free rooms",
+  "号館と時限から探す": "Search by building and period",
+  "前の月": "Previous month",
+  "次の月": "Next month",
+  "{n}月": "{n}",
+  "今日から始める": "Start from today",
+  // 「日にちを押すと…」は下（説明のところ）にすでにある
+  活動中: "Open",
+  活動休止: "Closed",
+  売り切れ: "Sold out",
+  未登録: "Not set",
+  // 「読み込み中…」は下（申請の欄）にすでにある
+  "食堂の情報がまだ登録されていません。": "No cafeteria information has been entered yet.",
+  "{n}円": "¥{n}",
+  "何限を見ますか": "Which period?",
+  "時限を選んでください。": "Choose a period.",
+  "{n}年": "Year {n}",
+  "全学年を見る": "Show all years",
+  "{n}年だけに戻す": "Back to year {n} only",
+  "他の学科": "Other departments",
+  "この時限に登録された授業はありません。": "No classes are registered for this period.",
+  "（科目名なし）": "(no title)",
+  変更あり: "Changed",
+  // 「クラス」は下（申請の欄）にすでにある
+  担当未定: "Teacher not set",
+  教室未定: "Room not set",
+  "学科を選んでください": "Choose a department",
+  "学科がまだ登録されていません。": "No departments have been entered yet.",
+  "← 団体を選び直す": "← Pick another club",
+  "← 系統を選び直す": "← Pick another category",
+  なし: "None",
+  "この日の活動予定はありません": "Nothing is scheduled for this day",
+  "複数の教室（{n}か所）で活動します": "Meets in {n} rooms",
+  "この系統の団体は登録されていません。": "No clubs are registered in this category.",
+  "何系の活動ですか": "What kind of activity?",
+  "課外活動がまだ登録されていません。": "No clubs have been entered yet.",
+  "何号館を調べますか": "Which building?",
+  号館: "Bldg.",
+  "空欄なら全体": "Leave empty for all",
+  時限: "Period",
+  "空いている教室はありません。": "No rooms are free.",
+  "{n} 室が空いています": "{n} rooms free",
+
   /* 申請のいちばん最初に訊く身分 */
   "あなたの身分": "Who are you?",
   "身分（学生・教授・その他）": "Student, teacher or other",
@@ -138,7 +209,7 @@ const EN: Record<string, string> = {
   "名前の付け替え": "Rename places",
   "自分に分かりやすい呼び方に変えられます。地図にはその名前だけが出ます。もとの名前はこの画面で確かめられます。":
     "Give places your own names. Only your name shows on the map; the original is kept here.",
-  "変えたもの": "Renamed",
+  // 英語では数のうしろに何も付けない（"3 件" → "3"）
   "件": "",
   "すべてもとの名前に戻す": "Reset all names",
   "名前で絞り込む": "Filter by name",

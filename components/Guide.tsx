@@ -12,7 +12,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Map as MlMap, NavigationControl, ScaleControl } from "maplibre-gl";
+import { Map as MlMap, NavigationControl, ScaleControl, setWorkerUrl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Position } from "geojson";
 import { BASES, GSI_ATTRIBUTION, INITIAL_VIEW } from "@/lib/gsi";
@@ -54,6 +54,50 @@ import {
  * ・地図も、この外へは動かせない
  */
 const RANGE_M = 1000;
+
+/*
+ * 地図の「別スレッド」の置き場所を、こちらから教える。
+ *
+ * ■ 教えないとどうなるか（実際に起きていたこと）
+ *
+ *   MapLibre は、別スレッドで動くファイルの場所を自分で決めている。
+ *
+ *     let e = import.meta.url;
+ *     if (!/^https?:/.test(e)) return "";        ← ここで空になる
+ *
+ *   Next.js（Turbopack）がひとまとめにすると、import.meta.url は
+ *   http で始まる住所ではなくなる。すると空の文字列が返り、
+ *
+ *     new Worker("", { type: "module" })
+ *
+ *   になる。空の住所はページ自身を指すので、ブラウザは HTML を
+ *   JavaScript として読もうとして失敗する。
+ *
+ *     Failed to load module script:
+ *     The server responded with a non-JavaScript MIME type of "text/html".
+ *
+ *   別スレッドが立ち上がらないので、地図は読み込みの途中で止まる。
+ *   load も来ないから ready が立たず、タイルも建物の名前も出ない。
+ *   残るのはボタンだけの「白い地図」。
+ *
+ *   ★本番のサイトを 6 回続けて開いて、6 回ともこうなっていた。
+ *     「たまに白い画面になる」と言われていたものの正体がこれ。
+ *
+ * ■ 直し方
+ *
+ *   場所を当てにさせず、こちらから渡す。
+ *   ファイルは組み立てのたびに node_modules から public/maplibre/ へ
+ *   写している（scripts/copy-maplibre-worker.mjs）。
+ *   写しているので、MapLibre を上げても古いものが残らない。
+ *
+ * ■ ここで呼ぶ理由
+ *
+ *   地図を作る前に一度だけ効いていればよい。読み込まれた時点で
+ *   済ませておけば、あとから作られる地図にも必ず効く。
+ */
+if (typeof window !== "undefined") {
+  setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+}
 
 /** 精度の扱い。推測で決めず3段階に分ける */
 const ACC_TRUST = 20;
@@ -302,6 +346,8 @@ export default function Guide() {
     let map: MlMap;
     /** 細かさの上げ下げを片づけるための口 */
     let pixelOff: (() => void) | null = null;
+    /** タイルが来なくても名前を出すための、待ちの上限 */
+    let readyTimer = 0;
     try {
       map = new MlMap({
         container: boxRef.current,
@@ -364,7 +410,40 @@ export default function Guide() {
 
     /* 描き直しの合図は MapOverlay が自分で受け取る。
        ここで受けると、地図を動かすたびに画面ぜんぶを組み直すことになる */
-    map.on("load", () => setReady(true));
+
+    /*
+     * 建物の名前などを出してよい合図。
+     *
+     * ■ load だけを待ってはいけない
+     *
+     *   MapLibre の load は、こういう条件で出る。
+     *
+     *     loaded() = !_styleDirty && !_sourcesDirty && style.loaded()
+     *
+     *   _sourcesDirty は、タイルが届くまで下りない。
+     *   つまり load は「タイルが1枚も来ていないうちは出ない」。
+     *
+     *   建物の名前・経路・現在地は、こちらが map.project() で
+     *   自前に描いている。タイルとは何の関わりもないのに、
+     *   load を待っていたせいで、電波が細いところでは
+     *   「白いだけで何も出ない画面」になっていた。
+     *   構内の端や地下では、これがそのまま起きる。
+     *
+     * ■ 何を待てばよいか
+     *
+     *   縮尺と中心は、地図を作った時点で決まっている（transform）。
+     *   だから project() は最初から使える。
+     *   様子を見るのは styledata まででよく、それすら来なくても
+     *   1.5秒たったら出す。出して困るものが無いため。
+     *
+     *   setReady(true) は何度呼んでも同じなので、来た順に任せる。
+     */
+    const nowReady = () => setReady(true);
+    map.on("load", nowReady);
+    map.on("styledata", nowReady);
+    if (map.isStyleLoaded()) nowReady();
+    // タイルもスタイルも来なくても、名前だけは出す
+    readyTimer = window.setTimeout(nowReady, 1500);
 
     /*
      * ラベルを押した判定。
@@ -545,19 +624,57 @@ export default function Guide() {
        * 押すだけ、動かすだけなら作り直しは 0 回。
        * いちばんよく使う二つの操作が、どちらも作り直しなしになる。
        */
-      if (still > 1) {
+      {
         const cv = map.getCanvas();
 
         /** 最後に動かしてから、細かさを戻すまでの間 */
         const BACK_MS = 350;
 
+        /*
+         * 落とすまで、少し待つ。
+         *
+         * ■ 「縮めはじめの反応が悪い」の正体
+         *
+         *   二本目の指が触れた瞬間に setPixelRatio(1) を呼んでいた。
+         *   この中では resize() が走り、canvas と WebGL の描き先を
+         *   まるごと取り直す。いちばん重い処理が、
+         *   いちばん反応してほしい瞬間に入っていたことになる。
+         *
+         *   指を置いてから最初の数コマは「動いたかどうか」を決める。
+         *   そこを作り直しに食われると、押しても効かない感じになる。
+         *
+         * ■ 待つ長さ
+         *
+         *   130ms 待つ。ちょっと縮めて離すだけの短い操作なら、
+         *   作り直しは一度も起きない。長く動かし続けるときだけ、
+         *   途中から細かさを落として軽くする。
+         *   落とす値打ちがあるのは、もともと長い操作のほうなので、
+         *   得るものはほとんど変わらない。
+         */
+        const WAIT_MS = 130;
+
         let low = false;
         let back = 0;
+        let soon = 0;
 
-        const drop = () => {
-          if (low) return;
+        /*
+         * 画面の細かさが 1 倍の端末では、落とす先が無い。
+         * それでも setPixelRatio を呼ぶと resize() だけが走って、
+         * 何も得ずに作り直すことになる。呼ばない。
+         * 指が触れたら動きを止める、のほうは端末を選ばず要る。
+         */
+        const canDrop = still > 1;
+
+        const dropNow = () => {
+          soon = 0;
+          if (low || !canDrop) return;
           low = true;
           map.setPixelRatio(1);
+        };
+        /** すぐには落とさず、動かし続けていたら落とす */
+        const dropSoon = () => {
+          if (low || soon || !canDrop) return;
+          soon = window.setTimeout(dropNow, WAIT_MS);
         };
         const later = () => {
           if (back) window.clearTimeout(back);
@@ -569,24 +686,42 @@ export default function Guide() {
           }, BACK_MS);
         };
 
-        /** 二本目の指が触れたら拡大縮小。そこではじめて落とす */
+        /**
+         * 二本目の指が触れた＝拡大縮小のはじまり。
+         *
+         * ★ここで、走っている動きを止める。
+         *
+         *   ラベルを押すと fitBounds で 700ms かけて寄る。
+         *   その途中や直後に指を置くと、地図は自分の動きを続けようとし、
+         *   指の動きと引っ張り合う。押しても戻らない、戻ってもまた寄る、
+         *   という「反応がとても悪い」感じになる。
+         *   指が触れたら、そちらを優先する。
+         */
         const onTouchStart = (e: TouchEvent) => {
           if (e.touches.length < 2) return;
-          drop();
+          map.stop();
+          dropSoon();
           later();
         };
         const onTouchMove = (e: TouchEvent) => {
           if (e.touches.length < 2) return;
-          drop();
+          dropSoon();
           // 動かし続けているあいだは、戻す時刻を後ろにずらし続ける
           later();
         };
         /* 指を離したら、そこから数えて戻す */
         const onTouchEnd = () => {
+          // まだ落としていないなら、落とす予定も取り消す。
+          // 離したあとに作り直しが走ると、指を離した先で画面が固まる
+          if (soon) {
+            window.clearTimeout(soon);
+            soon = 0;
+          }
           if (low) later();
         };
+        /* ホイールは一段ずつ来るので、待たずに落としてよい */
         const onWheel = () => {
-          drop();
+          dropNow();
           later();
         };
 
@@ -599,6 +734,7 @@ export default function Guide() {
 
         pixelOff = () => {
           if (back) window.clearTimeout(back);
+          if (soon) window.clearTimeout(soon);
           cv.removeEventListener("touchstart", onTouchStart);
           cv.removeEventListener("touchmove", onTouchMove);
           cv.removeEventListener("wheel", onWheel);
@@ -657,6 +793,7 @@ export default function Guide() {
       cv.removeEventListener("webglcontextlost", onLost);
       cv.removeEventListener("webglcontextrestored", onRestored);
       timers.forEach(clearTimeout);
+      if (readyTimer) window.clearTimeout(readyTimer);
       pixelOff?.();
       map.remove();
       mapRef.current = null;
@@ -1934,12 +2071,13 @@ export default function Guide() {
                   {email}
                 </span>
                 <span className="block truncate text-[9px] leading-tight text-slate-500">
-                  {SHORT_ROLE[role ?? "pending"]}でログイン中
+                  {/* 言葉によって並びが変わるので、まるごと差し替える */}
+                  {T("{r}でログイン中").replace("{r}", T(SHORT_ROLE[role ?? "pending"]))}
                 </span>
               </span>
             </>
           );
-          const title = `${email}（${ROLE_LABEL[role ?? "pending"]}）`;
+          const title = `${email}（${T(ROLE_LABEL[role ?? "pending"])}）`;
 
           return canGo ? (
             <a href="/login" className={`${look} transition active:scale-95`} title={title}>
@@ -1972,7 +2110,7 @@ export default function Guide() {
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            <CampusPanel role={role} onNeedLogin={() => setLogin(true)} />
+            <CampusPanel role={role} onNeedLogin={() => setLogin(true)} lang={lang} />
           </div>
 
           {/*

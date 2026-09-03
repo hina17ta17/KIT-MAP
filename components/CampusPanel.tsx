@@ -8,15 +8,80 @@
  *
  * 中身はすべてデータベースから読む。承認されていない人には
  * RLS が空を返すので、ここでは権限の分岐を最小限にしている。
+ *
+ * ■ 言葉の切り替え
+ *   この中は部品が六つに分かれている（暦・食堂・時間割・学科別・
+ *   課外活動・空き教室）。言葉を props で回すと、six 段ぶん
+ *   同じものを渡し続けることになる。小さな入れ物（LangCtx）に
+ *   置いて、要る所で取り出す形にしてある。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
+import { t, type Lang } from "@/lib/i18n";
 
 type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free";
 
-const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
+/** いまの言葉。上から配って、部品の中で取り出す */
+const LangCtx = createContext<Lang>("ja");
+
+/** その部品で使う翻訳。対応表に無ければ日本語のまま返る */
+function useT(): (ja: string) => string {
+  const lang = useContext(LangCtx);
+  return useCallback((ja: string) => t(lang, ja), [lang]);
+}
+
+const WEEK_JA = ["日", "月", "火", "水", "木", "金", "土"];
+const WEEK_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** 曜日。英語では三文字にする（一文字だと読めないため） */
+function useWeek(): string[] {
+  return useContext(LangCtx) === "en" ? WEEK_EN : WEEK_JA;
+}
+
+/**
+ * 日付の書き方。言葉で並びが変わる。
+ *   日本語  2026年9月3日（木）
+ *   英語    Thu, Sep 3, 2026
+ */
+function useDateText(): (d: Date) => string {
+  const lang = useContext(LangCtx);
+  return useCallback(
+    (d: Date) =>
+      lang === "en"
+        ? `${WEEK_EN[d.getDay()]}, ${
+            ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+              d.getMonth()
+            ]
+          } ${d.getDate()}, ${d.getFullYear()}`
+        : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${WEEK_JA[d.getDay()]}）`,
+    [lang],
+  );
+}
+
+/** 「2026年 9月」／「September 2026」 */
+function useMonthText(): (d: Date) => string {
+  const lang = useContext(LangCtx);
+  return useCallback(
+    (d: Date) =>
+      lang === "en"
+        ? `${
+            ["January","February","March","April","May","June",
+             "July","August","September","October","November","December"][d.getMonth()]
+          } ${d.getFullYear()}`
+        : `${d.getFullYear()}年 ${d.getMonth() + 1}月`,
+    [lang],
+  );
+}
 
 /** その日を "2026-08-05" の形にする。時差でずれないよう自前で組む */
 function ymd(d: Date): string {
@@ -41,10 +106,29 @@ type Period = { id: number; label: string; starts_at: string; ends_at: string };
 export default function CampusPanel({
   role,
   onNeedLogin,
+  lang = "ja",
+}: {
+  role: Role | null;
+  onNeedLogin: () => void;
+  /** 地図と同じ言葉を受け取る。中の部品へは LangCtx で配る */
+  lang?: Lang;
+}) {
+  return (
+    <LangCtx.Provider value={lang}>
+      <Panel role={role} onNeedLogin={onNeedLogin} />
+    </LangCtx.Provider>
+  );
+}
+
+function Panel({
+  role,
+  onNeedLogin,
 }: {
   role: Role | null;
   onNeedLogin: () => void;
 }) {
+  const T = useT();
+  const dateText = useDateText();
   const [step, setStep] = useState<Step>("calendar");
   const [date, setDate] = useState(() => new Date());
   const [periods, setPeriods] = useState<Period[]>([]);
@@ -61,24 +145,18 @@ export default function CampusPanel({
   }, [allowed]);
 
   if (!supabaseReady) {
-    return (
-      <Note>
-        サーバーに接続できていません。しばらくしてから開き直してください。
-      </Note>
-    );
+    return <Note>{T("サーバーに接続できていません。しばらくしてから開き直してください。")}</Note>;
   }
 
   if (!allowed) {
     return (
       <div className="p-1">
-        <Note>
-          学内の情報は、管理者の承認を受けた学生・教職員だけが見られます。
-        </Note>
+        <Note>{T("学内の情報は、管理者の承認を受けた学生・教職員だけが見られます。")}</Note>
         <button
           onClick={onNeedLogin}
           className="mt-2 w-full rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800"
         >
-          ログイン / 利用を申請
+          {T("ログイン / 利用を申請")}
         </button>
       </div>
     );
@@ -92,14 +170,13 @@ export default function CampusPanel({
             onClick={() => setStep(step === "home" ? "calendar" : "home")}
             className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200"
           >
-            ← 戻る
+            {T("← 戻る")}
           </button>
           <button
             onClick={() => setStep("calendar")}
             className="truncate text-xs font-bold text-slate-800 underline decoration-slate-300 underline-offset-2"
           >
-            {date.getFullYear()}年{date.getMonth() + 1}月{date.getDate()}日（
-            {WEEK[date.getDay()]}）
+            {dateText(date)}
           </button>
         </div>
       )}
@@ -117,9 +194,12 @@ export default function CampusPanel({
 
         {step === "home" && (
           <div className="flex flex-col gap-2">
-            <Big onClick={() => setStep("cafeteria")} icon="🍚" label="食堂のメニュー" sub="その日の提供状況" />
-            <Big onClick={() => setStep("timetable")} icon="📘" label="時間割" sub="授業と課外活動" />
-            <Big onClick={() => setStep("free")} icon="🚪" label="空き教室" sub="号館と時限から探す" />
+            <Big onClick={() => setStep("cafeteria")} icon="🍚"
+              label={T("食堂のメニュー")} sub={T("その日の提供状況")} />
+            <Big onClick={() => setStep("timetable")} icon="📘"
+              label={T("時間割")} sub={T("授業と課外活動")} />
+            <Big onClick={() => setStep("free")} icon="🚪"
+              label={T("空き教室")} sub={T("号館と時限から探す")} />
           </div>
         )}
 
@@ -134,6 +214,9 @@ export default function CampusPanel({
 /* ================= カレンダー ================= */
 
 function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
+  const T = useT();
+  const week = useWeek();
+  const monthText = useMonthText();
   const today = useMemo(() => new Date(), []);
   const [shown, setShown] = useState(() => new Date(date.getFullYear(), date.getMonth(), 1));
   /** 月の一覧を開いているか。年と月をまとめて選べる */
@@ -158,7 +241,7 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
       <div className="mb-2 flex items-center gap-1">
         <button
           onClick={() => move(-1)}
-          aria-label="前の月"
+          aria-label={T("前の月")}
           className="h-8 w-8 shrink-0 rounded-lg bg-slate-100 text-sm font-bold text-slate-600 transition hover:bg-slate-200"
         >
           ‹
@@ -171,11 +254,11 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
             pick ? "bg-slate-900 text-white" : "text-slate-800 hover:bg-slate-100"
           }`}
         >
-          {shown.getFullYear()}年 {shown.getMonth() + 1}月 ▾
+          {monthText(shown)} ▾
         </button>
         <button
           onClick={() => move(1)}
-          aria-label="次の月"
+          aria-label={T("次の月")}
           className="h-8 w-8 shrink-0 rounded-lg bg-slate-100 text-sm font-bold text-slate-600 transition hover:bg-slate-200"
         >
           ›
@@ -191,7 +274,7 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
             >
               ‹
             </button>
-            <span className="text-sm font-bold text-slate-800">{shown.getFullYear()}年</span>
+            <span className="text-sm font-bold text-slate-800">{shown.getFullYear()}</span>
             <button
               onClick={() => setShown((s) => new Date(s.getFullYear() + 1, s.getMonth(), 1))}
               className="h-7 w-7 rounded-lg bg-white text-xs font-bold text-slate-600 shadow-sm"
@@ -213,7 +296,7 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
                     : "bg-white text-slate-600 shadow-sm hover:bg-slate-100"
                 }`}
               >
-                {i + 1}月
+                {T("{n}月").replace("{n}", String(i + 1))}
               </button>
             ))}
           </div>
@@ -221,7 +304,7 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
       ) : (
         <>
           <div className="grid grid-cols-7 gap-0.5 text-center">
-            {WEEK.map((w, i) => (
+            {week.map((w, i) => (
               <div
                 key={w}
                 className={`py-1 text-[10px] font-bold ${
@@ -268,10 +351,10 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
             }}
             className="mt-2 w-full rounded-xl bg-amber-500 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-amber-600 active:scale-95"
           >
-            今日（{today.getMonth() + 1}/{today.getDate()}）から始める
+            {T("今日から始める")}（{today.getMonth() + 1}/{today.getDate()}）
           </button>
           <p className="mt-1.5 text-center text-[10px] text-slate-400">
-            日にちを押すと、その日の情報が開きます
+            {T("日にちを押すと、その日の情報が開きます")}
           </p>
         </>
       )}
@@ -287,9 +370,12 @@ const STATE_LABEL: Record<string, { text: string; cls: string }> = {
   open: { text: "活動中", cls: "bg-emerald-100 text-emerald-800" },
   closed: { text: "活動休止", cls: "bg-slate-200 text-slate-600" },
   soldout: { text: "売り切れ", cls: "bg-red-100 text-red-700" },
+  // text は日本語のまま持ち、出すときに翻訳する（対応表の見出しにするため）
 };
 
 function Cafeteria({ date }: { date: Date }) {
+  const T = useT();
+
   const [items, setItems] = useState<ItemRow[]>([]);
   const [states, setStates] = useState<Map<number, { state: string; note: string }>>(new Map());
   const [menus, setMenus] = useState<Map<number, { name: string; price: number | null }>>(new Map());
@@ -312,10 +398,10 @@ function Cafeteria({ date }: { date: Date }) {
     })();
   }, [date]);
 
-  if (loading) return <Note>読み込み中…</Note>;
+  if (loading) return <Note>{T("読み込み中…")}</Note>;
 
   const counters = items.filter((i) => i.kind === "counter");
-  if (counters.length === 0) return <Note>食堂の情報がまだ登録されていません。</Note>;
+  if (counters.length === 0) return <Note>{T("食堂の情報がまだ登録されていません。")}</Note>;
 
   return (
     <ul className="flex flex-col gap-2">
@@ -332,7 +418,7 @@ function Cafeteria({ date }: { date: Date }) {
                   badge ? badge.cls : "bg-slate-100 text-slate-400"
                 }`}
               >
-                {badge ? badge.text : "未登録"}
+                {T(badge ? badge.text : "未登録")}
               </span>
             </div>
             {st?.note && <p className="mt-1 text-[10px] text-slate-500">{st.note}</p>}
@@ -346,7 +432,11 @@ function Cafeteria({ date }: { date: Date }) {
                       <span className="shrink-0 text-slate-500">− {s.name}</span>
                       <span className="min-w-0 truncate text-right font-bold text-slate-800">
                         {m ? m.name : "—"}
-                        {m?.price ? <span className="ml-1 font-normal text-slate-500">{m.price}円</span> : null}
+                        {m?.price ? (
+                          <span className="ml-1 font-normal text-slate-500">
+                            {T("{n}円").replace("{n}", String(m.price))}
+                          </span>
+                        ) : null}
                       </span>
                     </li>
                   );
@@ -387,12 +477,14 @@ type ActRow = {
 };
 
 function Timetable({ date, periods }: { date: Date; periods: Period[] }) {
+  const T = useT();
+
   // null = 未選択、数字 = その限、"act" = 課外活動
   const [sel, setSel] = useState<number | "act" | null>(null);
 
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-bold text-slate-500">何限を見ますか</p>
+      <p className="mb-1.5 text-[11px] font-bold text-slate-500">{T("何限を見ますか")}</p>
       <div className="grid grid-cols-3 gap-1.5">
         {periods.map((p) => (
           <button
@@ -419,11 +511,11 @@ function Timetable({ date, periods }: { date: Date; periods: Period[] }) {
             : "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
         }`}
       >
-        課外活動
+        {T("課外活動")}
       </button>
 
       <div className="mt-3">
-        {sel === null && <Note>時限を選んでください。</Note>}
+        {sel === null && <Note>{T("時限を選んでください。")}</Note>}
         {typeof sel === "number" && <ByDepartment date={date} periodId={sel} />}
         {sel === "act" && <ByActivity date={date} />}
       </div>
@@ -443,6 +535,8 @@ function Timetable({ date, periods }: { date: Date; periods: Period[] }) {
  * 学科を持たない人（食堂の担当や教職員）は、これまでどおり選ぶところから。
  */
 function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
+  const T = useT();
+
   const [facs, setFacs] = useState<Faculty[]>([]);
   const [depts, setDepts] = useState<Dept[]>([]);
   const [dept, setDept] = useState<Dept | null>(null);
@@ -548,7 +642,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
           <span className="text-xs font-bold text-slate-900">{dept.name}</span>
           {byGrade && grade > 0 && (
             <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">
-              {grade}年
+              {T("{n}年").replace("{n}", String(grade))}
             </span>
           )}
           <span className="ml-auto flex gap-1">
@@ -557,41 +651,45 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
                 onClick={() => setByGrade((v) => !v)}
                 className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
               >
-                {byGrade ? "全学年を見る" : `${grade}年だけに戻す`}
+                {byGrade ? T("全学年を見る") : T("{n}年だけに戻す").replace("{n}", String(grade))}
               </button>
             )}
             <button
               onClick={() => setDept(null)}
               className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
             >
-              他の学科
+              {T("他の学科")}
             </button>
           </span>
         </div>
         {rows === null ? (
-          <Note>読み込み中…</Note>
+          <Note>{T("読み込み中…")}</Note>
         ) : rows.length === 0 ? (
-          <Note>この時限に登録された授業はありません。</Note>
+          <Note>{T("この時限に登録された授業はありません。")}</Note>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {rows.map((r) => (
               <li key={r.id} className="rounded-xl bg-slate-50 p-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-sm font-bold text-slate-900">
-                    {r.courses?.name ?? "（科目名なし）"}
+                    {r.courses?.name ?? T("（科目名なし）")}
                   </span>
                   {r.changed && (
                     <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-                      変更あり
+                      {T("変更あり")}
                     </span>
                   )}
                 </div>
                 <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-slate-600">
-                  {r.courses?.class_name && <span>クラス {r.courses.class_name}</span>}
-                  <span>{r.courses?.teacher || r.teacher || "担当未定"}</span>
+                  {r.courses?.class_name && (
+                    <span>
+                      {T("クラス")} {r.courses.class_name}
+                    </span>
+                  )}
+                  <span>{r.courses?.teacher || r.teacher || T("担当未定")}</span>
                 </div>
                 <div className="mt-1 text-[11px] font-bold text-slate-700">
-                  {r.rooms ? `${r.rooms.code}` : "教室未定"}
+                  {r.rooms ? r.rooms.code : T("教室未定")}
                   <span className="ml-2 font-normal text-slate-500">
                     {hhmm(r.starts_at)}〜{hhmm(r.ends_at)}
                   </span>
@@ -609,7 +707,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
 
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-bold text-slate-500">学科を選んでください</p>
+      <p className="mb-1.5 text-[11px] font-bold text-slate-500">{T("学科を選んでください")}</p>
       <div className="flex flex-col gap-2">
         {facs.map((f) => {
           const list = depts.filter((d) => d.faculty_id === f.id);
@@ -631,7 +729,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
             </div>
           );
         })}
-        {facs.length === 0 && <Note>学科がまだ登録されていません。</Note>}
+        {facs.length === 0 && <Note>{T("学科がまだ登録されていません。")}</Note>}
       </div>
     </div>
   );
@@ -639,6 +737,8 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
 
 /** 系統を選び、団体を選び、その日の予定を出す */
 function ByActivity({ date }: { date: Date }) {
+  const T = useT();
+
   const [cats, setCats] = useState<Cat[]>([]);
   const [acts, setActs] = useState<Act[]>([]);
   const [cat, setCat] = useState<Cat | null>(null);
@@ -681,21 +781,21 @@ function ByActivity({ date }: { date: Date }) {
           onClick={() => setAct(null)}
           className="mb-2 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600"
         >
-          ← 団体を選び直す
+          {T("← 団体を選び直す")}
         </button>
         <p className="mb-1.5 text-xs font-bold text-slate-900">{act.name}</p>
         {rows === null ? (
-          <Note>読み込み中…</Note>
+          <Note>{T("読み込み中…")}</Note>
         ) : rows.length === 0 ? (
           <div className="rounded-xl bg-slate-50 p-4 text-center">
-            <p className="text-sm font-bold text-slate-700">なし</p>
-            <p className="mt-0.5 text-[10px] text-slate-500">この日の活動予定はありません</p>
+            <p className="text-sm font-bold text-slate-700">{T("なし")}</p>
+            <p className="mt-0.5 text-[10px] text-slate-500">{T("この日の活動予定はありません")}</p>
           </div>
         ) : (
           <>
             {rows.length > 1 && (
               <p className="mb-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-[10px] font-bold text-violet-700">
-                複数教室（{rows.length}か所）で活動します
+                {T("複数の教室（{n}か所）で活動します").replace("{n}", String(rows.length))}
               </p>
             )}
             <ul className="flex flex-col gap-1.5">
@@ -728,7 +828,7 @@ function ByActivity({ date }: { date: Date }) {
           onClick={() => setCat(null)}
           className="mb-2 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600"
         >
-          ← 系統を選び直す
+          {T("← 系統を選び直す")}
         </button>
         <p className="mb-1.5 text-[11px] font-bold text-slate-500">{cat.name}</p>
         <div className="flex flex-col gap-1">
@@ -741,7 +841,7 @@ function ByActivity({ date }: { date: Date }) {
               {a.name}
             </button>
           ))}
-          {list.length === 0 && <Note>この系統の団体は登録されていません。</Note>}
+          {list.length === 0 && <Note>{T("この系統の団体は登録されていません。")}</Note>}
         </div>
       </div>
     );
@@ -749,7 +849,7 @@ function ByActivity({ date }: { date: Date }) {
 
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-bold text-slate-500">何系の活動ですか</p>
+      <p className="mb-1.5 text-[11px] font-bold text-slate-500">{T("何系の活動ですか")}</p>
       <div className="flex flex-col gap-1">
         {cats.map((c) => (
           <button
@@ -760,7 +860,7 @@ function ByActivity({ date }: { date: Date }) {
             {c.name}
           </button>
         ))}
-        {cats.length === 0 && <Note>課外活動がまだ登録されていません。</Note>}
+        {cats.length === 0 && <Note>{T("課外活動がまだ登録されていません。")}</Note>}
       </div>
     </div>
   );
@@ -779,6 +879,8 @@ type FreeRow = {
 };
 
 function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
+  const T = useT();
+
   const [building, setBuilding] = useState("");
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [all, setAll] = useState<FreeRow[] | null>(null);
@@ -806,7 +908,7 @@ function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
 
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-bold text-slate-500">何号館を調べますか</p>
+      <p className="mb-1.5 text-[11px] font-bold text-slate-500">{T("何号館を調べますか")}</p>
       <div className="flex items-center gap-1.5">
         <input
           value={building}
@@ -815,11 +917,11 @@ function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
           placeholder="23"
           className="w-20 rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
         />
-        <span className="text-xs font-bold text-slate-500">号館</span>
-        <span className="ml-auto text-[10px] text-slate-400">空欄なら全体</span>
+        <span className="text-xs font-bold text-slate-500">{T("号館")}</span>
+        <span className="ml-auto text-[10px] text-slate-400">{T("空欄なら全体")}</span>
       </div>
 
-      <p className="mb-1.5 mt-3 text-[11px] font-bold text-slate-500">時限</p>
+      <p className="mb-1.5 mt-3 text-[11px] font-bold text-slate-500">{T("時限")}</p>
       <div className="grid grid-cols-3 gap-1.5">
         {periods.map((p) => (
           <button
@@ -839,15 +941,15 @@ function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
 
       <div className="mt-3">
         {periodId === null ? (
-          <Note>時限を選んでください。</Note>
+          <Note>{T("時限を選んでください。")}</Note>
         ) : loading || hits === null ? (
-          <Note>読み込み中…</Note>
+          <Note>{T("読み込み中…")}</Note>
         ) : hits.length === 0 ? (
-          <Note>空いている教室はありません。</Note>
+          <Note>{T("空いている教室はありません。")}</Note>
         ) : (
           <>
             <p className="mb-1.5 text-[11px] font-bold text-slate-500">
-              {hits.length} 室が空いています
+              {T("{n} 室が空いています").replace("{n}", String(hits.length))}
             </p>
             <ul className="flex flex-col gap-1">
               {hits.map((r) => (

@@ -16,7 +16,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
-import { type Role, canManageAll } from "@/lib/auth";
+import { canManageAll, effectiveKind, pickableKinds, type Role } from "@/lib/auth";
+import MultiDatePicker, { niceDate, todayYmd } from "@/components/MultiDatePicker";
 
 type Kind = "class" | "event" | "activity";
 
@@ -80,10 +81,8 @@ function isMissingTable(e: { code?: string; message?: string } | null): boolean 
   return e.code === "42P01" || /does not exist|schema cache/i.test(e.message ?? "");
 }
 
-function today(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** 日にちの作り方は MultiDatePicker と同じものを使う。二か所で書くとずれる */
+const today = todayYmd;
 
 function hhmm(t: string): string {
   const [h, m] = t.split(":");
@@ -97,8 +96,27 @@ export default function SchedulePage() {
   /** SQL をまだ流していないか。表が無いことで見分ける */
   const [setupNeeded, setSetupNeeded] = useState(false);
 
-  const [kind, setKind] = useState<Kind>("class");
-  const [date, setDate] = useState(today());
+  /**
+   * 押して選んだ種類。
+   *
+   * ★これをそのまま使わない。下の kind のほうを使う。
+   *   まだ権限が分かっていない一瞬のあいだ、ここは "class" のままだから。
+   */
+  const [kindPick, setKindPick] = useState<Kind>("class");
+  /**
+   * 入れる日。いくつでも選べる。
+   *
+   * 授業は同じ組み合わせを毎週くり返すので、一日ずつ入れると
+   * 15回ぶん同じ操作になる。まとめて選んで、一度に入れられるようにする。
+   */
+  const [dates, setDates] = useState<string[]>([today()]);
+  /**
+   * 下の「入っている予定」で見ている日。
+   *
+   * 選んだ日が何日もあるので、そのうち一日を見る。
+   * 既定は先頭（いちばん早い日）。
+   */
+  const [viewDate, setViewDate] = useState(today());
 
   const [periods, setPeriods] = useState<Period[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -127,14 +145,38 @@ export default function SchedulePage() {
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err" | "warn"; text: string } | null>(null);
-  /** 消してよいか尋ねている最中の教室と、その相手 */
-  const [pending, setPending] = useState<{ room: Room; conflicts: Conflict[] }[] | null>(null);
+  /** 消してよいか尋ねている最中の、日と教室と、その相手 */
+  const [pending, setPending] = useState<
+    { date: string; room: Room; conflicts: Conflict[] }[] | null
+  >(null);
   /** その日にすでに入っている予定 */
   const [booked, setBooked] = useState<Booked[]>([]);
   /** 消す前に一度確かめる。押し間違いで消えないように */
   const [confirmDelete, setConfirmDelete] = useState<Booked | null>(null);
   /** 登録したあとに一覧を読み直すための合図 */
   const [bookedTick, setBookedTick] = useState(0);
+
+  /* ---------------- 何を登録できるか ---------------- */
+
+  /*
+   * 判定は lib/auth.ts にまとめてある。ほかの権限の決まりと同じ場所に
+   * 置いておくと、あとから見るときに一か所で足りる。
+   */
+  // 課外活動とイベントは Lv1 以上
+  const canEvent = role === "admin_l1" || role === "admin_l2" || canManageAll(role);
+  /** 他人が立てた予定も消せるか。副管理者（2.1・2.2）といちばん上だけ */
+  const canDeleteAny = canManageAll(role);
+
+  /** 押せる種類。押せないものは並べない */
+  const kinds = pickableKinds(role);
+  /**
+   * いま実際に選ばれている種類。
+   *
+   * 権限が分かる前は押した値が "class" のままなので、そのまま描くと
+   * 授業を入れられない人の画面が「授業が選ばれているのに、
+   * 授業のボタンは無い」形で始まる。描くときに読み替える。
+   */
+  const kind: Kind = effectiveKind(role, kindPick);
 
   /* ---------------- 読み込み ---------------- */
 
@@ -151,14 +193,36 @@ export default function SchedulePage() {
         return;
       }
       setEmail(u.user.email ?? "");
-      setTeacher(u.user.email ?? "");
 
       const { data: me } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, full_name")
         .eq("id", u.user.id)
         .single();
-      setRole((me?.role as Role) ?? null);
+      const myRole = (me?.role as Role) ?? null;
+      setRole(myRole);
+
+      /*
+       * 登録者の欄には、氏名を入れる。
+       *
+       * これまではメールアドレスを入れていた。予定の一覧に並ぶのは
+       * この文字なので、時間割に学籍番号入りのアドレスが出ていた。
+       * 見る人にとっては誰か分からないうえ、アドレスをそのまま
+       * 出すことになる。申請のときに入れてもらった氏名を使う。
+       *
+       * 氏名が空のときだけ、これまでどおりアドレスにする。
+       * 空欄で登録されると、誰が入れたのか追えなくなるため。
+       */
+      const name = ((me?.full_name as string | null) ?? "").trim();
+      setTeacher(name || (u.user.email ?? ""));
+
+      /*
+       * ここで種類を書き戻さない。
+       *
+       * 授業を入れられない人にイベントを見せるのは、上の kind が
+       * 描くときに読み替えている。ここで setKind すると、
+       * 権限が分かる前と後で二度描き直すことになる。
+       */
 
       const [p, r, f, d, c, a] = await Promise.all([
         supabase.from("periods").select("id, label, starts_at, ends_at").order("id"),
@@ -242,6 +306,13 @@ export default function SchedulePage() {
    * 押してから「入れられません」と言われるのでは分かりにくいので、
    * 選ぶ時点で塞ぐ。最後に守っているのはデータベースの決まりで、
    * 同じ教室の同じ時間には一つしか入らない。
+   *
+   * ★見ているのは「見ている日」の一日ぶんだけ。
+   *   何日も選んでいるとき、他の日で埋まっている教室までは分からない。
+   *   全部の日を先に読むと、15週ぶんで往復が増えるうえ、
+   *   一つでも埋まっていると押せなくなって、入れられる日まで入らなくなる。
+   *   埋まっている日は、登録したあとに「入れられませんでした」として
+   *   日付つきで返る。守っているのは向こう側なので、取りこぼしはない。
    */
   const takenRooms = useMemo(() => {
     const m = new Map<number, Booked>();
@@ -260,23 +331,44 @@ export default function SchedulePage() {
     setRoomIds((prev) => prev.filter((id) => !takenRooms.has(id)));
   }, [takenRooms]);
 
+  /**
+   * 実際に見ている日。
+   *
+   * 選んだ日から外れていたら、いちばん早い日に戻す。
+   * これを useEffect で書き戻すと、外れた日のまま一度描いてから
+   * 直すことになり、一覧が一瞬ちらつく。描くときに決めれば起きない。
+   */
+  const shownDate = dates.includes(viewDate) ? viewDate : (dates[0] ?? today());
+
   /* ---------------- 登録 ---------------- */
 
   /**
-   * 選んだ教室ぶん、順に登録する。
+   * 選んだ日と教室ぶん、順に登録する。
    *
-   * targets を渡すと、その教室だけを対象にする。
-   * 「消してよいか」を尋ねたあとは、すでに入った教室をもう一度なぞらないよう、
-   * 尋ねた相手だけを渡し直す。
+   * ■ 日ごとに呼ぶ
+   *   register_slots は一日ぶんをまとめて入れる。日を増やすには、
+   *   日ごとに呼び直す。教室のほうは向こうでまとめて入るので、
+   *   往復の数は「日の数」だけで済む（15回×全号館でも15往復）。
+   *
+   * ■ targets
+   *   渡すと、その日とその教室だけを対象にする。
+   *   「消してよいか」を尋ねたあとは、すでに入ったものをもう一度
+   *   なぞらないよう、尋ねた相手だけを渡し直す。
    */
   const submit = useCallback(
-    async (force: boolean, targets?: Room[]) => {
+    async (force: boolean, targets?: { date: string; rooms: Room[] }[]) => {
       setMsg(null);
       const supabase = createClient();
-      const list = targets ?? chosen;
+      /** 「この日に、この教室ぶん」の組み合わせ */
+      const plan: { date: string; rooms: Room[] }[] =
+        targets ?? dates.map((d) => ({ date: d, rooms: chosen }));
 
-      if (list.length === 0) {
+      if (plan.length === 0 || plan.every((p) => p.rooms.length === 0)) {
         setMsg({ kind: "err", text: "教室を選んでください" });
+        return;
+      }
+      if (dates.length === 0) {
+        setMsg({ kind: "err", text: "日にちを選んでください" });
         return;
       }
 
@@ -321,56 +413,68 @@ export default function SchedulePage() {
           return;
         }
 
-        // 教室ごとに呼ぶと、全号館では千回を超える往復になる。
-        // まとめて渡し、向こうで順に入れてもらう
-        const { data, error } = await supabase.rpc("register_slots", {
-          p_kind: kind,
-          p_room_ids: list.map((r) => r.id),
-          p_date: date,
-          p_period_id: kind === "class" ? periodId : null,
-          p_starts: kind === "class" ? null : startAt,
-          p_ends: kind === "class" ? null : endAt,
-          p_course_id: kind === "class" ? useCourseId : null,
-          p_activity_id: kind === "activity" ? activityId : null,
-          p_title: title.trim(),
-          p_teacher: teacher.trim(),
-          p_force: force,
-        });
-        if (error) throw error;
-
-        const res = data as BatchResult;
-        const byId = new Map(list.map((r) => [r.id, r]));
-        const where = (id: number) => {
-          const r = byId.get(id);
-          return r ? `${r.code}` : `教室${id}`;
-        };
-
-        const done = res.registered.length;
-        const removed = res.removed;
+        /*
+         * 日ごとに一度ずつ呼ぶ。
+         *
+         * 教室ごとに呼ぶと、全号館では千回を超える往復になる。
+         * 教室はまとめて渡し、向こうで順に入れてもらう。
+         * 増えるのは日の数だけ（15週なら15往復）。
+         */
+        let done = 0;
+        let removed = 0;
         const blockedByClass: string[] = [];
         const blockedOther: string[] = [];
+        const ask: { date: string; room: Room; conflicts: Conflict[] }[] = [];
 
-        for (const b of res.blocked) {
-          const names = b.blocked_by
-            .map((x) => `${KIND_LABEL[x.kind]}「${x.title || "（名称なし）"}」`)
-            .join("・");
-          if (b.blocked_by.some((x) => x.kind === "class"))
-            blockedByClass.push(`${where(b.room_id)}（${names}）`);
-          else blockedOther.push(`${where(b.room_id)}（${names}）`);
+        for (const step of plan) {
+          if (step.rooms.length === 0) continue;
+          const byId = new Map(step.rooms.map((r) => [r.id, r]));
+          const where = (id: number) => byId.get(id)?.code ?? `教室${id}`;
+
+          const { data, error } = await supabase.rpc("register_slots", {
+            p_kind: kind,
+            p_room_ids: step.rooms.map((r) => r.id),
+            p_date: step.date,
+            p_period_id: kind === "class" ? periodId : null,
+            p_starts: kind === "class" ? null : startAt,
+            p_ends: kind === "class" ? null : endAt,
+            p_course_id: kind === "class" ? useCourseId : null,
+            p_activity_id: kind === "activity" ? activityId : null,
+            p_title: title.trim(),
+            p_teacher: teacher.trim(),
+            p_force: force,
+          });
+          if (error) throw error;
+
+          const res = data as BatchResult;
+          done += res.registered.length;
+          removed += res.removed;
+
+          // 何日ぶんも並ぶので、どの日の話かを添える
+          const day = plan.length > 1 ? `${niceDate(step.date)} ` : "";
+          for (const b of res.blocked) {
+            const names = b.blocked_by
+              .map((x) => `${KIND_LABEL[x.kind]}「${x.title || "（名称なし）"}」`)
+              .join("・");
+            if (b.blocked_by.some((x) => x.kind === "class"))
+              blockedByClass.push(`${day}${where(b.room_id)}（${names}）`);
+            else blockedOther.push(`${day}${where(b.room_id)}（${names}）`);
+          }
+
+          for (const c of res.confirm) {
+            const room = byId.get(c.room_id);
+            if (room) ask.push({ date: step.date, room, conflicts: c.will_remove });
+          }
         }
-
-        // 尋ねる相手が残っていれば、そこで一度止める
-        const ask = res.confirm
-          .map((c) => ({ room: byId.get(c.room_id), conflicts: c.will_remove }))
-          .filter((x): x is { room: Room; conflicts: Conflict[] } => !!x.room);
 
         // 入った分は下の一覧にも出したいので、どちらの道でも読み直す
         if (done > 0) setBookedTick((v) => v + 1);
 
+        // 尋ねる相手が残っていれば、そこで一度止める
         if (ask.length > 0) {
           setPending(ask);
           if (done > 0) {
-            setMsg({ kind: "warn", text: `${done}室に登録しました。残りは確認が必要です。` });
+            setMsg({ kind: "warn", text: `${done}件を登録しました。残りは確認が必要です。` });
           }
           return;
         }
@@ -378,7 +482,12 @@ export default function SchedulePage() {
         setPending(null);
 
         const parts: string[] = [];
-        if (done > 0) parts.push(`${done}室に登録しました。`);
+        if (done > 0)
+          parts.push(
+            dates.length > 1
+              ? `${dates.length}日ぶん、あわせて${done}件を登録しました。`
+              : `${done}室に登録しました。`,
+          );
         if (removed > 0) parts.push(`重なっていた予定 ${removed} 件を取り消し、登録者に知らせました。`);
         if (blockedByClass.length > 0)
           parts.push(`授業があるため登録できませんでした：${blockedByClass.join(" / ")}`);
@@ -401,24 +510,27 @@ export default function SchedulePage() {
         setBusy(false);
       }
     },
-    [kind, chosen, date, periodId, courseId, courseName, className, teacher, deptId, activityId, title, startAt, endAt],
+    [kind, chosen, dates, periodId, courseId, courseName, className, teacher, deptId, activityId, title, startAt, endAt],
   );
 
   /* ---------------- その日の予定を消す ---------------- */
 
   /**
-   * その日に入っている予定を読む。
+   * 見ている日に入っている予定を読む。
    * 間違えて入れたものを消せるようにするためで、登録の直後にも読み直す。
+   *
+   * 何日ぶんも選べるが、読むのは一日ずつ。全部読むと重くなるうえ、
+   * 「どの日の予定を消すのか」が分かりにくくなる。
    */
   const loadBooked = useCallback(async () => {
     if (!supabaseReady) return;
     const { data } = await createClient()
       .from("timetable")
       .select("id, room_id, kind, title, starts_at, ends_at, teacher, rooms(building_code, code, name), courses(name, class_name), club_activities(name)")
-      .eq("on_date", date)
+      .eq("on_date", shownDate)
       .order("starts_at");
     setBooked((data as unknown as Booked[]) ?? []);
-  }, [date]);
+  }, [shownDate]);
 
   useEffect(() => {
     void loadBooked();
@@ -457,7 +569,7 @@ export default function SchedulePage() {
     if (booked.length === 0) return;
     const first = window.confirm(
       [
-        `${date} に入っている予定を、すべて消します。`,
+        `${shownDate} に入っている予定を、すべて消します。`,
         "",
         `  ${booked.length} 件（授業・イベント・課外活動すべて）`,
         "",
@@ -485,7 +597,7 @@ export default function SchedulePage() {
     } finally {
       setBusy(false);
     }
-  }, [booked, date, loadBooked]);
+  }, [booked, shownDate, loadBooked]);
 
   /* ---------------- 表示 ---------------- */
 
@@ -504,11 +616,8 @@ export default function SchedulePage() {
       </Shell>
     );
 
-  // 課外活動とイベントは Lv1 以上、授業は Lv2 以上
-  const canEvent = role === "admin_l1" || role === "admin_l2" || canManageAll(role);
-  const canClass = role === "admin_l2" || canManageAll(role);
-  /** 他人が立てた予定も消せるか。副管理者（2.1・2.2）といちばん上だけ */
-  const canDeleteAny = canManageAll(role);
+  // canEvent / canClass / canDeleteAny は上（状態のすぐ下）で決めてある。
+  // 種類の読み替え（kind）が、それより前に要るため。
 
   if (!canEvent)
     return (
@@ -534,42 +643,52 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {/* 何を登録するか */}
-      <div className="mb-3 grid grid-cols-3 gap-1.5">
-        {(["class", "event", "activity"] as const).map((k) => {
-          const disabled = k === "class" && !canClass;
-          return (
-            <button
-              key={k}
-              disabled={disabled}
-              onClick={() => {
-                setKind(k);
-                setMsg(null);
-                setPending(null);
-              }}
-              className={`rounded-xl py-2.5 text-sm font-bold transition ${
-                kind === k
-                  ? "bg-slate-900 text-white"
-                  : disabled
-                    ? "bg-slate-50 text-slate-300"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              {KIND_LABEL[k]}
-              {disabled && <span className="mt-0.5 block text-[9px] font-normal">教授のみ</span>}
-            </button>
-          );
-        })}
+      {/*
+        何を登録するか。
+
+        授業を入れられない人には、授業の欄そのものを出さない。
+        押せないボタンを並べておくと、「押せるはずのものが押せない」と
+        受け取られる。できることだけを並べるほうが分かりやすい。
+        課外活動リーダー（Lv1）なら、イベントと課外活動の二つになる。
+
+        守っているのはデータベース側（register_slots）で、
+        ここは画面の出し分け。
+      */}
+      <div className={`mb-3 grid gap-1.5 ${kinds.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+        {kinds.map((k) => (
+          <button
+            key={k}
+            onClick={() => {
+              setKindPick(k);
+              setMsg(null);
+              setPending(null);
+            }}
+            className={`rounded-xl py-2.5 text-sm font-bold transition ${
+              kind === k
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            {KIND_LABEL[k]}
+          </button>
+        ))}
       </div>
 
       <div className="flex flex-col gap-3">
-        <Field label="日付">
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-          />
+        {/*
+          日にち。いくつでも選べる。
+
+          授業は同じ組み合わせを毎週くり返すので、一日ずつ入れると
+          15回ぶん同じ操作になる。一日押して「＋15週」で前期ぶんが埋まる。
+        */}
+        <Field label="日にち（いくつでも選べます）">
+          <MultiDatePicker value={dates} onChange={setDates} />
+          {kind === "class" && dates.length === 1 && (
+            <p className="mt-1.5 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-blue-900">
+              毎週ある授業なら、上の<b>「＋15週」</b>を押すと、同じ曜日が
+              15週ぶんまとめて選ばれます。
+            </p>
+          )}
         </Field>
 
         {/* ---- 教室。まとめて同じ予定を入れられるよう、いくつでも選べる ---- */}
@@ -581,6 +700,18 @@ export default function SchedulePage() {
               {roomIds.length > 0 ? `${roomIds.length}室を選択中` : "未選択"}
             </span>
           </div>
+
+          {/*
+            「使用中」の印は、見ている一日ぶんしか見ていない。
+            何日も選んでいるときに、全部の日を知っているかのように
+            見えると困るので、そう書いておく。
+          */}
+          {dates.length > 1 && (
+            <p className="mt-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
+              「使用中」の印は <b>{niceDate(shownDate)}</b> のぶんです。
+              ほかの日で埋まっている教室は、登録したあとに日付つきでお知らせします。
+            </p>
+          )}
 
           <div className="mt-1 flex gap-1.5">
             <button
@@ -824,11 +955,14 @@ export default function SchedulePage() {
               <input
                 value={teacher}
                 onChange={(e) => setTeacher(e.target.value)}
-                placeholder="担当の先生"
+                placeholder="担当の先生の名前"
                 className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-[10px] text-slate-400">
-                登録した人（{email}）は自動で記録されます
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                ここに書いた名前が、時間割に出ます。
+                担当の先生が別の人なら、その名前に書き換えてください。
+                <br />
+                登録した人（{email}）は、これとは別に記録されます。
               </p>
             </Field>
           </>
@@ -903,16 +1037,18 @@ export default function SchedulePage() {
           </>
         )}
 
-        {/* ---- 確認。教室ごとに、何が消えるのかを並べて一度だけ尋ねる ---- */}
+        {/* ---- 確認。日と教室ごとに、何が消えるのかを並べて一度だけ尋ねる ---- */}
         {pending && (
           <div className="rounded-xl bg-amber-50 p-3">
             <p className="text-xs font-bold text-amber-900">
-              次の{pending.length}室には、すでに予定が入っています。
+              次の{pending.length}件には、すでに予定が入っています。
             </p>
             <ul className="mt-1.5 flex flex-col gap-1.5">
-              {pending.map(({ room: rm, conflicts }) => (
-                <li key={rm.id} className="text-[11px] text-amber-800">
-                  <b>{rm.code}</b>
+              {pending.map(({ date: d, room: rm, conflicts }) => (
+                <li key={`${d}-${rm.id}`} className="text-[11px] text-amber-800">
+                  <b>
+                    {niceDate(d)} {rm.code}
+                  </b>
                   <ul className="mt-0.5 pl-3">
                     {conflicts.map((c) => (
                       <li key={c.id}>
@@ -930,7 +1066,22 @@ export default function SchedulePage() {
             </p>
             <div className="mt-2 flex gap-2">
               <button
-                onClick={() => void submit(true, pending.map((p) => p.room))}
+                onClick={() => {
+                  /*
+                   * 日ごとにまとめ直してから渡す。
+                   * すでに入った日と教室はもう一度なぞらない。
+                   */
+                  const byDay = new Map<string, Room[]>();
+                  for (const p of pending) {
+                    const cur = byDay.get(p.date) ?? [];
+                    cur.push(p.room);
+                    byDay.set(p.date, cur);
+                  }
+                  void submit(
+                    true,
+                    [...byDay.entries()].map(([d, rooms]) => ({ date: d, rooms })),
+                  );
+                }}
                 disabled={busy}
                 className="flex-1 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-amber-700 disabled:bg-slate-300"
               >
@@ -963,10 +1114,16 @@ export default function SchedulePage() {
         {!pending && (
           <button
             onClick={() => void submit(false)}
-            disabled={busy}
+            disabled={busy || dates.length === 0}
             className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
           >
-            {busy ? "登録中…" : `${KIND_LABEL[kind]}を登録する`}
+            {busy
+              ? "登録中…"
+              : dates.length === 0
+                ? "日にちを選んでください"
+                : dates.length === 1
+                  ? `${KIND_LABEL[kind]}を登録する`
+                  : `${dates.length}日ぶんの${KIND_LABEL[kind]}を登録する（${chosen.length}室 × ${dates.length}日）`}
           </button>
         )}
 
@@ -978,8 +1135,33 @@ export default function SchedulePage() {
 
         {/* ---- この日に入っている予定。間違えて入れたものを消せる ---- */}
         <div className="border-t border-slate-100 pt-3">
+          {/*
+            何日ぶんも選べるので、見る日を選び直せるようにする。
+            全部の日をいっぺんに出すと、どの日のものを消すのか分からなくなる。
+          */}
+          {dates.length > 1 && (
+            <div className="mb-2">
+              <div className="text-[10px] font-bold text-slate-500">どの日の予定を見るか</div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {dates.map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setViewDate(d)}
+                    className={`rounded-full px-2 py-1 text-[10px] font-bold transition active:scale-95 ${
+                      shownDate === d
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {niceDate(d)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <p className="mb-2 text-[11px] font-bold text-slate-500">
-            {date} に入っている予定（{booked.length}件）
+            {shownDate} に入っている予定（{booked.length}件）
             {/* 他人が立てたものも含めてまとめて消せるのは、副管理者と管理者だけ */}
             {canDeleteAny && booked.length > 0 && (
               <button

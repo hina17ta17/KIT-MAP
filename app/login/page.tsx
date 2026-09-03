@@ -750,7 +750,7 @@ export default function LoginPage() {
           何ができるかは、下に並ぶボタンを見れば足りる。
         */}
         {me.role !== "admin_l3" && (
-          <p className="mt-1 text-xs text-slate-500">{ROLE_LABEL[me.role]}</p>
+          <p className="mt-1 text-xs text-slate-500">{T(ROLE_LABEL[me.role])}</p>
         )}
 
         {/* 権限がある人には、まずどこへ行けるかを見せる */}

@@ -1,17 +1,24 @@
 "use client";
 
 /**
- * 名簿の取り込み。
+ * 名簿を見る・入れる。
  *
- * ■ 誰が使えるか
- *   レベル2.1・2.2・管理者だけ。教授（レベル2）も、食堂の担当も入れない。
- *   名簿には学籍番号と氏名が並ぶため。
- *   画面での出し分けは親切であって、守っているのは
- *   データベース側（can_manage_roster）。
+ * ■ 誰が何をできるか
+ *   教授（レベル2）        … 学生の名簿を見るだけ
+ *   レベル2.1・2.2・管理者 … 全部見られて、入れる・消す・ドメインも変えられる
+ *
+ *   教授に教職員の名簿を見せないのは、8桁の番号が並ぶため。
+ *   その番号は、そのまま本人確認に使えてしまう。
+ *
+ *   画面での出し分けは親切であって、守っているのはデータベース側
+ *   （can_read_roster / can_manage_roster）。権限の無い人がこの住所を
+ *   直接開いても、関数のほうが断る。
  *
  * ■ 何をするか
- *   xlsx を選ぶ → 中身をこの画面で読む → 通る行と弾く行を見せる
- *   → よければ取り込む。
+ *   ・名簿を探して見る（区切ってめくる）
+ *   ・xlsx をまとめて取り込む
+ *   ・一人ずつ手で入れる
+ *   ・ドメイン名を確かめる・変える
  *
  *   xlsx を読むのはこの端末の中だけで、ファイルそのものはどこにも送らない。
  *   送るのは、読み取った行の中身だけ。
@@ -26,7 +33,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
-import { canManageAll, type Role } from "@/lib/auth";
+import { canManageAll, canReadRoster, type Role } from "@/lib/auth";
 import { readXlsx, type Row } from "@/lib/xlsx";
 
 /** xlsx の列。A列から順に */
@@ -35,19 +42,77 @@ const COLS = ["kind", "email", "name", "grade", "class_code", "seat_no", "studen
 /** 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
 
+/**
+ * 学籍番号として使う7桁の数字を取り出す。
+ *
+ * 学籍番号は「アドレスに書いてある7桁の数字」。
+ *   c1234567@st.example.ac.jp → 1234567
+ *   c1234567                  → 1234567
+ *   1234567                   → 1234567
+ *   7桁にならないもの          → 空
+ *
+ * 通す・弾くを決めるのはデータベース側（student_no_of）。
+ * ここは、押す前に画面で気づけるようにするための同じ計算。
+ */
+function studentNoOf(text: string): string {
+  const local = (text ?? "").split("@")[0];
+  const digits = local.replace(/\D/g, "");
+  return digits.length === 7 ? digits : "";
+}
+
 type Sending = { row: number } & Record<(typeof COLS)[number], string>;
 type Rejected = { row: number; why: string };
 type Report = { students: number; staff: number; rejected: Rejected[] };
-type Counts = { students: number; teachers: number; others: number };
+/** all が false なら「学生の数しか見せてもらえていない」（教授のとき） */
+type Counts = { students: number; teachers?: number; others?: number; all: boolean };
 type DomainKind = "student" | "teacher" | "other";
 type Domains = Record<DomainKind, string>;
+
+/**
+ * 登録している人を見る欄。身分で五つに分ける。
+ *
+ * ★名簿（roster_students / roster_staff）とは別のもの。
+ *   名簿は「申請と突き合わせるために入れておいた表」で、
+ *   その人が実際に使っているかは分からない。
+ *   ここで出すのは、席があって権限が付いている人（profiles）。
+ */
+type PeopleKind = "student" | "teacher" | "leader" | "cafeteria" | "other";
+
+const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
+  // byDept … 学部と学科を選んでから見る（学年・クラスを持っている人）
+  { id: "student", label: "学生", byDept: true },
+  { id: "teacher", label: "教授", byDept: false },
+  { id: "leader", label: "課外活動リーダー", byDept: true },
+  { id: "cafeteria", label: "食堂", byDept: false },
+  { id: "other", label: "その他", byDept: false },
+];
+
+type Person = {
+  id: string;
+  email: string;
+  student_no: string;
+  staff_no: string;
+  full_name: string;
+  grade: number;
+  class_code: string;
+  seat_no: number | null;
+  role: string;
+  affiliation: string;
+  total: number;
+};
+
+type Faculty = { id: number; name: string };
+type Dept = { id: number; faculty_id: number; name: string; code: string };
+
+/** 一度に読む件数。多すぎると画面が重く、少なすぎるとめくる回数が増える */
+const PAGE = 50;
 
 /** ドメイン名確認の中の、身分の並び */
 const DOMAIN_KINDS: { id: DomainKind; label: string; note: string }[] = [
   {
     id: "student",
     label: "学生",
-    note: "このドメインの人だけを学生として扱います。学籍番号は @ の前と同じであることも見ます。",
+    note: "このドメインの人だけを学生として扱います。アドレスに入っている7桁の数字が学籍番号になり、名簿の学籍番号と合っているかも見ます。",
   },
   {
     id: "teacher",
@@ -68,6 +133,23 @@ export default function RosterPage() {
   const [busy, setBusy] = useState(false);
 
   const [counts, setCounts] = useState<Counts | null>(null);
+
+  /** 登録している人を見る欄 */
+  const [listOpen, setListOpen] = useState(false);
+  const [listKind, setListKind] = useState<PeopleKind>("student");
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [total, setTotal] = useState(0);
+  const [listBusy, setListBusy] = useState(false);
+  /** 身分ごとの人数。見せない相手には返ってこない */
+  const [peopleCounts, setPeopleCounts] = useState<Record<string, number> | null>(null);
+
+  /** 学部と学科。学生と課外活動リーダーは、ここで絞ってから見る */
+  const [facs, setFacs] = useState<Faculty[]>([]);
+  const [depts, setDepts] = useState<Dept[]>([]);
+  const [facId, setFacId] = useState<number | null>(null);
+  const [deptId, setDeptId] = useState<number | null>(null);
 
   /** ドメイン名確認 */
   const [domainOpen, setDomainOpen] = useState(false);
@@ -110,9 +192,24 @@ export default function RosterPage() {
     const r = (me?.role as Role) ?? null;
     setRole(r);
 
-    if (canManageAll(r)) {
+    if (canReadRoster(r)) {
       const { data: c } = await supabase.rpc("roster_counts");
       if (c) setCounts(c as Counts);
+      const { data: pc } = await supabase.rpc("people_counts");
+      if (pc) setPeopleCounts(pc as Record<string, number>);
+
+      /*
+       * 学部と学科。学生と課外活動リーダーを、学科ごとに見るために使う。
+       * profiles.class_code は departments.code と同じ並び（KM・CC …）。
+       */
+      const [f, d] = await Promise.all([
+        supabase.from("faculties").select("id, name").order("sort_order"),
+        supabase.from("departments").select("id, faculty_id, name, code").order("sort_order"),
+      ]);
+      setFacs((f.data as Faculty[]) ?? []);
+      setDepts((d.data as Dept[]) ?? []);
+    }
+    if (canManageAll(r)) {
       const { data: d } = await supabase.rpc("get_domains");
       if (d) {
         const got = d as Record<string, string>;
@@ -130,6 +227,112 @@ export default function RosterPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* ---------------- 登録している人を見る ---------------- */
+
+  /** いま見ている身分の決まり（学部・学科で絞るかどうか） */
+  const kindDef = PEOPLE_KINDS.find((k) => k.id === listKind) ?? PEOPLE_KINDS[0];
+
+  /**
+   * 登録している人を読み直す。
+   *
+   * profiles の表そのものは、自分の行しか読めない。
+   * データベース側の関数（list_people）を通したときだけ、
+   * その人に見せてよい分が返る。
+   *
+   * 何件あるかは、行と一緒に total として返ってくる。
+   * 数えるためだけの往復を増やさないため。
+   */
+  const loadList = useCallback(
+    async (kind: PeopleKind, dept: number | null, word: string, at: number) => {
+      if (!supabaseReady) return;
+      setListBusy(true);
+      setMsg(null);
+      try {
+        const { data, error } = await createClient().rpc("list_people", {
+          p_kind: kind,
+          p_dept_id: dept,
+          p_q: word,
+          p_limit: PAGE,
+          p_offset: at * PAGE,
+        });
+        if (error) throw error;
+        const rows = (data as Person[]) ?? [];
+        setPeople(rows);
+        setTotal(rows.length > 0 ? Number(rows[0].total) : 0);
+      } catch (e) {
+        setPeople([]);
+        setTotal(0);
+        setMsg({
+          kind: "err",
+          text:
+            e instanceof Error
+              ? `${e.message}（base/15_people.sql をまだ入れていない場合は、先に入れてください）`
+              : String(e),
+        });
+      } finally {
+        setListBusy(false);
+      }
+    },
+    [],
+  );
+
+  /**
+   * 探す言葉や絞り込みを変えたら、少し待ってから引き直す。
+   *
+   * 1文字打つたびに引くと、人数が多いほど無駄な往復が増える。
+   * 打ち終わってから引くようにして、めくっている位置も先頭へ戻す。
+   */
+  useEffect(() => {
+    if (!listOpen) return;
+    const id = window.setTimeout(() => {
+      setPage(0);
+      void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), 0);
+    }, 250);
+    return () => window.clearTimeout(id);
+  }, [listOpen, listKind, deptId, q, kindDef.byDept, loadList]);
+
+  /**
+   * 名簿（突き合わせ用の表）から一人消す。入れられる人だけ。
+   *
+   * ★消えるのは名簿のほうで、その人の席は消えない。
+   *   席を消すのは承認の画面（/admin）の役目。
+   */
+  const removeFromRoster = async (
+    kind: "student" | "staff",
+    key: string,
+    label: string,
+  ) => {
+    if (
+      !window.confirm(
+        [
+          `${label} を名簿から消します。`,
+          "",
+          "消えるのは突き合わせ用の名簿だけで、その人の席は残ります。",
+          "元には戻せません。よろしいですか？",
+        ].join(BR),
+      )
+    )
+      return;
+    setListBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("roster_remove", {
+        p_kind: kind,
+        p_key: key,
+      });
+      if (error) throw error;
+      setMsg(
+        (data as number) > 0
+          ? { kind: "ok", text: `${label} を名簿から消しました。` }
+          : { kind: "err", text: "その人は名簿にいませんでした。" },
+      );
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setListBusy(false);
+    }
+  };
 
   /*
    * 身分を切り替える。
@@ -194,6 +397,8 @@ export default function RosterPage() {
         text: `学生 ${rep.students} 件、教授・その他 ${rep.staff} 件を入れました。`,
       });
       await load();
+      // 見ている最中なら、入れたものがそのまま並ぶようにする
+      if (listOpen) await loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), page);
     } catch (e) {
       setMsg({
         kind: "err",
@@ -236,6 +441,7 @@ export default function RosterPage() {
           number: "",
         }));
         await load();
+        if (listOpen) await loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), page);
       }
     } catch (e) {
       setMsg({
@@ -338,18 +544,23 @@ export default function RosterPage() {
 
   if (loading) return <Shell>読み込み中…</Shell>;
 
-  if (!canManageAll(role))
+  if (!canReadRoster(role))
     return (
       <Shell>
         <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
-        <p className="mt-1 text-[11px] text-slate-500">
-          名簿を触れるのは、副管理者（2.1・2.2）と管理者だけです。
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+          名簿を見られるのは、教授（レベル2）・副管理者（2.1・2.2）・管理者です。
+          入れる・消すのは、副管理者と管理者だけです。
         </p>
         <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">
           ログインへ
         </Link>
       </Shell>
     );
+
+  /** 入れる・消す・ドメインを変える。教授はここに入らない */
+  const canWrite = canManageAll(role);
+  const pages = Math.max(1, Math.ceil(total / PAGE));
 
   return (
     <Shell wide>
@@ -371,14 +582,236 @@ export default function RosterPage() {
         <div className="text-[11px] font-bold text-slate-500">いま入っている名簿</div>
         <div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-800">
           <span>学生 {counts?.students ?? "—"}</span>
-          <span>教授 {counts?.teachers ?? "—"}</span>
-          <span>その他 {counts?.others ?? "—"}</span>
+          {canWrite && (
+            <>
+              <span>教授 {counts?.teachers ?? "—"}</span>
+              <span>その他 {counts?.others ?? "—"}</span>
+            </>
+          )}
         </div>
-        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-          名簿そのものは、この画面には出しません。学籍番号と氏名が並ぶためです。
-          数だけを出しています。
-        </p>
+        {!canWrite && (
+          <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+            教授（レベル2）が見られるのは、<b>学生の名簿だけ</b>です。
+            教職員の名簿には8桁の番号が並ぶので、副管理者と管理者だけが見られます。
+          </p>
+        )}
       </div>
+
+      {/*
+        登録している人を見る。
+
+        ★名簿（突き合わせ用の表）とは別のもの。
+          ここに出るのは、席があって権限が付いている人。
+          誰が実際に使っているのかを見たいときは、こちら。
+
+        身分で五つに分ける。学生と課外活動リーダーは学年とクラスを
+        持っているので、学部 → 学科 と選んでから、名列番号順に並べる。
+        教授・食堂・その他は、氏名の順に並べる。
+
+        表そのものは開かない。データベース側の関数（list_people）を
+        通したときだけ、その人に見せてよい分が返る。
+        教授には学生のぶんしか返らない。
+      */}
+      <section className="mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-slate-900">登録している人を見る</div>
+          <button
+            onClick={() => {
+              const next = !listOpen;
+              setListOpen(next);
+              if (next) {
+                setPage(0);
+                void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), 0);
+              }
+            }}
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+          >
+            {listOpen ? "閉じる" : "一覧を見る"}
+          </button>
+        </div>
+
+        {listOpen && (
+          <div className="mt-2">
+            {/* 身分。教授には学生のぶんしか無いので、切り替えを出さない */}
+            {canWrite ? (
+              <div className="grid grid-cols-3 gap-1.5">
+                {PEOPLE_KINDS.map((k) => (
+                  <button
+                    key={k.id}
+                    onClick={() => {
+                      setListKind(k.id);
+                      setPage(0);
+                      // 身分を変えたら、絞り込みも外す。前の学科が残ると
+                      // 「誰もいない」に見えて、外し方が分からなくなる
+                      setFacId(null);
+                      setDeptId(null);
+                    }}
+                    className={`rounded-lg px-2 py-2 text-[11px] font-bold leading-tight transition active:scale-95 ${
+                      listKind === k.id
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {k.label}
+                    <span className="mt-0.5 block text-[9px] font-normal opacity-70">
+                      {peopleCounts?.[k.id] ?? 0} 人
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
+                教授（レベル2）が見られるのは<b>学生だけ</b>です。
+              </p>
+            )}
+
+            {/*
+              学部 → 学科。学年とクラスを持っている身分でだけ出す。
+              profiles のクラス記号（CC・KM …）は departments.code と同じ並び。
+            */}
+            {kindDef.byDept && (
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                <select
+                  value={facId ?? ""}
+                  onChange={(e) => {
+                    setFacId(e.target.value ? Number(e.target.value) : null);
+                    setDeptId(null);
+                  }}
+                  className="w-full rounded-lg bg-slate-100 px-2.5 py-2 text-[11px] outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">学部（すべて）</option>
+                  {facs.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={deptId ?? ""}
+                  onChange={(e) => setDeptId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={facId === null}
+                  className="w-full rounded-lg bg-slate-100 px-2.5 py-2 text-[11px] outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 disabled:text-slate-400"
+                >
+                  <option value="">
+                    {facId === null ? "先に学部を選ぶ" : "学科（すべて）"}
+                  </option>
+                  {depts
+                    .filter((d) => d.faculty_id === facId)
+                    .map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                        {d.code ? `（${d.code}）` : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              autoComplete="off"
+              placeholder={
+                kindDef.byDept
+                  ? "名前・学籍番号・アドレス・クラスで探す"
+                  : "名前・アドレスで探す"
+              }
+              className="mt-2 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+            />
+
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+              <span className="font-bold">
+                {listBusy ? "探しています…" : `${total} 人`}
+              </span>
+              <span className="text-slate-400">
+                {kindDef.byDept ? "学年 → クラス → 名列番号の順" : "氏名の順"}
+              </span>
+              {total > PAGE && (
+                <span className="ml-auto flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      const at = Math.max(0, page - 1);
+                      setPage(at);
+                      void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), at);
+                    }}
+                    disabled={page === 0 || listBusy}
+                    className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-600 disabled:text-slate-300"
+                  >
+                    前
+                  </button>
+                  <span>
+                    {page + 1} / {pages}
+                  </span>
+                  <button
+                    onClick={() => {
+                      const at = Math.min(pages - 1, page + 1);
+                      setPage(at);
+                      void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), at);
+                    }}
+                    disabled={page >= pages - 1 || listBusy}
+                    className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-600 disabled:text-slate-300"
+                  >
+                    次
+                  </button>
+                </span>
+              )}
+            </div>
+
+            {/*
+              一人ぶんの中身は、持っているものを全部出す。
+              学生は学籍番号と学年・クラス・名列番号、
+              教職員は8桁の番号。持っていない欄は出さない。
+            */}
+            <ul className="mt-1.5 max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-slate-50">
+              {people.map((p) => (
+                <li key={p.id} className="px-2.5 py-2">
+                  <div className="flex items-baseline gap-1.5">
+                    {p.seat_no !== null && (
+                      <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700">
+                        {p.seat_no}
+                      </span>
+                    )}
+                    <span className="truncate text-xs font-bold text-slate-800">
+                      {p.full_name || "（名前なし）"}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                    {p.grade > 0 && <span>{p.grade}年</span>}
+                    {p.class_code && <span>{p.class_code}</span>}
+                    {p.seat_no !== null && <span>{p.seat_no}番</span>}
+                    {p.student_no && (
+                      <span className="font-mono">学籍番号 {p.student_no}</span>
+                    )}
+                    {p.staff_no && <span className="font-mono">番号 {p.staff_no}</span>}
+                  </div>
+                  <div className="truncate font-mono text-[10px] text-slate-400">{p.email}</div>
+                </li>
+              ))}
+
+              {!listBusy && people.length === 0 && (
+                <li className="px-2.5 py-6 text-center text-[11px] leading-relaxed text-slate-500">
+                  {q.trim() || deptId !== null
+                    ? "見つかりませんでした。"
+                    : "この身分の人は、まだ登録されていません。"}
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </section>
+
+      {/*
+        ここから下は、入れる・変えるための欄。教授には出さない。
+
+        出さないのは親切であって、守っているのはデータベース側。
+        教授が直接この関数を呼んでも、can_manage_roster が断る。
+      */}
+      {!canWrite && (
+        <p className="mt-4 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
+          名簿に入れる・消す、ドメインを変えるといった操作は、
+          副管理者（2.1・2.2）と管理者だけができます。
+        </p>
+      )}
 
       {/*
         ドメイン名確認。
@@ -390,6 +823,7 @@ export default function RosterPage() {
         変えるときは二度たずねる。ここを間違えると、正しい人が
         申請できなくなったり、名簿が一行も入らなくなったりする。
       */}
+      {canWrite && (
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-xs font-bold text-slate-900">ドメイン名確認</div>
@@ -470,14 +904,19 @@ export default function RosterPage() {
           </div>
         )}
       </section>
+      )}
 
       {/* xlsx を選ぶ */}
+      {canWrite && (
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="text-xs font-bold text-slate-900">xlsx から取り込む</div>
         <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
           1行が1人。<b>A 身分（学生／教授／その他）・B メールアドレス・C 名前</b>。
           学生はさらに <b>D 学年・E クラス・F 名列番号・G 学籍番号</b>、
           教授とその他は <b>H 8桁の番号</b>。
+          <br />
+          <b>G 学籍番号</b>は、アドレスに書いてある<b>7桁の数字</b>です
+          （c1234567@… なら 1234567）。頭の一文字ごと書いてあっても構いません。
           <br />
           見出しの行があっても構いません（A列が三択でないので自動で飛ばされます）。
           <br />
@@ -518,6 +957,7 @@ export default function RosterPage() {
           </>
         )}
       </section>
+      )}
 
       {/*
         一人ずつ手で入れる。
@@ -526,6 +966,7 @@ export default function RosterPage() {
         通す・弾くの判定は xlsx と同じもの（import_roster）を通す。
         ここだけ甘い決まりにすると、名簿の中身が揃わなくなる。
       */}
+      {canWrite && (
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-xs font-bold text-slate-900">一人ずつ手で入れる</div>
@@ -614,16 +1055,33 @@ export default function RosterPage() {
                     />
                   </Field>
                 </div>
-                <Field label="学籍番号">
+                <Field label="学籍番号（7桁の数字）">
                   <input
                     value={one.student_no}
                     onChange={(e) => setOne((o) => ({ ...o, student_no: e.target.value.trim() }))}
                     autoComplete="off"
+                    placeholder={studentNoOf(one.email) || "1234567"}
                     className={manualInput}
                   />
-                  <p className="mt-0.5 text-[10px] text-slate-400">
-                    メールアドレスの @ より前と同じにしてください
+                  <p className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                    メールアドレスに書いてある7桁の数字です。
+                    {studentNoOf(one.email) && (
+                      <>
+                        <br />
+                        このアドレスなら <b className="font-mono">{studentNoOf(one.email)}</b> です。
+                      </>
+                    )}
+                    <br />
+                    頭の一文字ごと（c1234567）打っても構いません。数字だけを取り出してしまいます。
                   </p>
+                  {studentNoOf(one.email) && !one.student_no && (
+                    <button
+                      onClick={() => setOne((o) => ({ ...o, student_no: studentNoOf(o.email) }))}
+                      className="mt-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+                    >
+                      アドレスから入れる（{studentNoOf(one.email)}）
+                    </button>
+                  )}
                 </Field>
               </>
             ) : (
@@ -638,6 +1096,48 @@ export default function RosterPage() {
               </Field>
             )}
 
+            {/*
+              入れる前につまずく所を、先に言っておく。
+
+              教授のドメインは、はじめ空にしてある（こちらで手打ちする決まり）。
+              空のままだと import_roster が教授の行を必ず弾くので、
+              押してから断られるより、押す前に分かるようにする。
+            */}
+            {one.kind === "教授" && !domains?.teacher && (
+              <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
+                教授のドメインが、まだ決まっていません。このままだと入れられません。
+                上の<b>ドメイン名確認</b>から、教授のドメインを入れてください。
+              </p>
+            )}
+            {one.kind === "学生" &&
+              one.email.includes("@") &&
+              one.student_no !== "" &&
+              (() => {
+                const fromMail = studentNoOf(one.email);
+                const typed = studentNoOf(one.student_no);
+                if (!typed)
+                  return (
+                    <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
+                      学籍番号は7桁の数字です。このままだと入れられません。
+                    </p>
+                  );
+                if (fromMail && typed !== fromMail)
+                  return (
+                    <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
+                      学籍番号（<b className="font-mono">{typed}</b>）と、メールアドレスの中の番号
+                      （<b className="font-mono">{fromMail}</b>）が違います。
+                      このままだと入れられません。
+                    </p>
+                  );
+                if (!fromMail)
+                  return (
+                    <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
+                      メールアドレスの中に7桁の数字がありません。このままだと入れられません。
+                    </p>
+                  );
+                return null;
+              })()}
+
             <button
               onClick={() => void sendOne()}
               disabled={busy || !one.email.trim() || !one.name.trim()}
@@ -645,9 +1145,37 @@ export default function RosterPage() {
             >
               {busy ? "入れています…" : "この一人を入れる"}
             </button>
+
+            {/*
+              名簿から消す。
+
+              入れる道だけあって消す道が無いと、間違えて入れた一人を
+              直す手立てが無くなる。上書きはできても、消すことはできない。
+              打ってあるアドレスをそのまま使うので、欄は増やさない。
+
+              ★消えるのは突き合わせ用の名簿だけ。その人の席は残る。
+            */}
+            {one.email.trim() !== "" && (
+              <button
+                onClick={() =>
+                  void removeFromRoster(
+                    one.kind === "学生" ? "student" : "staff",
+                    one.kind === "学生"
+                      ? studentNoOf(one.student_no) || studentNoOf(one.email)
+                      : one.email.trim(),
+                    one.email.trim(),
+                  )
+                }
+                disabled={busy || listBusy}
+                className="mt-1.5 w-full rounded-xl px-4 py-2 text-[11px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+              >
+                このアドレスを名簿から消す
+              </button>
+            )}
           </div>
         )}
       </section>
+      )}
 
       {/* 弾いた行 */}
       {report && (

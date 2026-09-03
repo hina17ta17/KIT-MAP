@@ -236,22 +236,15 @@ export default function Customize({ open, onClose, data, value, onChange, t, lan
               )}
             </p>
 
-            {changed.length > 0 && (
-              <div className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 ring-1 ring-amber-200">
-                <div className="text-[10px] font-bold text-amber-900">
-                  {t("変えたもの")} {changed.length} {t("件")}
-                </div>
-                <ul className="mt-1 space-y-0.5">
-                  {changed.map((p) => (
-                    <li key={p.id} className="flex items-center gap-1 text-[10px] text-amber-900">
-                      <span className="truncate text-amber-700 line-through">{p.original}</span>
-                      <span className="shrink-0 text-amber-500">→</span>
-                      <span className="truncate font-bold">{value.names[p.id]}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/*
+              「変えたもの」の一覧は出さない。
+
+              下の一覧では、変えた欄が黄色く光り、左にもとの名前が出ている。
+              同じことが二か所に並ぶうえ、一つ打つたびに上に箱が生えて
+              下の一覧が押し下がる。打っている最中に指の下のものが動くので、
+              使いにくかった。
+              何件変えたかは「すべて元に戻す」の横の数で分かる。
+            */}
 
             <input
               value={q}
@@ -443,7 +436,7 @@ function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
       <div className="rounded-xl bg-emerald-50 p-3">
         <p className="text-xs font-bold text-emerald-900">{t("ありがとうございました")}</p>
         <p className="mt-1 text-[10px] leading-relaxed text-emerald-800">
-          {t("いただいた内容は、名前が分からない形で届いています。")}
+          {t("読む人の画面には、名前は出ません。")}
         </p>
         <button
           onClick={() => setDone(false)}
@@ -460,7 +453,7 @@ function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
         onClick={() => setOpen(true)}
         className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
       >
-        {t("感想を送る（名前は伝わりません）")}
+        {t("感想を送る（名前は出ません）")}
       </button>
     );
 
@@ -475,8 +468,22 @@ function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
           {t("閉じる")}
         </button>
       </div>
+      {/*
+        名前の扱いは、正直に書く。
+
+        読む人の画面に名前は並ばないが、目にあまるものだけは
+        書いた人を確かめられるようにしてある（05_feedback.sql）。
+        「名前は伝わりません」と書いたまま控えるのは嘘になるので、
+        できることをそのまま書く。
+      */}
       <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
-        {t("名前もアカウントも伝わりません。よかった所も、使いにくい所も、そのまま書いてください。")}
+        {t("よかった所も、使いにくい所も、そのまま書いてください。")}
+        <br />
+        <span className="text-slate-400">
+          {t(
+            "読む人の画面に名前は出ません。ただし、ひどい書き込みがあったときだけ、送った人を確かめることがあります。",
+          )}
+        </span>
       </p>
 
       {/* 星。付けなくても送れる */}
@@ -500,11 +507,18 @@ function Feedback({ t, lang }: { t: (ja: string) => string; lang: Lang }) {
         )}
       </div>
 
+      {/*
+        書く欄の薄い文字。例文は置かない。
+
+        具体的な例を出すと、それに近いことしか書かれなくなる。
+        思ったことをそのまま書いてもらうのが目的なので、
+        何を書いてもよいと分かる言い方にする。
+      */}
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value.slice(0, MAX))}
         rows={4}
-        placeholder={t("例：目的の教室まで迷わず行けました。夜は地図が見づらいです。")}
+        placeholder={t("なんでも書いてください")}
         className="mt-2 w-full rounded-xl bg-slate-100 px-3 py-2.5 text-xs leading-relaxed outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
       />
       <div

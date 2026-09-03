@@ -243,3 +243,64 @@ export function canManageCafeteria(role: Role | null): boolean {
 export function canReadFeedback(role: Role | null): boolean {
   return role === "admin_l2" || canManageAll(role);
 }
+
+/* ---------------- 予定に入れられる種類 ---------------- */
+
+/** 予定の種類。授業・イベント・課外活動 */
+export type SlotKind = "class" | "event" | "activity";
+
+/**
+ * 授業を入れられるか。教授（レベル2）と、2.1・2.2・管理者。
+ *
+ * 課外活動リーダー（Lv1）は入れられない。
+ * 守っているのはデータベース側（register_slots）で、
+ * ここは画面の出し分けのため。
+ */
+export function canRegisterClass(role: Role | null): boolean {
+  return role === "admin_l2" || canManageAll(role);
+}
+
+/**
+ * その人が選べる種類。押せないものは並べない。
+ *
+ * 押せないボタンを灰色で並べておくと「押せるはずのものが押せない」と
+ * 受け取られる。できることだけを並べる。
+ */
+export function pickableKinds(role: Role | null): SlotKind[] {
+  return canRegisterClass(role)
+    ? ["class", "event", "activity"]
+    : ["event", "activity"];
+}
+
+/**
+ * いま実際に選ばれている種類。
+ *
+ * ■ なぜ「押した値」をそのまま使わないか
+ *
+ *   画面の既定は「授業」。権限が分かるのは profiles を読み終えたあとで、
+ *   それまでのあいだ押した値は "class" のまま。そのまま描くと、
+ *   授業を入れられない人の画面が「授業が選ばれているのに、
+ *   授業のボタンは無い」形で始まる。
+ *
+ *   選べないものが選ばれていたら、選べるものの先頭へ読み替える。
+ *   状態を書き戻す（useEffect で setKind）のではなく、描くときに決める。
+ *   書き戻す形だと、一度おかしな姿で描いてから直すことになる。
+ */
+export function effectiveKind(role: Role | null, picked: SlotKind): SlotKind {
+  const ok = pickableKinds(role);
+  return ok.includes(picked) ? picked : ok[0];
+}
+
+/**
+ * 名簿を見られるか。
+ *
+ * 教授（レベル2）は、学生の名簿だけ見られる。
+ * 教職員の名簿には8桁の番号が並ぶので、そちらは見せない。
+ * 入れる・変える・消すは canManageAll のほう（2.1・2.2・管理者だけ）。
+ *
+ * ここは画面を出し分けるためのもので、守っているのは
+ * データベース側の can_read_roster / can_manage_roster。
+ */
+export function canReadRoster(role: Role | null): boolean {
+  return role === "admin_l2" || canManageAll(role);
+}

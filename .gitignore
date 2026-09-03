@@ -98,7 +98,13 @@ next-env.d.ts
 /lib/fgd.ts
 
 # 一度きりの道具。取り込みや点検に使ったもの。
-/scripts/
+#
+# ★ copy-maplibre-worker.mjs だけは外さない。
+#   package.json の prebuild から呼ばれる。無いと Vercel の組み立てが
+#   「そんなファイルは無い」で止まり、サイトごと出なくなる。
+#   中身は node_modules から写すだけで、学校の情報は一つも持たない。
+/scripts/*
+!/scripts/copy-maplibre-worker.mjs
 
 # 設計と手順の覚え書き。学校の情報が入っている。
 /docs/
