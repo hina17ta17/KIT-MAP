@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useAdminT } from "@/lib/adminLang";
 import { canManageAll, canReadFeedback, type Role } from "@/lib/auth";
 
 type Row = {
@@ -60,6 +61,7 @@ function when(iso: string): string {
 }
 
 export default function FeedbackPage() {
+  const T = useAdminT();
   const [role, setRole] = useState<Role | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   // 送り先が無いときは読み込むものも無い。最初から読み終わった扱いにする
@@ -269,21 +271,21 @@ export default function FeedbackPage() {
 
   /* ---------------- 表示 ---------------- */
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!canReadFeedback(role))
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
+        <p className="text-sm text-slate-700">{T("この画面は、いまの権限では使えません。")}</p>
         <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">
-          ログインへ
+          {T("ログインへ")}
         </Link>
       </Shell>
     );
 
   return (
     <Shell wide>
-      <AdminHeader title="みんなの感想" />
+      <AdminHeader title={T("みんなの感想")} />
       <AdminMenu current="feedback" role={role} />
 
       {msg && (
@@ -333,13 +335,13 @@ export default function FeedbackPage() {
             </div>
           </div>
         ) : (
-          <p className="mt-2 text-[10px] text-slate-500">まだ星が付いた感想はありません。</p>
+          <p className="mt-2 text-[10px] text-slate-500">{T("まだ星が付いた感想はありません。")}</p>
         )}
 
         <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-          誰が書いたかは、ふだんは<b>出しません</b>。
-          目にあまるものだけ、既読の欄の「良くないコメント」から確かめられます。
-          押したことと、押したのが誰かは記録に残ります。
+          誰が書いたかは、ふだんは<b>{T("出しません")}</b>。
+          {T("目にあまるものだけ、既読の欄の「良くないコメント」から確かめられます。")}
+          {T("押したことと、押したのが誰かは記録に残ります。")}
         </p>
       </div>
 
@@ -367,14 +369,14 @@ export default function FeedbackPage() {
       {tab === "new" ? (
         <div className="mt-2 flex items-center gap-2">
           <p className="flex-1 text-[10px] leading-relaxed text-slate-500">
-            感想を押すと、既読へ移ります。
+            {T("感想を押すと、既読へ移ります。")}
           </p>
           {fresh.length > 0 && (
             <button
               onClick={() => void markAll()}
               className="shrink-0 rounded-lg bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
             >
-              ぜんぶ既読にする
+              {T("ぜんぶ既読にする")}
             </button>
           )}
         </div>
@@ -383,7 +385,7 @@ export default function FeedbackPage() {
         read.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="flex-1 text-[10px] leading-relaxed text-slate-500">
-              左の丸を押して選ぶと、まとめて消せます。
+              {T("左の丸を押して選ぶと、まとめて消せます。")}
             </p>
             <button
               onClick={() =>
@@ -406,7 +408,7 @@ export default function FeedbackPage() {
               onClick={() => void removeAllRead()}
               className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95"
             >
-              既読をぜんぶ消す
+              {T("既読をぜんぶ消す")}
             </button>
           </div>
         )
@@ -466,12 +468,12 @@ export default function FeedbackPage() {
                 )}
                 {r.reported && (
                   <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700">
-                    良くないコメント
+                    {T("良くないコメント")}
                   </span>
                 )}
                 {tab === "new" && (
                   <span className="ml-auto shrink-0 text-[10px] font-bold text-blue-700">
-                    押すと既読 →
+                    {T("押すと既読 →")}
                   </span>
                 )}
               </div>
@@ -486,7 +488,7 @@ export default function FeedbackPage() {
                 <div className="mt-2 rounded-lg bg-slate-900 p-2.5 text-[11px] leading-relaxed text-white">
                   {found.known ? (
                     <>
-                      <div className="text-[9px] font-bold text-slate-400">これを書いた人</div>
+                      <div className="text-[9px] font-bold text-slate-400">{T("これを書いた人")}</div>
                       <div className="mt-0.5 font-bold">{found.name || "（名前なし）"}</div>
                       <div className="break-all font-mono text-[10px] text-slate-300">
                         {found.email}
@@ -504,7 +506,7 @@ export default function FeedbackPage() {
                     onClick={() => void mark(r.id, false)}
                     className="rounded-lg bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
                   >
-                    新規に戻す
+                    {T("新規に戻す")}
                   </button>
                   <button
                     onClick={() => void reveal(r.id)}
@@ -517,7 +519,7 @@ export default function FeedbackPage() {
                       onClick={() => void remove(r.id)}
                       className="ml-auto rounded-lg px-2 py-1 text-[10px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95"
                     >
-                      消す
+                      {T("消す")}
                     </button>
                   )}
                 </div>

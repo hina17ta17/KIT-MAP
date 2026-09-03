@@ -13,6 +13,7 @@
 
 import Link from "next/link";
 import { canManage, canManageAll, canManageCafeteria, canReadFeedback, type Role } from "@/lib/auth";
+import { useAdminLang, useAdminT } from "@/lib/adminLang";
 
 export type AdminPageId =
   | "approve"
@@ -107,17 +108,34 @@ const ENTRIES: Entry[] = [
     : []),
 ];
 
-/** 画面の見出し。右上には必ず地図へ戻る道を置く */
+/**
+ * 画面の見出し。右上には必ず地図へ戻る道と、言葉の切り替えを置く。
+ *
+ * 切り替えをここに置いたのは、管理画面のどこを開いていても
+ * 同じ場所にあるようにするため。覚える場所は地図と同じなので、
+ * どちらで切り替えても両方に効く。
+ */
 export function AdminHeader({ title }: { title: string }) {
+  const T = useAdminT();
+  const [lang, setLang] = useAdminLang();
   return (
     <div className="mb-4 flex items-start justify-between gap-3">
       <h1 className="text-lg font-bold text-slate-900">{title}</h1>
-      <Link
-        href="/"
-        className="shrink-0 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
-      >
-        地図へ
-      </Link>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          onClick={() => setLang(lang === "ja" ? "en" : "ja")}
+          title={lang === "ja" ? "English" : "日本語"}
+          className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
+        >
+          {lang === "ja" ? "A" : "あ"}
+        </button>
+        <Link
+          href="/"
+          className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
+        >
+          {T("地図へ")}
+        </Link>
+      </div>
     </div>
   );
 }
@@ -135,6 +153,7 @@ export function AdminMenu({
   current?: AdminPageId;
   role: Role | null;
 }) {
+  const T = useAdminT();
   const usable = ENTRIES.filter((e) => e.allowed(role));
   if (usable.length === 0) return null;
 
@@ -151,8 +170,8 @@ export function AdminMenu({
             >
               <span className="text-lg">{e.icon}</span>
               <span className="min-w-0">
-                <span className="block text-sm font-bold text-white">{e.label}</span>
-                <span className="block text-[10px] text-slate-300">いま開いています</span>
+                <span className="block text-sm font-bold text-white">{T(e.label)}</span>
+                <span className="block text-[10px] text-slate-300">{T("いま開いています")}</span>
               </span>
             </div>
           );
@@ -166,8 +185,8 @@ export function AdminMenu({
           >
             <span className="text-lg">{e.icon}</span>
             <span className="min-w-0">
-              <span className="block text-sm font-bold text-slate-800">{e.label}</span>
-              <span className="block text-[10px] text-slate-500">{e.sub}</span>
+              <span className="block text-sm font-bold text-slate-800">{T(e.label)}</span>
+              <span className="block text-[10px] text-slate-500">{T(e.sub)}</span>
             </span>
             <span className="ml-auto shrink-0 text-slate-400">›</span>
           </Link>

@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useAdminT } from "@/lib/adminLang";
 import {
   AFFILIATIONS,
   AFFILIATION_LABEL,
@@ -90,6 +91,7 @@ const HIDDEN: Role = "admin_l3";
 const SHORT = ROLE_SHORT;
 
 export default function AdminPage() {
+  const T = useAdminT();
   const [myRole, setMyRole] = useState<Role | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -526,7 +528,7 @@ export default function AdminPage() {
   const apply = async (role: Role, ids: string[]) => {
     setMsg(null);
     if (ids.length === 0) {
-      setMsg({ kind: "err", text: "誰も選ばれていません" });
+      setMsg({ kind: "err", text: T("誰も選ばれていません") });
       return;
     }
     setBusy(true);
@@ -557,16 +559,16 @@ export default function AdminPage() {
 
   /* ---------------- 表示 ---------------- */
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!supabaseReady)
-    return <Shell><p className="text-sm text-red-700">サーバーに接続できません。</p></Shell>;
+    return <Shell><p className="text-sm text-red-700">{T("サーバーに接続できません。")}</p></Shell>;
 
   if (!myRole)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">ログインしていません。</p>
-        <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">ログインへ</Link>
+        <p className="text-sm text-slate-700">{T("ログインしていません。")}</p>
+        <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">{T("ログインへ")}</Link>
       </Shell>
     );
 
@@ -574,9 +576,9 @@ export default function AdminPage() {
     return (
       <Shell>
         {/* どの権限なら使えるのかは書かない。上に誰か居ることが分かってしまう */}
-        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
+        <p className="text-sm text-slate-700">{T("この画面は、いまの権限では使えません。")}</p>
         <p className="mt-1 text-xs text-slate-500">現在の権限：{ROLE_LABEL[myRole]}</p>
-        <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">地図へ戻る</Link>
+        <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">{T("地図へ戻る")}</Link>
       </Shell>
     );
 
@@ -585,7 +587,7 @@ export default function AdminPage() {
 
   return (
     <Shell wide>
-      <AdminHeader title="承認・権限の管理" />
+      <AdminHeader title={T("承認・権限の管理")} />
       <AdminMenu current="approve" role={myRole} />
 
       {/* 申請 / 手続き中 / 既存 */}
@@ -614,12 +616,12 @@ export default function AdminPage() {
       {/* 手続き中の説明。承認できないのが故障に見えないように */}
       {tab === "setup" && (
         <div className="mb-3 rounded-xl bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
-          メールアドレスと氏名は入れたものの、
-          <b>まだ本人確認か所属の記入が済んでいない人</b>です。
+          {T("メールアドレスと氏名は入れたものの、")}
+          <b>{T("まだ本人確認か所属の記入が済んでいない人")}</b>です。
           <br />
-          本人だと確かめられていないので、ここからは権限を付けられません。
-          本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると、
-          「申請」に移ります。
+          {T("本人だと確かめられていないので、ここからは権限を付けられません。")}
+          {T("本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると、")}
+          {T("「申請」に移ります。")}
         </div>
       )}
 
@@ -694,14 +696,14 @@ export default function AdminPage() {
                     */}
                     {!r.verified && (
                       <span className="ml-1.5 rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold text-red-700">
-                        本人確認まだ
+                        {T("本人確認まだ")}
                       </span>
                     )}
                     {r.verified &&
                       (r.affiliation ?? "student") === "student" &&
                       !(r.grade && r.class_code && r.seat_no) && (
                       <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
-                        所属まだ
+                        {T("所属まだ")}
                       </span>
                     )}
                   </span>
@@ -738,7 +740,7 @@ export default function AdminPage() {
               {here && tab !== "setup" && (
                 <div className="mt-1 rounded-xl bg-slate-900 p-2.5">
                   <div className="mb-1.5 text-[10px] font-bold text-slate-400">
-                    権限を変える
+                    {T("権限を変える")}
                     <span className="ml-1.5 font-normal text-slate-500">
                       いまは「{ROLE_LABEL[r.role]}」
                     </span>
@@ -769,12 +771,12 @@ export default function AdminPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         type="password"
-                        placeholder="あなたのログインパスワード"
+                        placeholder={T("あなたのログインパスワード")}
                         autoComplete="current-password"
                         className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       <p className="mt-1 text-[10px] text-slate-500">
-                        一度承認した人を変えるには、ご自身のログインパスワードが要ります
+                        {T("一度承認した人を変えるには、ご自身のログインパスワードが要ります")}
                       </p>
                     </>
                   )}
@@ -790,7 +792,7 @@ export default function AdminPage() {
                   */}
                   <div className="mt-3 border-t border-slate-700 pt-2">
                     <div className="mb-1.5 text-[10px] font-bold text-slate-400">
-                      身分を直す
+                      {T("身分を直す")}
                       <span className="ml-1.5 font-normal text-slate-500">
                         いまは「{AFFILIATION_LABEL[r.affiliation ?? "student"]}」
                       </span>
@@ -823,7 +825,7 @@ export default function AdminPage() {
         })}
         {shown.length === 0 && (
           <li className="rounded-xl bg-slate-50 p-4 text-center text-xs text-slate-500">
-            該当する人がいません
+            {T("該当する人がいません")}
           </li>
         )}
       </ul>
@@ -853,11 +855,11 @@ export default function AdminPage() {
         一覧のいちばん下に置き、色でも他と区別する。
       */}
       <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3">
-        <div className="text-xs font-bold text-red-900">学生と申請者をやり直させる</div>
+        <div className="text-xs font-bold text-red-900">{T("学生と申請者をやり直させる")}</div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-800">
-          学生と申請者から、ログイン・パスワード・本人確認・氏名・学年・クラス・
-          名列番号が消えます。<b>管理者（食堂・課外活動・教授・副管理者・管理者）は全員残ります。</b>
-          消された人は申請の最初からやり直しです。元には戻せません。
+          {T("学生と申請者から、ログイン・パスワード・本人確認・氏名・学年・クラス・")}
+          名列番号が消えます。<b>{T("管理者（食堂・課外活動・教授・副管理者・管理者）は全員残ります。")}</b>
+          {T("消された人は申請の最初からやり直しです。元には戻せません。")}
         </p>
         <button
           onClick={() => void resetAll()}
@@ -876,15 +878,15 @@ export default function AdminPage() {
       */}
       <div className="mt-3 rounded-xl border-2 border-red-700 bg-red-100 p-3">
         <div className="text-xs font-bold text-red-900">
-          管理者も含めて、すべての席を消す
+          {T("管理者も含めて、すべての席を消す")}
         </div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-900">
-          申請の途中の人も、承認済みの人も、<b>副管理者（2.1・2.2）も</b>消えます。
-          パスワード・本人確認・大学の情報がすべて無くなり、ログインの最初から
-          やり直しになります。
+          申請の途中の人も、承認済みの人も、<b>{T("副管理者（2.1・2.2）も")}</b>消えます。
+          {T("パスワード・本人確認・大学の情報がすべて無くなり、ログインの最初から")}
+          {T("やり直しになります。")}
           <br />
-          <b>残るのは、いちばん上の権限の人だけです。</b>
-          あなたがいちばん上でなければ、あなたも消えてログアウトされます。
+          <b>{T("残るのは、いちばん上の権限の人だけです。")}</b>
+          {T("あなたがいちばん上でなければ、あなたも消えてログアウトされます。")}
         </p>
         <button
           onClick={() => void resetEverything()}
@@ -905,18 +907,18 @@ export default function AdminPage() {
         巻き込む人数はボタンの上に出し、確認のときにも名前を並べる。
       */}
       <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3">
-        <div className="text-xs font-bold text-red-900">身分ごとに消す</div>
+        <div className="text-xs font-bold text-red-900">{T("身分ごとに消す")}</div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-800">
-          申請のときに<b>本人が選んだ身分</b>で選び出して消します。権限とは別のものなので、
-          管理者が入っていることがあります。数はボタンに出しています。
+          申請のときに<b>{T("本人が選んだ身分")}</b>で選び出して消します。権限とは別のものなので、
+          {T("管理者が入っていることがあります。数はボタンに出しています。")}
           <br />
-          いちばん上の権限の人と、あなた自身は残ります。
+          {T("いちばん上の権限の人と、あなた自身は残ります。")}
         </p>
         <input
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
-          placeholder="あなたのログインパスワード"
+          placeholder={T("あなたのログインパスワード")}
           autoComplete="current-password"
           className="mt-2 w-full rounded-xl bg-white px-4 py-2.5 text-sm outline-none ring-1 ring-red-200 focus:ring-2 focus:ring-blue-500"
         />
@@ -949,19 +951,19 @@ export default function AdminPage() {
         印を付けてから、ここで消す。
       */}
       <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
-        <div className="text-xs font-bold text-slate-800">選んだ人だけを消す</div>
+        <div className="text-xs font-bold text-slate-800">{T("選んだ人だけを消す")}</div>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          一覧で名前の左の印を付けてから押します。その人だけが、ログイン・
-          パスワード・本人確認・大学の情報を失い、申請の最初からやり直しになります。
+          {T("一覧で名前の左の印を付けてから押します。その人だけが、ログイン・")}
+          {T("パスワード・本人確認・大学の情報を失い、申請の最初からやり直しになります。")}
           <br />
-          いちばん上の権限の人と、あなた自身は選んでも消えません。
+          {T("いちばん上の権限の人と、あなた自身は選んでも消えません。")}
         </p>
         {picked.length > 0 && (
           <input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             type="password"
-            placeholder="あなたのログインパスワード"
+            placeholder={T("あなたのログインパスワード")}
             autoComplete="current-password"
             className="mt-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
           />
@@ -1006,7 +1008,7 @@ export default function AdminPage() {
               onClick={() => setPicked([])}
               className="rounded-lg px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-100"
             >
-              印を外す
+              {T("印を外す")}
             </button>
           </div>
           {needPassword && (
@@ -1014,7 +1016,7 @@ export default function AdminPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               type="password"
-              placeholder="あなたのログインパスワード（承認済みの人を変えるとき）"
+              placeholder={T("あなたのログインパスワード（承認済みの人を変えるとき）")}
               autoComplete="current-password"
               className="mb-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
             />
@@ -1039,23 +1041,25 @@ export default function AdminPage() {
 
 /* ---------------- 絞り込みの一行 ---------------- */
 
-function Filter<T extends string | number>({
+// 型の名前は V。T は翻訳の関数に使っているので、ぶつからないようにする
+function Filter<V extends string | number>({
   label,
   value,
   onPick,
   options,
 }: {
   label: string;
-  value: T | null;
-  onPick: (v: T | null) => void;
-  options: [T, string][];
+  value: V | null;
+  onPick: (v: V | null) => void;
+  options: [V, string][];
 }) {
+  const T = useAdminT();
   return (
     <div className="mb-1.5 last:mb-0">
       <div className="mb-1 text-[10px] font-bold text-slate-500">{label}</div>
       <div className="flex flex-wrap gap-1">
         <Chip on={value === null} onClick={() => onPick(null)}>
-          すべて
+          {T("すべて")}
         </Chip>
         {options.map(([v, text]) => (
           <Chip key={String(v)} on={value === v} onClick={() => onPick(v)}>

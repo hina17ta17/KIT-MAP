@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useAdminT } from "@/lib/adminLang";
 import { ROLE_LABEL, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
@@ -45,6 +46,7 @@ const STATES = [
 const BR = String.fromCharCode(10);
 
 export default function CafeteriaAdminPage() {
+  const T = useAdminT();
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -142,7 +144,7 @@ export default function CafeteriaAdminPage() {
   const saveMenu = async () => {
     if (!date || !target) return;
     if (!name.trim()) {
-      setMsg({ kind: "err", text: "名称を入れてください" });
+      setMsg({ kind: "err", text: T("名称を入れてください") });
       return;
     }
     setBusy(true);
@@ -235,16 +237,16 @@ export default function CafeteriaAdminPage() {
 
   /* ---------------- 表示 ---------------- */
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!supabaseReady)
-    return <Shell><p className="text-sm text-red-700">サーバーに接続できません。</p></Shell>;
+    return <Shell><p className="text-sm text-red-700">{T("サーバーに接続できません。")}</p></Shell>;
 
   if (!role)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">ログインしていません。</p>
-        <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">ログインへ</Link>
+        <p className="text-sm text-slate-700">{T("ログインしていません。")}</p>
+        <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">{T("ログインへ")}</Link>
       </Shell>
     );
 
@@ -252,16 +254,16 @@ export default function CafeteriaAdminPage() {
     return (
       <Shell>
         <p className="text-sm text-slate-700">
-          食堂の設定ができるのは、食堂の担当だけです。
+          {T("食堂の設定ができるのは、食堂の担当だけです。")}
         </p>
         <p className="mt-1 text-xs text-slate-500">現在の権限：{ROLE_LABEL[role]}</p>
-        <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">地図へ戻る</Link>
+        <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">{T("地図へ戻る")}</Link>
       </Shell>
     );
 
   return (
     <Shell wide>
-      <AdminHeader title="食堂のメニュー" />
+      <AdminHeader title={T("食堂のメニュー")} />
       <AdminMenu current="cafeteria" role={role} />
 
       {/* その日ぶんをまとめて消す。他人が入れたぶんも消えるので上位だけ */}
@@ -278,7 +280,7 @@ export default function CafeteriaAdminPage() {
       {/* ---- 1. 日を選ぶ ---- */}
       {!date && (
         <>
-          <p className="mb-2 text-[11px] font-bold text-slate-500">まず日を選んでください</p>
+          <p className="mb-2 text-[11px] font-bold text-slate-500">{T("まず日を選んでください")}</p>
           <Cal
             onPick={(d) => {
               setDate(d);
@@ -316,7 +318,7 @@ export default function CafeteriaAdminPage() {
           {!target && (
             <>
               <p className="mb-2 text-[11px] font-bold text-slate-500">
-                どの項目を設定しますか
+                {T("どの項目を設定しますか")}
               </p>
               <div className="flex flex-col gap-2">
                 {counters.map((c) => {
@@ -370,7 +372,7 @@ export default function CafeteriaAdminPage() {
                 })}
                 {counters.length === 0 && (
                   <p className="rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500">
-                    食堂の項目が登録されていません。
+                    {T("食堂の項目が登録されていません。")}
                   </p>
                 )}
               </div>
@@ -385,7 +387,7 @@ export default function CafeteriaAdminPage() {
               {target.kind === "counter" ? (
                 <>
                   <p className="mb-2 text-[11px] text-slate-500">
-                    この日の状態を選んでください
+                    {T("この日の状態を選んでください")}
                   </p>
                   <div className="grid grid-cols-2 gap-2">
                     {STATES.map((s) => {
@@ -400,7 +402,7 @@ export default function CafeteriaAdminPage() {
                           }`}
                         >
                           {s.label}
-                          {on && <span className="mt-0.5 block text-[10px] font-normal">選択中</span>}
+                          {on && <span className="mt-0.5 block text-[10px] font-normal">{T("選択中")}</span>}
                         </button>
                       );
                     })}
@@ -409,12 +411,12 @@ export default function CafeteriaAdminPage() {
               ) : (
                 <>
                   <p className="mb-2 text-[11px] text-slate-500">
-                    この日の名称を入れてください
+                    {T("この日の名称を入れてください")}
                   </p>
                   <input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="味噌カツ丼"
+                    placeholder={T("味噌カツ丼")}
                     className="w-full rounded-xl bg-slate-100 px-4 py-3 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="mt-2 flex items-center gap-2">
@@ -425,7 +427,7 @@ export default function CafeteriaAdminPage() {
                       placeholder="450"
                       className="w-28 rounded-xl bg-slate-100 px-4 py-3 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                     />
-                    <span className="text-xs font-bold text-slate-500">円（任意）</span>
+                    <span className="text-xs font-bold text-slate-500">{T("円（任意）")}</span>
                   </div>
                   <button
                     onClick={() => void saveMenu()}
@@ -440,7 +442,7 @@ export default function CafeteriaAdminPage() {
                       disabled={busy}
                       className="mt-1.5 w-full rounded-xl px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
                     >
-                      この日の登録を消す
+                      {T("この日の登録を消す")}
                     </button>
                   )}
                 </>

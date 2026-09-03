@@ -15,6 +15,7 @@ import Link from "next/link";
 import type { FeatureCollection, Polygon } from "geojson";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useAdminT } from "@/lib/adminLang";
 import { type Role, canManageAll } from "@/lib/auth";
 import { guessFloor, floorLabel, type BuildingProps } from "@/lib/features";
 
@@ -40,6 +41,7 @@ const CATEGORIES = [
 ];
 
 export default function RoomsPage() {
+  const T = useAdminT();
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -148,14 +150,14 @@ export default function RoomsPage() {
     else setRows((prev) => prev.filter((r) => r.id !== id));
   };
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!canEdit)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
+        <p className="text-sm text-slate-700">{T("この画面は、いまの権限では使えません。")}</p>
         <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">
-          ログインへ
+          {T("ログインへ")}
         </Link>
       </Shell>
     );
@@ -164,12 +166,12 @@ export default function RoomsPage() {
 
   return (
     <Shell wide>
-      <AdminHeader title="教室の登録" />
+      <AdminHeader title={T("教室の登録")} />
       <AdminMenu current="rooms" role={role} />
 
       {msg && <p className="mb-3 rounded-xl bg-red-50 p-3 text-xs text-red-800">{msg}</p>}
 
-      <label className="block text-[11px] font-semibold text-slate-500">建物</label>
+      <label className="block text-[11px] font-semibold text-slate-500">{T("建物")}</label>
       <select
         value={target}
         onChange={(e) => setTarget(e.target.value)}
@@ -184,8 +186,8 @@ export default function RoomsPage() {
 
       <div className="mt-4 rounded-xl bg-slate-50 p-3">
         <p className="text-[11px] leading-relaxed text-slate-600">
-          部屋番号を1行ずつ貼り付けます。<b>階は番号から自動で判定</b>します
-          （302→3階、B01→地下1階）。あとから直せます。
+          部屋番号を1行ずつ貼り付けます。<b>{T("階は番号から自動で判定")}</b>します
+          {T("（302→3階、B01→地下1階）。あとから直せます。")}
         </p>
         <textarea
           value={bulk}
@@ -199,7 +201,7 @@ export default function RoomsPage() {
           disabled={!bulk.trim()}
           className="mt-2 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:bg-slate-300"
         >
-          まとめて追加
+          {T("まとめて追加")}
         </button>
       </div>
 
@@ -220,14 +222,14 @@ export default function RoomsPage() {
                 <input
                   value={r.name}
                   onChange={(e) => update(r.id, { name: e.target.value })}
-                  placeholder="名称（任意）"
+                  placeholder={T("名称（任意）")}
                   className="min-w-0 flex-1 rounded border border-slate-300 px-1.5 py-1 text-xs"
                 />
                 <input
                   type="number"
                   value={r.floor}
                   onChange={(e) => update(r.id, { floor: Number(e.target.value) })}
-                  title="階。地下は -1"
+                  title={T("階。地下は -1")}
                   className="w-14 rounded border border-slate-300 px-1.5 py-1 text-xs"
                 />
                 <select

@@ -33,6 +33,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useAdminT } from "@/lib/adminLang";
 import { canManageAll, canReadRoster, type Role } from "@/lib/auth";
 import { readXlsx, type Row } from "@/lib/xlsx";
 
@@ -67,6 +68,8 @@ type Report = { students: number; staff: number; rejected: Rejected[] };
 type Counts = { students: number; teachers?: number; others?: number; all: boolean };
 type DomainKind = "student" | "teacher" | "other";
 type Domains = Record<DomainKind, string>;
+/** その身分のドメインを見るか。false なら合っていなくても通る */
+type DomainOn = Record<DomainKind, boolean>;
 
 /**
  * 登録している人を見る欄。身分で五つに分ける。
@@ -127,6 +130,7 @@ const DOMAIN_KINDS: { id: DomainKind; label: string; note: string }[] = [
 ];
 
 export default function RosterPage() {
+  const T = useAdminT();
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(supabaseReady);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -155,6 +159,7 @@ export default function RosterPage() {
   const [domainOpen, setDomainOpen] = useState(false);
   const [domainKind, setDomainKind] = useState<DomainKind>("student");
   const [domains, setDomains] = useState<Domains | null>(null);
+  const [domainOn, setDomainOn] = useState<DomainOn | null>(null);
   /** いま直している途中の文字。保存するまで反映しない */
   const [draftDomain, setDraftDomain] = useState("");
 
@@ -212,13 +217,16 @@ export default function RosterPage() {
     if (canManageAll(r)) {
       const { data: d } = await supabase.rpc("get_domains");
       if (d) {
-        const got = d as Record<string, string>;
-        const next: Domains = {
-          student: got.student ?? "",
-          teacher: got.teacher ?? "",
-          other: got.other ?? "",
-        };
-        setDomains(next);
+        // ドメインは文字、見るかどうかは真偽。混ぜて持つので unknown で受ける
+        const got = d as Record<string, unknown>;
+        const text = (k: string) => (typeof got[k] === "string" ? (got[k] as string) : "");
+        setDomains({ student: text("student"), teacher: text("teacher"), other: text("other") });
+        setDomainOn({
+          // 読めないときは「あり」に倒す。うっかり全部通すほうが危ない
+          student: got.student_on !== false,
+          teacher: got.teacher_on !== false,
+          other: got.other_on !== false,
+        });
       }
     }
     setLoading(false);
@@ -324,7 +332,7 @@ export default function RosterPage() {
       setMsg(
         (data as number) > 0
           ? { kind: "ok", text: `${label} を名簿から消しました。` }
-          : { kind: "err", text: "その人は名簿にいませんでした。" },
+          : { kind: "err", text: T("その人は名簿にいませんでした。") },
       );
       await load();
     } catch (e) {
@@ -373,7 +381,7 @@ export default function RosterPage() {
       const kept = sending.filter((s) => COLS.some((c) => s[c] !== ""));
       setFileName(file.name);
       setRows(kept);
-      if (kept.length === 0) setMsg({ kind: "err", text: "中身のある行がありませんでした" });
+      if (kept.length === 0) setMsg({ kind: "err", text: T("中身のある行がありませんでした") });
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "読めませんでした" });
     } finally {
@@ -470,6 +478,74 @@ export default function RosterPage() {
    *   データベース側の守り（check_email_domain）も、席を作るときと
    *   アドレスを変えるときにしか動かない。
    */
+  /**
+   * その身分のドメインを「あり／なし」で切り替える。
+   *
+   * ■ 「なし」は「空」とは違う
+   *   空   … まだ決めていない。学生と教授は、決まるまで人に回す
+   *   なし … 見ないと決めた。合っていなくても通す
+   *
+   * ■ 「なし」にするほうだけ二度たずねる
+   *   守りを緩める向きなので、間違えると誰でも入れるようになる。
+   *   「あり」に戻すのは締める向きなので、一度でよい。
+   */
+  const changeDomainCheck = async (next: boolean) => {
+    const kind = DOMAIN_KINDS.find((k) => k.id === domainKind);
+    if (!kind) return;
+
+    if (!next) {
+      const first = window.confirm(
+        [
+          `${kind.label}のドメインを「なし」にします。`,
+          "",
+          "この身分の人は、ドメインが合っていなくても通るようになります。",
+          "外部のアドレスの人を受け入れたいときのための設定です。",
+          "",
+          "続けますか？",
+        ].join(BR),
+      );
+      if (!first) return;
+      const second = window.confirm(
+        [
+          "本当に「なし」にしますか？",
+          "",
+          "これが最後の確認です。",
+          "一つでも「なし」があると、席を作るところでもドメインを見なくなります",
+          "（席を作る時点では、その人がどの身分かまだ分からないため）。",
+        ].join(BR),
+      );
+      if (!second) return;
+    }
+
+    setMsg(null);
+    setBusy(true);
+    try {
+      const { error } = await createClient().rpc("set_domain_check", {
+        p_kind: domainKind,
+        p_on: next,
+      });
+      if (error) throw error;
+      setDomainOn((d) => (d ? { ...d, [domainKind]: next } : d));
+      setMsg({
+        kind: "ok",
+        text:
+          `${kind.label}のドメインを「${next ? "あり" : "なし"}」にしました。` +
+          (next ? "" : "この身分は、ドメインが合っていなくても通ります。"),
+      });
+      await load();
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/13_domains.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const changeDomain = async () => {
     const kind = DOMAIN_KINDS.find((k) => k.id === domainKind);
     if (!kind) return;
@@ -542,18 +618,18 @@ export default function RosterPage() {
     }
   };
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!canReadRoster(role))
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
+        <p className="text-sm text-slate-700">{T("この画面は、いまの権限では使えません。")}</p>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          名簿を見られるのは、教授（レベル2）・副管理者（2.1・2.2）・管理者です。
-          入れる・消すのは、副管理者と管理者だけです。
+          {T("名簿を見られるのは、教授（レベル2）・副管理者（2.1・2.2）・管理者です。")}
+          {T("入れる・消すのは、副管理者と管理者だけです。")}
         </p>
         <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">
-          ログインへ
+          {T("ログインへ")}
         </Link>
       </Shell>
     );
@@ -564,7 +640,7 @@ export default function RosterPage() {
 
   return (
     <Shell wide>
-      <AdminHeader title="名簿" />
+      <AdminHeader title={T("名簿")} />
       <AdminMenu current="roster" role={role} />
 
       {msg && (
@@ -579,7 +655,7 @@ export default function RosterPage() {
 
       {/* いま何件入っているか */}
       <div className="rounded-xl bg-slate-50 p-3">
-        <div className="text-[11px] font-bold text-slate-500">いま入っている名簿</div>
+        <div className="text-[11px] font-bold text-slate-500">{T("いま入っている名簿")}</div>
         <div className="mt-1 flex flex-wrap gap-3 text-xs font-bold text-slate-800">
           <span>学生 {counts?.students ?? "—"}</span>
           {canWrite && (
@@ -591,8 +667,8 @@ export default function RosterPage() {
         </div>
         {!canWrite && (
           <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-            教授（レベル2）が見られるのは、<b>学生の名簿だけ</b>です。
-            教職員の名簿には8桁の番号が並ぶので、副管理者と管理者だけが見られます。
+            教授（レベル2）が見られるのは、<b>{T("学生の名簿だけ")}</b>です。
+            {T("教職員の名簿には8桁の番号が並ぶので、副管理者と管理者だけが見られます。")}
           </p>
         )}
       </div>
@@ -614,7 +690,7 @@ export default function RosterPage() {
       */}
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-bold text-slate-900">登録している人を見る</div>
+          <div className="text-xs font-bold text-slate-900">{T("登録している人を見る")}</div>
           <button
             onClick={() => {
               const next = !listOpen;
@@ -661,7 +737,7 @@ export default function RosterPage() {
               </div>
             ) : (
               <p className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
-                教授（レベル2）が見られるのは<b>学生だけ</b>です。
+                教授（レベル2）が見られるのは<b>{T("学生だけ")}</b>です。
               </p>
             )}
 
@@ -679,7 +755,7 @@ export default function RosterPage() {
                   }}
                   className="w-full rounded-lg bg-slate-100 px-2.5 py-2 text-[11px] outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">学部（すべて）</option>
+                  <option value="">{T("学部（すべて）")}</option>
                   {facs.map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.name}
@@ -737,7 +813,7 @@ export default function RosterPage() {
                     disabled={page === 0 || listBusy}
                     className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-600 disabled:text-slate-300"
                   >
-                    前
+                    {T("前")}
                   </button>
                   <span>
                     {page + 1} / {pages}
@@ -751,7 +827,7 @@ export default function RosterPage() {
                     disabled={page >= pages - 1 || listBusy}
                     className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-600 disabled:text-slate-300"
                   >
-                    次
+                    {T("次")}
                   </button>
                 </span>
               )}
@@ -808,8 +884,8 @@ export default function RosterPage() {
       */}
       {!canWrite && (
         <p className="mt-4 rounded-xl bg-slate-50 p-3 text-[10px] leading-relaxed text-slate-500">
-          名簿に入れる・消す、ドメインを変えるといった操作は、
-          副管理者（2.1・2.2）と管理者だけができます。
+          {T("名簿に入れる・消す、ドメインを変えるといった操作は、")}
+          {T("副管理者（2.1・2.2）と管理者だけができます。")}
         </p>
       )}
 
@@ -826,7 +902,7 @@ export default function RosterPage() {
       {canWrite && (
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-bold text-slate-900">ドメイン名確認</div>
+          <div className="text-xs font-bold text-slate-900">{T("ドメイン名確認")}</div>
           <button
             onClick={() => {
               const next = !domainOpen;
@@ -867,15 +943,61 @@ export default function RosterPage() {
                     <b>{kind.label}</b>：{kind.note}
                   </p>
 
+                  {/*
+                    ドメインを見るか、見ないか。
+
+                    「空（決めていない）」とは別のもの。
+                      空   … まだ決めていない。学生と教授は人に回す
+                      なし … 見ないと決めた。合っていなくても通す
+                    外部のアドレスの人を受け入れたいときに使う。
+                  */}
                   <label className="mt-2 block text-[10px] font-bold text-slate-500">
-                    いま決まっているもの
+                    {T("ドメインを見るか")}
+                  </label>
+                  <div className="mt-0.5 grid grid-cols-2 gap-1.5">
+                    {([true, false] as const).map((on) => {
+                      const now = domainOn?.[domainKind] !== false;
+                      return (
+                        <button
+                          key={String(on)}
+                          onClick={() => void changeDomainCheck(on)}
+                          disabled={busy || now === on}
+                          className={`rounded-lg px-2 py-2 text-[11px] font-bold transition active:scale-95 ${
+                            now === on
+                              ? on
+                                ? "bg-slate-900 text-white"
+                                : "bg-amber-500 text-white"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {on ? "あり" : "なし"}
+                          <span className="mt-0.5 block text-[9px] font-normal opacity-80">
+                            {on ? "このドメインだけ通す" : "合っていなくても通す"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {domainOn?.[domainKind] === false && (
+                    <p className="mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-amber-900">
+                      いまは<b>{T("「なし」")}</b>です。{kind.label}は、ドメインが合っていなくても通ります。
+                      <br />
+                      {T("一つでも「なし」があると、席を作るところでもドメインを見ません")}
+                      {T("（その時点では、まだ身分が分からないため）。")}
+                    </p>
+                  )}
+
+                  <label className="mt-2 block text-[10px] font-bold text-slate-500">
+                    {T("いま決まっているもの")}
                   </label>
                   <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
-                    {saved || "（決めていません）"}
+                    {domainOn?.[domainKind] === false
+                      ? "（見ていません）"
+                      : saved || "（決めていません）"}
                   </p>
 
                   <label className="mt-2 block text-[10px] font-bold text-slate-500">
-                    直す
+                    {T("直す")}
                   </label>
                   <input
                     value={draftDomain}
@@ -885,10 +1007,10 @@ export default function RosterPage() {
                     className="mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                   />
                   <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                    空にすると「決めていない」に戻ります。
+                    {T("空にすると「決めていない」に戻ります。")}
                     <br />
-                    <b>いまログインしている人は、変えても入ったままです。</b>
-                    この設定は、これから席を作る人にだけ効きます。
+                    <b>{T("いまログインしている人は、変えても入ったままです。")}</b>
+                    {T("この設定は、これから席を作る人にだけ効きます。")}
                   </p>
 
                   <button
@@ -909,19 +1031,19 @@ export default function RosterPage() {
       {/* xlsx を選ぶ */}
       {canWrite && (
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
-        <div className="text-xs font-bold text-slate-900">xlsx から取り込む</div>
+        <div className="text-xs font-bold text-slate-900">{T("xlsx から取り込む")}</div>
         <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-          1行が1人。<b>A 身分（学生／教授／その他）・B メールアドレス・C 名前</b>。
-          学生はさらに <b>D 学年・E クラス・F 名列番号・G 学籍番号</b>、
-          教授とその他は <b>H 8桁の番号</b>。
+          1行が1人。<b>{T("A 身分（学生／教授／その他）・B メールアドレス・C 名前")}</b>。
+          学生はさらに <b>{T("D 学年・E クラス・F 名列番号・G 学籍番号")}</b>、
+          教授とその他は <b>{T("H 8桁の番号")}</b>。
           <br />
-          <b>G 学籍番号</b>は、アドレスに書いてある<b>7桁の数字</b>です
-          （c1234567@… なら 1234567）。頭の一文字ごと書いてあっても構いません。
+          <b>{T("G 学籍番号")}</b>{T("は、アドレスに書いてある")}<b>{T("7桁の数字")}</b>です
+          {T("（c1234567@… なら 1234567）。頭の一文字ごと書いてあっても構いません。")}
           <br />
-          見出しの行があっても構いません（A列が三択でないので自動で飛ばされます）。
+          {T("見出しの行があっても構いません（A列が三択でないので自動で飛ばされます）。")}
           <br />
           <span className="text-slate-400">
-            ファイルそのものはどこにも送りません。この端末で読み取った中身だけを送ります。
+            {T("ファイルそのものはどこにも送りません。この端末で読み取った中身だけを送ります。")}
           </span>
         </p>
 
@@ -969,7 +1091,7 @@ export default function RosterPage() {
       {canWrite && (
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-bold text-slate-900">一人ずつ手で入れる</div>
+          <div className="text-xs font-bold text-slate-900">{T("一人ずつ手で入れる")}</div>
           <button
             onClick={() => setManualOpen((v) => !v)}
             className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
@@ -1064,7 +1186,7 @@ export default function RosterPage() {
                     className={manualInput}
                   />
                   <p className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
-                    メールアドレスに書いてある7桁の数字です。
+                    {T("メールアドレスに書いてある7桁の数字です。")}
                     {studentNoOf(one.email) && (
                       <>
                         <br />
@@ -1072,7 +1194,7 @@ export default function RosterPage() {
                       </>
                     )}
                     <br />
-                    頭の一文字ごと（c1234567）打っても構いません。数字だけを取り出してしまいます。
+                    {T("頭の一文字ごと（c1234567）打っても構いません。数字だけを取り出してしまいます。")}
                   </p>
                   {studentNoOf(one.email) && !one.student_no && (
                     <button
@@ -1105,8 +1227,8 @@ export default function RosterPage() {
             */}
             {one.kind === "教授" && !domains?.teacher && (
               <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
-                教授のドメインが、まだ決まっていません。このままだと入れられません。
-                上の<b>ドメイン名確認</b>から、教授のドメインを入れてください。
+                {T("教授のドメインが、まだ決まっていません。このままだと入れられません。")}
+                上の<b>{T("ドメイン名確認")}</b>から、教授のドメインを入れてください。
               </p>
             )}
             {one.kind === "学生" &&
@@ -1118,7 +1240,7 @@ export default function RosterPage() {
                 if (!typed)
                   return (
                     <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
-                      学籍番号は7桁の数字です。このままだと入れられません。
+                      {T("学籍番号は7桁の数字です。このままだと入れられません。")}
                     </p>
                   );
                 if (fromMail && typed !== fromMail)
@@ -1126,13 +1248,13 @@ export default function RosterPage() {
                     <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
                       学籍番号（<b className="font-mono">{typed}</b>）と、メールアドレスの中の番号
                       （<b className="font-mono">{fromMail}</b>）が違います。
-                      このままだと入れられません。
+                      {T("このままだと入れられません。")}
                     </p>
                   );
                 if (!fromMail)
                   return (
                     <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">
-                      メールアドレスの中に7桁の数字がありません。このままだと入れられません。
+                      {T("メールアドレスの中に7桁の数字がありません。このままだと入れられません。")}
                     </p>
                   );
                 return null;
@@ -1169,7 +1291,7 @@ export default function RosterPage() {
                 disabled={busy || listBusy}
                 className="mt-1.5 w-full rounded-xl px-4 py-2 text-[11px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
               >
-                このアドレスを名簿から消す
+                {T("このアドレスを名簿から消す")}
               </button>
             )}
           </div>
@@ -1184,7 +1306,7 @@ export default function RosterPage() {
             取り込まなかった行：{report.rejected.length}
           </div>
           {report.rejected.length === 0 ? (
-            <p className="mt-1 text-[11px] text-emerald-700">全部入りました。</p>
+            <p className="mt-1 text-[11px] text-emerald-700">{T("全部入りました。")}</p>
           ) : (
             <ul className="mt-1 max-h-60 space-y-1 overflow-y-auto text-[10px] leading-relaxed">
               {report.rejected.map((r, i) => (

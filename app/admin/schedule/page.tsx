@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useAdminT } from "@/lib/adminLang";
 import { canManageAll, effectiveKind, pickableKinds, type Role } from "@/lib/auth";
 import MultiDatePicker, { niceDate, todayYmd } from "@/components/MultiDatePicker";
 
@@ -90,6 +91,7 @@ function hhmm(t: string): string {
 }
 
 export default function SchedulePage() {
+  const T = useAdminT();
   const [role, setRole] = useState<Role | null>(null);
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(true);
@@ -135,7 +137,15 @@ export default function SchedulePage() {
   const [deptId, setDeptId] = useState<number | null>(null);
   const [courseId, setCourseId] = useState<number | null>(null);
   const [courseName, setCourseName] = useState("");
-  const [className, setClassName] = useState("");
+  /**
+   * 選んだクラス。空なら「すべて（分かれていない）」。
+   *
+   * 一つの授業を CC1 と CC2 が一緒に受けることがあるので、いくつでも選べる。
+   * しまうときは「CC1・CC2」の形に揃える（class_name は文字の列一つ）。
+   */
+  const [classes, setClasses] = useState<string[]>([]);
+  /** 並んでいないクラスを打ち込んで足すための欄 */
+  const [classDraft, setClassDraft] = useState("");
   const [teacher, setTeacher] = useState("");
   const [catId, setCatId] = useState<number | null>(null);
   const [activityId, setActivityId] = useState<number | null>(null);
@@ -291,6 +301,28 @@ export default function SchedulePage() {
     [depts, deptId],
   );
 
+  /**
+   * クラスの選択肢。
+   *
+   * 決まった一覧はどこにも無いので、二つから作る。
+   *   ・その学科ですでに使われているクラス（courses.class_name）
+   *   ・記号 + 1〜4（まだ一つも入れていないときのため）
+   *
+   * すでに使われているものを先に出すのは、打ち方を揃えるため。
+   * 足りないものは、下の欄から打ち込んで足せる。
+   */
+  const classChoices = useMemo(() => {
+    const used = new Set<string>();
+    for (const c of courses) {
+      for (const one of (c.class_name ?? "").split("・")) {
+        const v = one.trim();
+        if (v) used.add(v);
+      }
+    }
+    if (deptCode) for (let i = 1; i <= 4; i++) used.add(`${deptCode}${i}`);
+    return [...used].sort((a, b) => a.localeCompare(b, "ja", { numeric: true }));
+  }, [courses, deptCode]);
+
   /** いま入れようとしている時間帯。まだ決まっていなければ null */
   const slot = useMemo(() => {
     if (kind === "class") {
@@ -364,11 +396,11 @@ export default function SchedulePage() {
         targets ?? dates.map((d) => ({ date: d, rooms: chosen }));
 
       if (plan.length === 0 || plan.every((p) => p.rooms.length === 0)) {
-        setMsg({ kind: "err", text: "教室を選んでください" });
+        setMsg({ kind: "err", text: T("教室を選んでください") });
         return;
       }
       if (dates.length === 0) {
-        setMsg({ kind: "err", text: "日にちを選んでください" });
+        setMsg({ kind: "err", text: T("日にちを選んでください") });
         return;
       }
 
@@ -379,18 +411,19 @@ export default function SchedulePage() {
         // 授業で、まだ無い科目なら先に作る
         if (kind === "class" && !useCourseId) {
           if (!courseName.trim()) {
-            setMsg({ kind: "err", text: "授業名を入れてください" });
+            setMsg({ kind: "err", text: T("授業名を入れてください") });
             return;
           }
           if (deptId === null) {
-            setMsg({ kind: "err", text: "学科を選んでください" });
+            setMsg({ kind: "err", text: T("学科を選んでください") });
             return;
           }
           const { data, error } = await supabase
             .from("courses")
             .insert({
               name: courseName.trim(),
-              class_name: className.trim(),
+              // 選んだクラスは「CC1・CC2」の形にそろえる。空なら「すべて」
+              class_name: classes.join("・"),
               teacher: teacher.trim(),
               department_id: deptId,
             })
@@ -401,15 +434,15 @@ export default function SchedulePage() {
         }
 
         if (kind === "class" && periodId === null) {
-          setMsg({ kind: "err", text: "時限を選んでください" });
+          setMsg({ kind: "err", text: T("時限を選んでください") });
           return;
         }
         if (kind === "activity" && activityId === null) {
-          setMsg({ kind: "err", text: "団体を選んでください" });
+          setMsg({ kind: "err", text: T("団体を選んでください") });
           return;
         }
         if (kind === "event" && !title.trim()) {
-          setMsg({ kind: "err", text: "イベント名を入れてください" });
+          setMsg({ kind: "err", text: T("イベント名を入れてください") });
           return;
         }
 
@@ -510,7 +543,7 @@ export default function SchedulePage() {
         setBusy(false);
       }
     },
-    [kind, chosen, dates, periodId, courseId, courseName, className, teacher, deptId, activityId, title, startAt, endAt],
+    [kind, chosen, dates, periodId, courseId, courseName, classes, teacher, deptId, activityId, title, startAt, endAt],
   );
 
   /* ---------------- その日の予定を消す ---------------- */
@@ -550,8 +583,8 @@ export default function SchedulePage() {
       await loadBooked();
       setMsg(
         before > 0
-          ? { kind: "ok", text: "予定を消しました" }
-          : { kind: "err", text: "消せませんでした。権限が足りない可能性があります" },
+          ? { kind: "ok", text: T("予定を消しました") }
+          : { kind: "err", text: T("消せませんでした。権限が足りない可能性があります") },
       );
       setConfirmDelete(null);
     },
@@ -601,17 +634,17 @@ export default function SchedulePage() {
 
   /* ---------------- 表示 ---------------- */
 
-  if (loading) return <Shell>読み込み中…</Shell>;
+  if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
   if (!supabaseReady)
-    return <Shell><p className="text-sm text-red-700">サーバーに接続できません。</p></Shell>;
+    return <Shell><p className="text-sm text-red-700">{T("サーバーに接続できません。")}</p></Shell>;
 
   if (!role)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">ログインしていません。</p>
+        <p className="text-sm text-slate-700">{T("ログインしていません。")}</p>
         <Link href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600">
-          ログインへ
+          {T("ログインへ")}
         </Link>
       </Shell>
     );
@@ -622,24 +655,24 @@ export default function SchedulePage() {
   if (!canEvent)
     return (
       <Shell>
-        <p className="text-sm text-slate-700">この画面は、いまの権限では使えません。</p>
-        <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">地図へ戻る</Link>
+        <p className="text-sm text-slate-700">{T("この画面は、いまの権限では使えません。")}</p>
+        <Link href="/" className="mt-3 inline-block text-sm font-bold text-blue-600">{T("地図へ戻る")}</Link>
       </Shell>
     );
 
   return (
     <Shell wide>
-      <AdminHeader title="予定の登録" />
+      <AdminHeader title={T("予定の登録")} />
       <AdminMenu current="schedule" role={role} />
 
       {setupNeeded && (
         <div className="mb-3 rounded-xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
-          <b>データベースの準備がまだ終わっていません。</b>
+          <b>{T("データベースの準備がまだ終わっていません。")}</b>
           <br />
-          学科・課外活動・イベントの表がまだ作られていないため、下の一覧は空のままです。
+          {T("学科・課外活動・イベントの表がまだ作られていないため、下の一覧は空のままです。")}
           <br />
           Supabase の SQL Editor で <code className="font-mono">supabase/setup.sql</code>{" "}
-          を貼り付けて実行すると、必要なものが一度にそろいます。
+          {T("を貼り付けて実行すると、必要なものが一度にそろいます。")}
         </div>
       )}
 
@@ -685,8 +718,8 @@ export default function SchedulePage() {
           <MultiDatePicker value={dates} onChange={setDates} />
           {kind === "class" && dates.length === 1 && (
             <p className="mt-1.5 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-blue-900">
-              毎週ある授業なら、上の<b>「＋15週」</b>を押すと、同じ曜日が
-              15週ぶんまとめて選ばれます。
+              毎週ある授業なら、上の<b>{T("「＋15週」")}</b>を押すと、同じ曜日が
+              {T("15週ぶんまとめて選ばれます。")}
             </p>
           )}
         </Field>
@@ -695,7 +728,7 @@ export default function SchedulePage() {
         <Field label="教室（号館ごと・全号館も選べます）">
           {/* 号館を選ぶ。番号を打たなくても押すだけで選べるようにする */}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold text-slate-500">号館</span>
+            <span className="text-[11px] font-bold text-slate-500">{T("号館")}</span>
             <span className="text-[11px] font-bold text-slate-600">
               {roomIds.length > 0 ? `${roomIds.length}室を選択中` : "未選択"}
             </span>
@@ -709,7 +742,7 @@ export default function SchedulePage() {
           {dates.length > 1 && (
             <p className="mt-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
               「使用中」の印は <b>{niceDate(shownDate)}</b> のぶんです。
-              ほかの日で埋まっている教室は、登録したあとに日付つきでお知らせします。
+              {T("ほかの日で埋まっている教室は、登録したあとに日付つきでお知らせします。")}
             </p>
           )}
 
@@ -731,7 +764,7 @@ export default function SchedulePage() {
               }}
               className="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-100"
             >
-              解除
+              {T("解除")}
             </button>
           </div>
 
@@ -755,7 +788,7 @@ export default function SchedulePage() {
               );
             })}
             {allBuildings.length === 0 && (
-              <span className="p-1 text-[10px] text-amber-700">教室が登録されていません</span>
+              <span className="p-1 text-[10px] text-amber-700">{T("教室が登録されていません")}</span>
             )}
           </div>
 
@@ -769,14 +802,14 @@ export default function SchedulePage() {
                   }
                   className="flex-1 rounded-lg bg-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-slate-300"
                 >
-                  空いている教室をすべて選ぶ（
+                  {T("空いている教室をすべて選ぶ（")}
                   {roomsInScope.filter((r) => !takenRooms.has(r.id)).length}室）
                 </button>
                 <button
                   onClick={() => setRoomIds([])}
                   className="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-100"
                 >
-                  全部外す
+                  {T("全部外す")}
                 </button>
               </div>
 
@@ -844,7 +877,7 @@ export default function SchedulePage() {
 
           {chosen.length > 0 && (
             <p className="mt-1.5 text-[11px] leading-relaxed text-slate-600">
-              <b>選択中：</b>
+              <b>{T("選択中：")}</b>
               {chosen
                 .slice(0, 12)
                 .map((r) => `${r.code}`)
@@ -891,7 +924,7 @@ export default function SchedulePage() {
                 }}
                 className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">学科を選ぶ</option>
+                <option value="">{T("学科を選ぶ")}</option>
                 {facs.map((f) => (
                   <optgroup key={f.id} label={f.name}>
                     {depts
@@ -906,7 +939,7 @@ export default function SchedulePage() {
               </select>
               {/* 準備が済んでいないときは上の帯で伝えているので、ここでは繰り返さない */}
               {!setupNeeded && facs.length === 0 && (
-                <p className="mt-1 text-[10px] text-amber-700">学科が登録されていません</p>
+                <p className="mt-1 text-[10px] text-amber-700">{T("学科が登録されていません")}</p>
               )}
             </Field>
 
@@ -916,7 +949,7 @@ export default function SchedulePage() {
                 onChange={(e) => setCourseId(e.target.value ? Number(e.target.value) : null)}
                 className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">新しく登録する</option>
+                <option value="">{T("新しく登録する")}</option>
                 {courses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -925,28 +958,100 @@ export default function SchedulePage() {
                 ))}
               </select>
               {courseId === null && (
-                <div className="mt-1.5 flex gap-2">
-                  <input
-                    value={courseName}
-                    onChange={(e) => setCourseName(e.target.value)}
-                    placeholder="授業名"
-                    className="min-w-0 flex-1 rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-                  />
-                  <input
-                    value={className}
-                    onChange={(e) => setClassName(e.target.value)}
-                    placeholder={deptCode ? `${deptCode}1` : "クラス"}
-                    className="w-24 rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-                  />
+                <input
+                  value={courseName}
+                  onChange={(e) => setCourseName(e.target.value)}
+                  placeholder={T("授業名")}
+                  className="mt-1.5 w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+                />
+              )}
+
+              {/*
+                クラス。いくつでも選べる。
+
+                同じ授業を CC1 と CC2 が一緒に受ける、ということがある。
+                打ち込む欄だけだと、区切り記号を毎回書くことになり、
+                「CC1,CC2」「CC1・CC2」と書き方が揃わない。
+                押して選ぶ形にして、しまう形はこちらで揃える。
+
+                「すべて」は空にする。空はもともと「分かれていない」の
+                意味で使っていて、時間割にも何も出ない。
+              */}
+              {courseId === null && (
+                <div className="mt-2">
+                  <div className="text-[10px] font-bold text-slate-500">
+                    {T("クラス（いくつでも選べます）")}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => setClasses([])}
+                      className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition active:scale-95 ${
+                        classes.length === 0
+                          ? "bg-slate-900 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {T("すべて")}
+                    </button>
+                    {classChoices.map((c) => {
+                      const on = classes.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          onClick={() =>
+                            setClasses((prev) =>
+                              prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c],
+                            )
+                          }
+                          className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition active:scale-95 ${
+                            on
+                              ? "bg-blue-600 text-white"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 並んでいないクラスは、打ち込んで足す */}
+                  <div className="mt-1.5 flex gap-2">
+                    <input
+                      value={classDraft}
+                      onChange={(e) => setClassDraft(e.target.value.toUpperCase())}
+                      placeholder={deptCode ? `${deptCode}9` : "CC9"}
+                      className="w-28 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      onClick={() => {
+                        const v = classDraft.trim();
+                        if (!v) return;
+                        setClasses((prev) => (prev.includes(v) ? prev : [...prev, v]));
+                        setClassDraft("");
+                      }}
+                      disabled={!classDraft.trim()}
+                      className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95 disabled:text-slate-300"
+                    >
+                      {T("足す")}
+                    </button>
+                  </div>
                 </div>
               )}
               {courseId === null && (
                 <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                  クラスは、同じ科目を分けて受ける組のこと。
+                  {T("クラスは、同じ科目を分けて受ける組のこと。")}
                   {deptCode
-                    ? `この学科の記号は ${deptCode} なので、${deptCode}1・${deptCode}2 のように書きます。`
+                    ? `この学科の記号は ${deptCode} なので、${deptCode}1・${deptCode}2 のように並びます。`
                     : "KM1・CC2 のように、学科の記号と組の番号で書きます。"}
-                  分かれていなければ空のままで構いません。
+                  <br />
+                  何も選ばなければ<b>{T("すべて")}</b>（分かれていない）になります。
+                  {classes.length > 0 && (
+                    <>
+                      <br />
+                      いま選んでいるのは <b>{classes.join("・")}</b> です。
+                    </>
+                  )}
                 </p>
               )}
             </Field>
@@ -955,12 +1060,12 @@ export default function SchedulePage() {
               <input
                 value={teacher}
                 onChange={(e) => setTeacher(e.target.value)}
-                placeholder="担当の先生の名前"
+                placeholder={T("担当の先生の名前")}
                 className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
               />
               <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                ここに書いた名前が、時間割に出ます。
-                担当の先生が別の人なら、その名前に書き換えてください。
+                {T("ここに書いた名前が、時間割に出ます。")}
+                {T("担当の先生が別の人なら、その名前に書き換えてください。")}
                 <br />
                 登録した人（{email}）は、これとは別に記録されます。
               </p>
@@ -999,7 +1104,7 @@ export default function SchedulePage() {
                   }}
                   className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">系統を選ぶ</option>
+                  <option value="">{T("系統を選ぶ")}</option>
                   {cats.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -1012,7 +1117,7 @@ export default function SchedulePage() {
                     onChange={(e) => setActivityId(e.target.value ? Number(e.target.value) : null)}
                     className="mt-1.5 w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">団体を選ぶ</option>
+                    <option value="">{T("団体を選ぶ")}</option>
                     {actsInCat.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name}
@@ -1021,7 +1126,7 @@ export default function SchedulePage() {
                   </select>
                 )}
                 {!setupNeeded && cats.length === 0 && (
-                  <p className="mt-1 text-[10px] text-amber-700">課外活動が登録されていません</p>
+                  <p className="mt-1 text-[10px] text-amber-700">{T("課外活動が登録されていません")}</p>
                 )}
               </Field>
             )}
@@ -1062,7 +1167,7 @@ export default function SchedulePage() {
             </ul>
             <p className="mt-1.5 text-[11px] leading-relaxed text-amber-900">
               {KIND_LABEL[kind]}を登録すると、上の予定は取り消されます。
-              登録した人には知らせが届きます。よろしいですか？
+              {T("登録した人には知らせが届きます。よろしいですか？")}
             </p>
             <div className="mt-2 flex gap-2">
               <button
@@ -1085,13 +1190,13 @@ export default function SchedulePage() {
                 disabled={busy}
                 className="flex-1 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-amber-700 disabled:bg-slate-300"
               >
-                はい、取り消して登録する
+                {T("はい、取り消して登録する")}
               </button>
               <button
                 onClick={() => setPending(null)}
                 className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-600 shadow-sm"
               >
-                やめる
+                {T("やめる")}
               </button>
             </div>
           </div>
@@ -1128,9 +1233,9 @@ export default function SchedulePage() {
         )}
 
         <p className="border-t border-slate-100 pt-3 text-[10px] leading-relaxed text-slate-400">
-          一つの教室の一つの時間に入るのは一つだけです。学科が違っても重ねられません。
-          優先順位は 授業 ＞ イベント ＞ 課外活動。
-          同じ強さどうしは、先に入れたものが残ります。
+          {T("一つの教室の一つの時間に入るのは一つだけです。学科が違っても重ねられません。")}
+          {T("優先順位は 授業 ＞ イベント ＞ 課外活動。")}
+          {T("同じ強さどうしは、先に入れたものが残ります。")}
         </p>
 
         {/* ---- この日に入っている予定。間違えて入れたものを消せる ---- */}
@@ -1141,7 +1246,7 @@ export default function SchedulePage() {
           */}
           {dates.length > 1 && (
             <div className="mb-2">
-              <div className="text-[10px] font-bold text-slate-500">どの日の予定を見るか</div>
+              <div className="text-[10px] font-bold text-slate-500">{T("どの日の予定を見るか")}</div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {dates.map((d) => (
                   <button
@@ -1169,14 +1274,14 @@ export default function SchedulePage() {
                 disabled={busy}
                 className="ml-2 rounded-lg bg-red-600 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-red-700 disabled:bg-slate-300"
               >
-                この日をすべて消す
+                {T("この日をすべて消す")}
               </button>
             )}
           </p>
 
           {booked.length === 0 ? (
             <p className="rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500">
-              まだ何も入っていません。
+              {T("まだ何も入っていません。")}
             </p>
           ) : (
             <ul className="flex flex-col gap-1.5">
@@ -1217,7 +1322,7 @@ export default function SchedulePage() {
                         onClick={() => setConfirmDelete(b)}
                         className="shrink-0 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-bold text-red-600 shadow-sm transition hover:bg-red-50"
                       >
-                        削除
+                        {T("削除")}
                       </button>
                     </div>
 
@@ -1225,20 +1330,20 @@ export default function SchedulePage() {
                     {confirmDelete?.id === b.id && (
                       <div className="mt-2 rounded-lg bg-red-50 p-2.5">
                         <p className="text-[11px] font-bold text-red-800">
-                          この予定を消しますか？元には戻せません。
+                          {T("この予定を消しますか？元には戻せません。")}
                         </p>
                         <div className="mt-1.5 flex gap-2">
                           <button
                             onClick={() => void removeBooked(b)}
                             className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-red-700"
                           >
-                            はい、消す
+                            {T("はい、消す")}
                           </button>
                           <button
                             onClick={() => setConfirmDelete(null)}
                             className="rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-slate-600 shadow-sm"
                           >
-                            やめる
+                            {T("やめる")}
                           </button>
                         </div>
                       </div>
@@ -1250,7 +1355,7 @@ export default function SchedulePage() {
           )}
 
           <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-            消せるのは、自分で入れたもの。授業は教授も消せます。
+            {T("消せるのは、自分で入れたもの。授業は教授も消せます。")}
           </p>
         </div>
       </div>
