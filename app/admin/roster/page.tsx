@@ -373,10 +373,15 @@ export default function RosterPage() {
    * 何千人もいると、探す言葉だけでは目当ての一人に届かない。
    */
   const loadRoster = useCallback(
-    async (kind: RosterKind, at: number) => {
+    /**
+     * keepMsg … 出ている知らせを消さない。
+     *   消したあとに引き直すときに使う。消さないと
+     *   「消しました」がその場で見えなくなる。
+     */
+    async (kind: RosterKind, at: number, keepMsg = false) => {
       if (!supabaseReady) return;
       setRBusy(true);
-      setMsg(null);
+      if (!keepMsg) setMsg(null);
       try {
         const supabase = createClient();
         if (kind === "student") {
@@ -540,6 +545,26 @@ export default function RosterPage() {
     } finally {
       setListBusy(false);
     }
+  };
+
+  /**
+   * 名簿の一覧から、その場で一人消す。
+   *
+   * 消したあとは一覧を引き直す。消えた人が並んだままだと、
+   * もう一度押してしまう。知らせ（消しました）は残す。
+   *
+   * 最後の一人を消してその頁が空になったら、一つ前の頁へ戻る。
+   * 空の頁を見せられても、何が起きたのか分からないため。
+   */
+  const removeShown = async (
+    kind: "student" | "staff",
+    key: string,
+    label: string,
+  ) => {
+    await removeFromRoster(kind, key, label);
+    const at = rStudents.length + rStaff.length <= 1 ? Math.max(0, rPage - 1) : rPage;
+    setRPage(at);
+    await loadRoster(rKind, at, true);
   };
 
   /*
@@ -1061,45 +1086,76 @@ export default function RosterPage() {
             <ul className="mt-1.5 max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-slate-50">
               {rKind === "student"
                 ? rStudents.map((s) => (
-                    <li key={s.student_no} className="px-2.5 py-2">
-                      <div className="flex items-baseline gap-1.5">
-                        {s.seat_no !== null && (
-                          <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700">
-                            {s.seat_no}
+                    <li key={s.student_no} className="flex items-start gap-2 px-2.5 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-1.5">
+                          {s.seat_no !== null && (
+                            <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700">
+                              {s.seat_no}
+                            </span>
+                          )}
+                          <span className="truncate text-xs font-bold text-slate-800">
+                            {s.full_name || "（名前なし）"}
                           </span>
-                        )}
-                        <span className="truncate text-xs font-bold text-slate-800">
-                          {s.full_name || "（名前なし）"}
-                        </span>
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                          {s.grade > 0 && <span>{s.grade}年</span>}
+                          {s.class_code && <span>{s.class_code}</span>}
+                          {!!s.class_no && (
+                            <span>
+                              {T("クラス")}
+                              {s.class_no}
+                            </span>
+                          )}
+                          <span className="font-mono">学籍番号 {s.student_no}</span>
+                        </div>
+                        <div className="truncate font-mono text-[10px] text-slate-400">{s.email}</div>
                       </div>
-                      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
-                        {s.grade > 0 && <span>{s.grade}年</span>}
-                        {s.class_code && <span>{s.class_code}</span>}
-                        {!!s.class_no && (
-                          <span>
-                            {T("クラス")}
-                            {s.class_no}
-                          </span>
-                        )}
-                        <span className="font-mono">学籍番号 {s.student_no}</span>
-                      </div>
-                      <div className="truncate font-mono text-[10px] text-slate-400">{s.email}</div>
+                      {/* 消せるのは 2.1・2.2・管理者だけ。教授には出さない */}
+                      {canWrite && (
+                        <button
+                          onClick={() =>
+                            void removeShown(
+                              "student",
+                              s.student_no,
+                              `${s.full_name || "名前なし"}（${s.student_no}）`,
+                            )
+                          }
+                          disabled={rBusy || listBusy}
+                          className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                        >
+                          {T("消す")}
+                        </button>
+                      )}
                     </li>
                   ))
                 : rStaff.map((t) => (
-                    <li key={t.email} className="px-2.5 py-2">
-                      <span className="truncate text-xs font-bold text-slate-800">
-                        {t.full_name || "（名前なし）"}
-                      </span>
-                      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
-                        <span className="font-mono">番号 {t.number}</span>
-                        {(t.dept_codes ?? []).length > 0 && (
-                          <span>
-                            {T("担当")} {(t.dept_codes ?? []).join("・")}
-                          </span>
-                        )}
+                    <li key={t.email} className="flex items-start gap-2 px-2.5 py-2">
+                      <div className="min-w-0 flex-1">
+                        <span className="truncate text-xs font-bold text-slate-800">
+                          {t.full_name || "（名前なし）"}
+                        </span>
+                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                          <span className="font-mono">番号 {t.number}</span>
+                          {(t.dept_codes ?? []).length > 0 && (
+                            <span>
+                              {T("担当")} {(t.dept_codes ?? []).join("・")}
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate font-mono text-[10px] text-slate-400">{t.email}</div>
                       </div>
-                      <div className="truncate font-mono text-[10px] text-slate-400">{t.email}</div>
+                      {canWrite && (
+                        <button
+                          onClick={() =>
+                            void removeShown("staff", t.email, `${t.full_name || t.email}`)
+                          }
+                          disabled={rBusy || listBusy}
+                          className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                        >
+                          {T("消す")}
+                        </button>
+                      )}
                     </li>
                   ))}
 

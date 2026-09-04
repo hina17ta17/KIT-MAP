@@ -787,23 +787,37 @@ export default function Guide() {
          *
          * ■ どう直すか
          *
-         *   どの間隔でも、動かす距離がだいたい同じ（6点ほど）になるよう、
+         *   どの間隔でも、動かす距離が同じ（下の MOVE 点）になるよう、
          *   指を置いた瞬間の間隔から割合を決め直す。
          *
-         *     割合 ≒ 6 ÷ (間隔 × ln2)
+         *     割合 = -log2(1 - 動かす距離 ÷ 間隔)
+         *
+         *   ここは近似ではなく、そのままの式で出す。
+         *   間隔が広いほど近似のずれが効いてくるため。
          *
          *   狭いときに敏感になりすぎないよう、既定の 0.1 より
-         *   きつくはしない。広いときも 0.02 で止める
-         *   （それ以下だと、二本指で平行に動かしたときの
-         *     わずかなぶれで縮尺が動いてしまう）。
+         *   きつくはしない。広いほうは 0.005 まで下げる。
+         *   画面の幅いっぱいに開いても、その3倍ほどに開いても
+         *   （横向きや大きな端末で起きる）、同じ手ごたえになる。
+         *
+         *   下げても暴れない。効きはじめたあとの縮尺は
+         *   「間隔が何割変わったか」で決まるので、広く開いた指の
+         *   数点のぶれは、縮尺にすると 0.01 にも満たない。
          */
+        /** 効かせるのに動かす距離（画面の点）。狭くても広くもこれくらい */
+        const MOVE = 6;
+
         const tuneThreshold = (e: TouchEvent) => {
           const a = e.touches[0];
           const b = e.touches[1];
           const gap = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-          if (!(gap > 0)) return;
-          const want = 6 / (gap * Math.LN2);
-          map.touchZoomRotate.setZoomThreshold(Math.min(0.1, Math.max(0.02, want)));
+          // 間隔が動かす距離より狭いときは、いちばん敏感な側に寄せる
+          if (!(gap > MOVE * 2)) {
+            map.touchZoomRotate.setZoomThreshold(0.1);
+            return;
+          }
+          const want = -Math.log2(1 - MOVE / gap);
+          map.touchZoomRotate.setZoomThreshold(Math.min(0.1, Math.max(0.005, want)));
         };
 
         /**
