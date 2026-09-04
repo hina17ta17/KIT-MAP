@@ -239,6 +239,13 @@ export default function LoginPage() {
   const [uid, setUid] = useState("");
   /** 知らない端末から入ったときに使う、確認用の6桁 */
   const [loginCode, setLoginCode] = useState("");
+  /**
+   * 席はあるのに情報が無い、詰まった状態。
+   *
+   * ここに入ると、この画面からは何もできない。
+   * 出口（ログアウトして入り直す）を、はっきり出すために持つ。
+   */
+  const [stuck, setStuck] = useState("");
 
   /** 認証アプリに読ませるQRと、手で入れる用の文字列 */
   const [mfa, setMfa] = useState<{ id: string; qr: string; secret: string } | null>(null);
@@ -278,8 +285,10 @@ export default function LoginPage() {
      * 自分の行を作り直してから読み直す。作れるのは自分の行だけで、
      * 権限は承認待ちから始まる。
      */
+    let repairErr = "";
     if (!p) {
-      await supabase.rpc("ensure_profile");
+      const { error } = await supabase.rpc("ensure_profile");
+      if (error) repairErr = error.message;
       p = await read();
     }
 
@@ -391,12 +400,25 @@ export default function LoginPage() {
       /*
        * 席はあるのに情報が作れなかった。
        *
-       * ここで黙るとログインの画面が出たままになり、
-       * 入っているのに入れないように見える。何が起きたかを出す。
+       * ■ どういうとき起きるか
+       *   管理者が profiles の行だけを手で消したとき。
+       *   席（auth.users）は残るので、ログインは通る。
+       *   でも情報が無いので、この画面はどこにも進めない。
+       *   承認の画面にも出てこない（あちらは profiles を見ている）。
+       *
+       * ■ ここで黙ってはいけない
+       *   前はログインの画面が出たままになり、
+       *   「入れているのに入れない」ようにしか見えなかった。
+       *   何が起きたかと、次にどうすればよいかを出す。
+       *   下に「ログアウトして入り直す」を置いてあるので、
+       *   そこから申請をやり直せる。
        */
+      setStuck(repairErr || "情報がありません");
       setMsg({
         kind: "err",
-        text: "利用者の情報を読み込めませんでした。一度ログアウトして、入り直してください。",
+        text: repairErr
+          ? `利用者の情報を作り直せませんでした（${repairErr}）。下の「ログアウトして入り直す」を押してください。`
+          : "利用者の情報がありません。管理者に消された可能性があります。下の「ログアウトして入り直す」を押してください。",
       });
     }
     setLoading(false);
@@ -954,6 +976,47 @@ export default function LoginPage() {
   return (
     <Shell lang={lang} onToggleLang={toggleLang}>
       <Title />
+
+      {/*
+        席はあるのに情報が無い、詰まった状態。
+
+        ログインは通るのに、この画面から先へ進めない。
+        承認の画面にも出てこないので、管理者にも見つけてもらえない。
+        出口をここに大きく出す。押せば控えを捨てて、申請からやり直せる。
+      */}
+      {stuck && (
+        <div className="mt-4 rounded-xl border-2 border-red-300 bg-red-50 p-3">
+          <div className="text-xs font-bold text-red-900">
+            {T("この席の情報が見つかりません")}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-red-800">
+            {T("ログインはできていますが、利用者の情報がありません。")}
+            {T("管理者に消された可能性があります。")}
+            <br />
+            {T("下を押すと控えを捨てて、申請からやり直せます。")}
+          </p>
+          <button
+            onClick={() => {
+              void (async () => {
+                try {
+                  await createClient().auth.signOut();
+                } catch {
+                  // 繋がらなくても、こちらの控えは捨てる
+                }
+                try {
+                  window.localStorage.clear();
+                } catch {
+                  // 消せない設定のブラウザでも、開き直せば読み直す
+                }
+                window.location.href = "/login";
+              })();
+            }}
+            className="mt-2 w-full rounded-xl bg-red-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95"
+          >
+            {T("ログアウトして入り直す")}
+          </button>
+        </div>
+      )}
 
       <div className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1">
         {(["login", "signup"] as const).map((m) => (

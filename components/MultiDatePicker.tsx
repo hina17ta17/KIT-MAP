@@ -65,8 +65,19 @@ type Props = {
   max?: number;
 };
 
+/**
+ * 「何週くり返すか」の選択肢。
+ *
+ * 学期の長さ（15週）と、その半分（8週）、月ぶん（4週）が
+ * よく使われるが、13週や10週にしたいこともある。
+ * よく使うものを飛ばさずに並べておく。
+ */
+const WEEKS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 24, 30];
+
 export default function MultiDatePicker({ value, onChange, max = 60 }: Props) {
   const today = todayYmd();
+  /** 何週ぶんくり返すか。授業は15週が多いので、そこを既定にする */
+  const [weeks, setWeeks] = useState(15);
   /** 出している月。選んでいる日があればその月、無ければ今月 */
   const [cursor, setCursor] = useState(() => {
     const first = [...value].sort()[0] ?? today;
@@ -195,19 +206,33 @@ export default function MultiDatePicker({ value, onChange, max = 60 }: Props) {
         })}
       </div>
 
-      {/* まとめて足す・消す */}
+      {/*
+        まとめて足す・消す。
+
+        前は ＋4週・＋8週・＋15週の三つに分かれていた。
+        13週や10週にしたいときに手が無く、押す数だけ増えていた。
+        いまは何週かを選んで、一度で足す。
+      */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] font-bold text-slate-500">毎週くり返す</span>
-        {[4, 8, 15].map((n) => (
-          <button
-            key={n}
-            onClick={() => repeat(n)}
-            disabled={value.length === 0 || full}
-            className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95 disabled:text-slate-300"
-          >
-            ＋{n}週
-          </button>
-        ))}
+        <select
+          value={weeks}
+          onChange={(e) => setWeeks(Number(e.target.value))}
+          className="rounded-lg bg-slate-100 px-1.5 py-1 text-[10px] font-bold text-slate-700 outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+        >
+          {WEEKS.map((n) => (
+            <option key={n} value={n}>
+              {n}週
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => repeat(weeks)}
+          disabled={value.length === 0 || full}
+          className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95 disabled:text-slate-300"
+        >
+          ＋{weeks}週ぶん足す
+        </button>
         <button
           onClick={() => set([today])}
           className="ml-auto rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"

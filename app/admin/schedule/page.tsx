@@ -214,7 +214,13 @@ export default function SchedulePage() {
   const [roomIds, setRoomIds] = useState<number[]>([]);
   /** 部屋の種類のしぼり。空なら「すべて」 */
   const [roomKind, setRoomKind] = useState("");
-  const [periodId, setPeriodId] = useState<number | null>(null);
+  /**
+   * 選んだ時限。いくつでも選べる。
+   *
+   * 同じ科目を1限と2限で続けて行う、といった入れ方がある。
+   * 一つずつ登録し直すのは手間なので、まとめて入れられるようにする。
+   */
+  const [periodIds, setPeriodIds] = useState<number[]>([]);
   const [deptId, setDeptId] = useState<number | null>(null);
   const [courseId, setCourseId] = useState<number | null>(null);
   const [courseName, setCourseName] = useState("");
@@ -236,9 +242,11 @@ export default function SchedulePage() {
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err" | "warn"; text: string } | null>(null);
+  /** 登録の前に「この内容でよいか」を見せている最中か */
+  const [ask, setAsk] = useState(false);
   /** 消してよいか尋ねている最中の、日と教室と、その相手 */
   const [pending, setPending] = useState<
-    { date: string; room: Room; conflicts: Conflict[] }[] | null
+    { date: string; periodId: number | null; room: Room; conflicts: Conflict[] }[] | null
   >(null);
   /** その日にすでに入っている予定 */
   const [booked, setBooked] = useState<Booked[]>([]);
@@ -479,14 +487,20 @@ export default function SchedulePage() {
     return [...used].sort((a, b) => a.localeCompare(b, "ja", { numeric: true }));
   }, [courses, deptCode]);
 
-  /** いま入れようとしている時間帯。まだ決まっていなければ null */
-  const slot = useMemo(() => {
+  /**
+   * いま入れようとしている時間帯。時限をいくつも選べるので並びで持つ。
+   * まだ決まっていなければ空。
+   */
+  const slots = useMemo(() => {
     if (kind === "class") {
-      const p = periods.find((x) => x.id === periodId);
-      return p ? { s: p.starts_at, e: p.ends_at } : null;
+      return periods
+        .filter((x) => periodIds.includes(x.id))
+        .map((p) => ({ id: p.id, s: p.starts_at, e: p.ends_at }));
     }
-    return startAt && endAt && endAt > startAt ? { s: startAt, e: endAt } : null;
-  }, [kind, periodId, periods, startAt, endAt]);
+    return startAt && endAt && endAt > startAt
+      ? [{ id: null as number | null, s: startAt, e: endAt }]
+      : [];
+  }, [kind, periodIds, periods, startAt, endAt]);
 
   /**
    * その時間帯にもう予定が入っている教室。
@@ -504,15 +518,18 @@ export default function SchedulePage() {
    */
   const takenRooms = useMemo(() => {
     const m = new Map<number, Booked>();
-    if (!slot) return m;
+    if (slots.length === 0) return m;
     for (const b of booked) {
-      // 時刻は "08:40:00" の形なので、文字のまま比べれば前後が分かる
-      if (b.starts_at < `${slot.e}:00`.slice(0, 8) && `${slot.s}:00`.slice(0, 8) < b.ends_at) {
-        m.set(b.room_id, b);
+      for (const slot of slots) {
+        // 時刻は "08:40:00" の形なので、文字のまま比べれば前後が分かる
+        if (b.starts_at < `${slot.e}:00`.slice(0, 8) && `${slot.s}:00`.slice(0, 8) < b.ends_at) {
+          m.set(b.room_id, b);
+          break;
+        }
       }
     }
     return m;
-  }, [booked, slot]);
+  }, [booked, slots]);
 
   /* 時間帯を変えたら、その時間に使えない教室は外す */
   useEffect(() => {
@@ -544,12 +561,23 @@ export default function SchedulePage() {
    *   なぞらないよう、尋ねた相手だけを渡し直す。
    */
   const submit = useCallback(
-    async (force: boolean, targets?: { date: string; rooms: Room[] }[]) => {
+    async (
+      force: boolean,
+      targets?: { date: string; periodId: number | null; rooms: Room[] }[],
+    ) => {
       setMsg(null);
       const supabase = createClient();
-      /** 「この日に、この教室ぶん」の組み合わせ */
-      const plan: { date: string; rooms: Room[] }[] =
-        targets ?? dates.map((d) => ({ date: d, rooms: chosen }));
+      /*
+       * 「この日の、この時限に、この教室ぶん」の組み合わせ。
+       *
+       * 授業は時限をいくつも選べるので、日 × 時限で並べる。
+       * 授業いがいは時限を使わないので、日ごとに一つだけ。
+       */
+      const plan: { date: string; periodId: number | null; rooms: Room[] }[] =
+        targets ??
+        (kind === "class"
+          ? dates.flatMap((d) => periodIds.map((pid) => ({ date: d, periodId: pid, rooms: chosen })))
+          : dates.map((d) => ({ date: d, periodId: null, rooms: chosen })));
 
       if (plan.length === 0 || plan.every((p) => p.rooms.length === 0)) {
         setMsg({ kind: "err", text: T("教室を選んでください") });
@@ -589,7 +617,7 @@ export default function SchedulePage() {
           useCourseId = (data as { id: number }).id;
         }
 
-        if (kind === "class" && periodId === null) {
+        if (kind === "class" && periodIds.length === 0) {
           setMsg({ kind: "err", text: T("時限を選んでください") });
           return;
         }
@@ -613,7 +641,7 @@ export default function SchedulePage() {
         let removed = 0;
         const blockedByClass: string[] = [];
         const blockedOther: string[] = [];
-        const ask: { date: string; room: Room; conflicts: Conflict[] }[] = [];
+        const ask: { date: string; periodId: number | null; room: Room; conflicts: Conflict[] }[] = [];
 
         for (const step of plan) {
           if (step.rooms.length === 0) continue;
@@ -624,7 +652,7 @@ export default function SchedulePage() {
             p_kind: kind,
             p_room_ids: step.rooms.map((r) => r.id),
             p_date: step.date,
-            p_period_id: kind === "class" ? periodId : null,
+            p_period_id: kind === "class" ? step.periodId : null,
             p_starts: kind === "class" ? null : startAt,
             p_ends: kind === "class" ? null : endAt,
             p_course_id: kind === "class" ? useCourseId : null,
@@ -639,8 +667,15 @@ export default function SchedulePage() {
           done += res.registered.length;
           removed += res.removed;
 
-          // 何日ぶんも並ぶので、どの日の話かを添える
-          const day = plan.length > 1 ? `${niceDate(step.date)} ` : "";
+          /*
+           * 何日ぶんも、何限ぶんも並ぶので、どの日のどの時限かを添える。
+           * 「入れられませんでした」だけでは、どれのことか分からない。
+           */
+          const pl = periods.find((x) => x.id === step.periodId);
+          const day =
+            plan.length > 1
+              ? `${niceDate(step.date)}${pl ? ` ${pl.label}` : ""} `
+              : "";
           for (const b of res.blocked) {
             const names = b.blocked_by
               .map((x) => `${KIND_LABEL[x.kind]}「${x.title || "（名称なし）"}」`)
@@ -652,7 +687,13 @@ export default function SchedulePage() {
 
           for (const c of res.confirm) {
             const room = byId.get(c.room_id);
-            if (room) ask.push({ date: step.date, room, conflicts: c.will_remove });
+            if (room)
+              ask.push({
+                date: step.date,
+                periodId: step.periodId,
+                room,
+                conflicts: c.will_remove,
+              });
           }
         }
 
@@ -671,12 +712,16 @@ export default function SchedulePage() {
         setPending(null);
 
         const parts: string[] = [];
-        if (done > 0)
+        if (done > 0) {
+          const many = dates.length > 1 || (kind === "class" && periodIds.length > 1);
           parts.push(
-            dates.length > 1
-              ? `${dates.length}日ぶん、あわせて${done}件を登録しました。`
+            many
+              ? `${dates.length}日 × ${
+                  kind === "class" ? `${periodIds.length}時限` : "1件"
+                }ぶん、あわせて${done}件を登録しました。`
               : `${done}室に登録しました。`,
           );
+        }
         if (removed > 0) parts.push(`重なっていた予定 ${removed} 件を取り消し、登録者に知らせました。`);
         if (blockedByClass.length > 0)
           parts.push(`授業があるため登録できませんでした：${blockedByClass.join(" / ")}`);
@@ -699,7 +744,7 @@ export default function SchedulePage() {
         setBusy(false);
       }
     },
-    [kind, chosen, dates, periodId, courseId, courseName, classes, teacher, deptId, activityId, title, startAt, endAt],
+    [kind, chosen, dates, periodIds, periods, courseId, courseName, classes, teacher, deptId, activityId, title, startAt, endAt],
   );
 
   /* ---------------- その日の予定を消す ---------------- */
@@ -1127,14 +1172,41 @@ export default function SchedulePage() {
         {/* ---- 授業 ---- */}
         {kind === "class" && (
           <>
-            <Field label="時限">
+            <Field label="時限（いくつでも選べます）">
+              {/*
+                時限は複数選べる。同じ科目を1限と2限で続けて行う入れ方があり、
+                一つずつ登録し直すのは手間なので、まとめて入れられるようにする。
+              */}
+              <div className="mb-1.5 flex gap-1.5">
+                <button
+                  onClick={() =>
+                    setPeriodIds(
+                      periodIds.length === periods.length ? [] : periods.map((p) => p.id),
+                    )
+                  }
+                  className="rounded-lg bg-slate-200 px-2 py-1.5 text-[10px] font-bold text-slate-700 transition hover:bg-slate-300 active:scale-95"
+                >
+                  {periodIds.length === periods.length ? T("全部外す") : T("1限から5限まで")}
+                </button>
+                {periodIds.length > 0 && (
+                  <span className="self-center text-[10px] font-bold text-slate-500">
+                    {periodIds.length} {T("時限を選択中")}
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-5 gap-1.5">
                 {periods.map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => setPeriodId(p.id)}
+                    onClick={() =>
+                      setPeriodIds((prev) =>
+                        prev.includes(p.id) ? prev.filter((x) => x !== p.id) : [...prev, p.id],
+                      )
+                    }
                     className={`rounded-xl py-2 text-xs font-bold transition ${
-                      periodId === p.id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      periodIds.includes(p.id)
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                     }`}
                   >
                     {p.label}
@@ -1407,16 +1479,15 @@ export default function SchedulePage() {
                    * 日ごとにまとめ直してから渡す。
                    * すでに入った日と教室はもう一度なぞらない。
                    */
-                  const byDay = new Map<string, Room[]>();
+                  /* 日と時限の組ごとにまとめ直す。時限が違えば別の予定 */
+                  const byStep = new Map<string, { date: string; periodId: number | null; rooms: Room[] }>();
                   for (const p of pending) {
-                    const cur = byDay.get(p.date) ?? [];
-                    cur.push(p.room);
-                    byDay.set(p.date, cur);
+                    const key = `${p.date}#${p.periodId ?? ""}`;
+                    const cur = byStep.get(key) ?? { date: p.date, periodId: p.periodId, rooms: [] };
+                    cur.rooms.push(p.room);
+                    byStep.set(key, cur);
                   }
-                  void submit(
-                    true,
-                    [...byDay.entries()].map(([d, rooms]) => ({ date: d, rooms })),
-                  );
+                  void submit(true, [...byStep.values()]);
                 }}
                 disabled={busy}
                 className="flex-1 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-amber-700 disabled:bg-slate-300"
@@ -1447,9 +1518,85 @@ export default function SchedulePage() {
           </p>
         )}
 
-        {!pending && (
+        {/*
+          登録する前に、どの日に入るのかをカレンダーで見せる。
+
+          何週もまとめて入れられるようになってから、
+          「押したあとで、思っていた日と違うと気づく」ことが増えた。
+          入る日を色で塗ったカレンダーを出して、見ながら決めてもらう。
+          取り消すには入ったものを一つずつ消すしかないので、
+          入れる前のここで止めるほうが早い。
+        */}
+        {!pending && ask && (
+          <div className="rounded-xl border-2 border-blue-300 bg-blue-50 p-3">
+            <div className="text-xs font-bold text-blue-900">{T("この内容で登録します")}</div>
+
+            <ul className="mt-1.5 grid gap-0.5 text-[11px] leading-relaxed text-blue-900">
+              <li>
+                <b>{T("種類")}</b>：{KIND_LABEL[kind]}
+              </li>
+              <li>
+                <b>{T("教室")}</b>：{chosen.length} {T("室")}
+                {chosen.length > 0 && (
+                  <span className="ml-1 text-blue-700">
+                    （{chosen.slice(0, 6).map((r) => r.code).join("・")}
+                    {chosen.length > 6 ? ` ほか${chosen.length - 6}` : ""}）
+                  </span>
+                )}
+              </li>
+              {kind === "class" && (
+                <li>
+                  <b>{T("時限")}</b>：
+                  {periods
+                    .filter((p) => periodIds.includes(p.id))
+                    .map((p) => p.label)
+                    .join("・") || T("（選ばれていません）")}
+                </li>
+              )}
+              <li>
+                <b>{T("日にち")}</b>：{dates.length} {T("日")}
+              </li>
+              <li className="font-bold">
+                {T("あわせて")}{" "}
+                {chosen.length * dates.length * (kind === "class" ? Math.max(1, periodIds.length) : 1)}{" "}
+                {T("件が入ります")}
+              </li>
+            </ul>
+
+            <div className="mt-2 rounded-xl bg-white p-2">
+              <div className="mb-1 text-[10px] font-bold text-slate-500">
+                {T("色の付いた日に入ります")}
+              </div>
+              <MiniCalendar dates={dates} />
+            </div>
+
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={() => {
+                  setAsk(false);
+                  void submit(false);
+                }}
+                disabled={busy}
+                className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
+              >
+                {busy ? T("登録中…") : T("この内容で登録する")}
+              </button>
+              <button
+                onClick={() => setAsk(false)}
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-600 shadow-sm"
+              >
+                {T("やめる")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!pending && !ask && (
           <button
-            onClick={() => void submit(false)}
+            onClick={() => {
+              setMsg(null);
+              setAsk(true);
+            }}
             disabled={busy || dates.length === 0}
             className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
           >
@@ -1462,6 +1609,14 @@ export default function SchedulePage() {
                   : `${dates.length}日ぶんの${KIND_LABEL[kind]}を登録する（${chosen.length}室 × ${dates.length}日）`}
           </button>
         )}
+
+        {/* 入れたものを、日ごとに見に行く道 */}
+        <Link
+          href="/admin/plan"
+          className="rounded-xl bg-slate-100 px-4 py-3 text-center text-xs font-bold text-slate-700 transition hover:bg-slate-200"
+        >
+          {T("登録されている予定を確認する")}
+        </Link>
 
         <p className="border-t border-slate-100 pt-3 text-[10px] leading-relaxed text-slate-400">
           {T("一つの教室の一つの時間に入るのは一つだけです。学科が違っても重ねられません。")}
@@ -1611,5 +1766,72 @@ function Shell({ children, wide }: { children: React.ReactNode; wide?: boolean }
         {children}
       </div>
     </main>
+  );
+}
+
+/**
+ * 入る日を塗っただけの、小さなカレンダー。
+ *
+ * 登録の前に「どの日に入るのか」を見せるためのもの。
+ * 押せない。押せると、選び直す欄が二つあることになって迷う。
+ * 選び直すのは上のカレンダーで。
+ *
+ * 何か月にもまたがることがあるので、月ごとに並べる。
+ * ただし出すのは先頭の3か月まで。15週なら4か月ぶんになるが、
+ * 「思っていた日と違う」に気づくのは、たいてい初めのほうで足りる。
+ */
+function MiniCalendar({ dates }: { dates: string[] }) {
+  const set = new Set(dates);
+  const all = [...new Set(dates.map((d) => d.slice(0, 7)))].sort();
+  const months = all.slice(0, 3);
+  const hidden = all.length - months.length;
+
+  if (dates.length === 0)
+    return <p className="text-[10px] text-slate-400">日にちが選ばれていません</p>;
+
+  return (
+    <div className="grid gap-2">
+      {months.map((ym) => {
+        const [y, m] = ym.split("-").map(Number);
+        const first = new Date(y, m - 1, 1);
+        const days = new Date(y, m, 0).getDate();
+        const cells: (number | null)[] = Array(first.getDay()).fill(null);
+        for (let d = 1; d <= days; d++) cells.push(d);
+        const n = dates.filter((d) => d.startsWith(ym)).length;
+        return (
+          <div key={ym}>
+            <div className="text-[10px] font-bold text-slate-600">
+              {y}年 {m}月<span className="ml-1 font-normal text-slate-400">（{n}日）</span>
+            </div>
+            <div className="mt-0.5 grid grid-cols-7 gap-0.5">
+              {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
+                <div key={w} className="text-center text-[8px] font-bold text-slate-300">
+                  {w}
+                </div>
+              ))}
+              {cells.map((d, i) =>
+                d === null ? (
+                  <div key={`x${i}`} />
+                ) : (
+                  <div
+                    key={d}
+                    className={`flex h-5 items-center justify-center rounded text-[9px] font-bold ${
+                      set.has(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`)
+                        ? "bg-blue-600 text-white"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    {d}
+                  </div>
+                ),
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {hidden > 0 && (
+        <p className="text-[10px] text-slate-500">ほか {hidden} か月ぶんにも入ります</p>
+      )}
+    </div>
   );
 }

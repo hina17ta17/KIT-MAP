@@ -886,17 +886,52 @@ function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
   const [all, setAll] = useState<FreeRow[] | null>(null);
   const [loading, setLoading] = useState(false);
 
+  /**
+   * 空いている教室を読む。
+   *
+   * ★見ている時限のぶんだけを読む。
+   *
+   *   前はその日ぜんぶ（教室×5時限）を読んで、画面で絞っていた。
+   *   教室が400室あると2000行を超え、Supabase が一度に返せる
+   *   1000行で切られていた。後ろの号館は、空いていても
+   *   いつまでも出てこない状態だった。
+   *
+   *   同時に何人も開いたときの重さも、ここが効く。
+   *   見るのは一つの時限なのだから、その一つだけを訊く。
+   */
   const load = useCallback(async () => {
+    if (periodId === null) return;
     setLoading(true);
-    const { data } = await createClient().rpc("free_rooms", { d: ymd(date) });
-    setAll((data as FreeRow[]) ?? []);
+    const { data, error } = await createClient().rpc("free_rooms", {
+      d: ymd(date),
+      p_period_id: periodId,
+    });
+    if (error) {
+      /*
+       * 引数を増やす前の版がまだ入っていることがある。
+       * そのときは前の形（日だけ）で訊き直す。
+       * 入れ直すまでのあいだ、使えなくなるのを避ける。
+       */
+      const again = await createClient().rpc("free_rooms", { d: ymd(date) });
+      setAll((again.data as FreeRow[]) ?? []);
+    } else {
+      setAll((data as FreeRow[]) ?? []);
+    }
     setLoading(false);
-  }, [date]);
+  }, [date, periodId]);
 
-  // 日が変わったら取り直す
+  /*
+   * 日か時限が変わったら取り直す。
+   *
+   * 押したときに読むのではなく、変わったのを見て読む。
+   * 押したときだと、その場ではまだ前の時限のままなので、
+   * 一つ前の時限のぶんを読んでしまう。
+   */
   useEffect(() => {
     setAll(null);
-  }, [date]);
+    if (periodId === null) return;
+    void load();
+  }, [date, periodId, load]);
 
   const hits = useMemo(() => {
     if (!all || periodId === null) return null;
@@ -926,10 +961,7 @@ function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
         {periods.map((p) => (
           <button
             key={p.id}
-            onClick={() => {
-              setPeriodId(p.id);
-              if (!all) void load();
-            }}
+            onClick={() => setPeriodId(p.id)}
             className={`rounded-xl py-2 text-xs font-bold transition active:scale-95 ${
               periodId === p.id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}

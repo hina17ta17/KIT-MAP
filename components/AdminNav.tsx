@@ -21,6 +21,7 @@ export type AdminPageId =
   | "rooms"
   | "schedule"
   | "cafeteria"
+  | "plan"
   | "feedback"
   | "edit";
 
@@ -65,6 +66,15 @@ const ENTRIES: Entry[] = [
     icon: "📘",
     label: "予定の登録",
     sub: "授業・イベント・課外活動",
+    allowed: (r) => r === "admin_l1" || r === "admin_l2" || canManageAll(r),
+  },
+  {
+    id: "plan",
+    href: "/admin/plan",
+    icon: "📅",
+    label: "予定の確認",
+    sub: "登録されている授業を、日ごとに見る",
+    // 予定を入れられる人と、教授。入れたものを確かめる欄なので同じ顔ぶれ
     allowed: (r) => r === "admin_l1" || r === "admin_l2" || canManageAll(r),
   },
   {

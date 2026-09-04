@@ -123,7 +123,13 @@ type Report = { students: number; staff: number; rejected: Rejected[] };
 /** all が false なら「学生の数しか見せてもらえていない」（教授のとき） */
 type Counts = { students: number; teachers?: number; others?: number; all: boolean };
 type DomainKind = "student" | "teacher" | "other";
-type Domains = Record<DomainKind, string>;
+/**
+ * 身分ごとのドメイン。いくつでも持てる。
+ *
+ * 学科や入学年でアドレスが分かれていることがあるので、
+ * 一つに決め打てない。
+ */
+type Domains = Record<DomainKind, string[]>;
 /** その身分のドメインを見るか。false なら合っていなくても通る */
 type DomainOn = Record<DomainKind, boolean>;
 
@@ -299,7 +305,12 @@ export default function RosterPage() {
   const [domains, setDomains] = useState<Domains | null>(null);
   const [domainOn, setDomainOn] = useState<DomainOn | null>(null);
   /** いま直している途中の文字。保存するまで反映しない */
-  const [draftDomain, setDraftDomain] = useState("");
+  /**
+   * 直している最中のドメインの並び。
+   *
+   * 空の一行を末尾に置いて見せるので、ここには打ち終わったものだけが入る。
+   */
+  const [draftDomains, setDraftDomains] = useState<string[]>([]);
 
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Sending[] | null>(null);
@@ -362,8 +373,20 @@ export default function RosterPage() {
       if (d) {
         // ドメインは文字、見るかどうかは真偽。混ぜて持つので unknown で受ける
         const got = d as Record<string, unknown>;
-        const text = (k: string) => (typeof got[k] === "string" ? (got[k] as string) : "");
-        setDomains({ student: text("student"), teacher: text("teacher"), other: text("other") });
+        /*
+         * 並び（students など）で返るが、13 を入れ直す前は
+         * 一つぶん（student）しか返らない。どちらでも読めるようにする。
+         */
+        const list = (many: string, one: string): string[] => {
+          const v = got[many];
+          if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+          return typeof got[one] === "string" && got[one] ? [got[one] as string] : [];
+        };
+        setDomains({
+          student: list("students", "student"),
+          teacher: list("teachers", "teacher"),
+          other: list("others", "other"),
+        });
         setDomainOn({
           // 読めないときは「あり」に倒す。うっかり全部通すほうが危ない
           student: got.student_on !== false,
@@ -749,7 +772,7 @@ export default function RosterPage() {
    */
   const pickKind = (k: DomainKind) => {
     setDomainKind(k);
-    setDraftDomain(domains?.[k] ?? "");
+    setDraftDomains(domains?.[k] ?? []);
   };
 
   /* ---------------- ファイルを読む ---------------- */
@@ -964,16 +987,18 @@ export default function RosterPage() {
      * いちばん困る形になる（実際にそうなっていた）。
      * 空のまま進めて、データベース側の断りを画面に出す。
      */
-    const before = domains?.[domainKind] ?? "";
-    const after = draftDomain.trim().toLowerCase();
-    if (before.toLowerCase() === after) return;
+    const before = domains?.[domainKind] ?? [];
+    const after = draftDomains.map((d) => d.trim().toLowerCase()).filter(Boolean);
+    if (before.join(",") === after.join(",")) return;
 
     const first = window.confirm(
       [
         `${kind.label}のドメインを変えます。`,
         "",
-        `  いま  ${before || "（決めていません）"}`,
-        `  あと  ${after || "（決めていない状態に戻す）"}`,
+        "  いま",
+        ...(before.length ? before.map((d) => "    " + d) : ["    （決めていません）"]),
+        "  あと",
+        ...(after.length ? after.map((d) => "    " + d) : ["    （決めていない状態に戻す）"]),
         "",
         "これから席を作る人に効きます。",
         "いまログインしている人は、そのまま使い続けられます。",
@@ -985,11 +1010,13 @@ export default function RosterPage() {
 
     const second = window.confirm(
       [
-        `本当に「${after || "（決めていない）"}」にしますか？`,
+        after.length
+          ? `本当に、この ${after.length} つにしますか？`
+          : "本当に「決めていない」に戻しますか？",
         "",
         "これが最後の確認です。",
-        after
-          ? "このドメイン以外のアドレスでは、新しく申請できなくなります。"
+        after.length
+          ? "ここに並んでいない アドレスでは、新しく申請できなくなります。"
           : "決めていない状態に戻すと、この身分ではドメインを見なくなります。",
       ].join(BR),
     );
@@ -998,18 +1025,20 @@ export default function RosterPage() {
     setMsg(null);
     setBusy(true);
     try {
-      const { data, error } = await createClient().rpc("set_domain", {
+      const { data, error } = await createClient().rpc("set_domains", {
         p_kind: domainKind,
-        p_domain: after,
+        p_list: after,
       });
       if (error) throw error;
-      const rep = data as { before: string; after: string };
-      setDomains((d) => (d ? { ...d, [domainKind]: rep.after } : d));
+      const rep = data as { before: string[]; after: string[] };
+      const list = Array.isArray(rep.after) ? rep.after : [];
+      setDomains((d) => (d ? { ...d, [domainKind]: list } : d));
+      setDraftDomains(list);
       setMsg({
         kind: "ok",
-        text: `${kind.label}のドメインを「${rep.before || "（未設定）"}」から「${
-          rep.after || "（未設定）"
-        }」にしました。ログイン中の人はそのままです。`,
+        text: `${kind.label}のドメインを ${
+          list.length ? list.join("・") : "（未設定）"
+        } にしました。ログイン中の人はそのままです。`,
       });
       await load();
     } catch (e) {
@@ -1017,13 +1046,14 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/13_domains.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/13_domains.sql を入れ直していない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
       setBusy(false);
     }
   };
+
 
   if (loading) return <Shell>{T("読み込み中…")}</Shell>;
 
@@ -1717,7 +1747,7 @@ export default function RosterPage() {
             onClick={() => {
               const next = !domainOpen;
               setDomainOpen(next);
-              if (next) setDraftDomain(domains?.[domainKind] ?? "");
+              if (next) setDraftDomains(domains?.[domainKind] ?? []);
             }}
             className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
           >
@@ -1745,8 +1775,11 @@ export default function RosterPage() {
 
             {(() => {
               const kind = DOMAIN_KINDS.find((k) => k.id === domainKind)!;
-              const saved = domains?.[domainKind] ?? "";
-              const changed = draftDomain.trim().toLowerCase() !== saved.toLowerCase();
+              const saved = domains?.[domainKind] ?? [];
+              const clean = draftDomains.map((d) => d.trim().toLowerCase()).filter(Boolean);
+              const changed = clean.join(",") !== saved.join(",");
+              /* 打ち終わったものの下に、いつも空の欄を一つ置く */
+              const rows = [...draftDomains, ""];
               return (
                 <>
                   <p className="mt-2 rounded-lg bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600">
@@ -1800,24 +1833,69 @@ export default function RosterPage() {
                   <label className="mt-2 block text-[10px] font-bold text-slate-500">
                     {T("いま決まっているもの")}
                   </label>
-                  <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
-                    {domainOn?.[domainKind] === false
-                      ? "（見ていません）"
-                      : saved || "（決めていません）"}
-                  </p>
+                  {domainOn?.[domainKind] === false ? (
+                    <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
+                      （見ていません）
+                    </p>
+                  ) : saved.length === 0 ? (
+                    <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
+                      （決めていません）
+                    </p>
+                  ) : (
+                    <ul className="mt-0.5 flex flex-wrap gap-1">
+                      {saved.map((d) => (
+                        <li
+                          key={d}
+                          className="rounded-lg bg-slate-100 px-2.5 py-1.5 font-mono text-[11px] text-slate-800"
+                        >
+                          {d}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
 
+                  {/*
+                    直す欄。いくつでも入れられる。
+
+                    打ち終わったものの下に、いつも空の欄が一つある。
+                    そこに打てば増え、消して空にすればその行は消える。
+                    「＋」を押させないのは、押し忘れて一つしか入らないのを避けるため。
+                  */}
                   <label className="mt-2 block text-[10px] font-bold text-slate-500">
-                    {T("直す")}
+                    {T("直す")}（{T("いくつでも入れられます")}）
                   </label>
-                  <input
-                    value={draftDomain}
-                    onChange={(e) => setDraftDomain(e.target.value)}
-                    autoComplete="off"
-                    placeholder="example.ac.jp"
-                    className="mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="mt-0.5 grid gap-1">
+                    {rows.map((d, i) => (
+                      <div key={i} className="flex gap-1">
+                        <input
+                          value={d}
+                          onChange={(e) => {
+                            const next = [...draftDomains];
+                            if (i < next.length) next[i] = e.target.value;
+                            else if (e.target.value !== "") next.push(e.target.value);
+                            setDraftDomains(next);
+                          }}
+                          autoComplete="off"
+                          placeholder={i === 0 ? "example.ac.jp" : T("もう一つ足す")}
+                          className="w-full rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+                        />
+                        {i < draftDomains.length && (
+                          <button
+                            onClick={() =>
+                              setDraftDomains(draftDomains.filter((_, j) => j !== i))
+                            }
+                            className="shrink-0 rounded-lg bg-white px-2.5 py-2 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95"
+                          >
+                            {T("外す")}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                   <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                    {T("空にすると「決めていない」に戻ります。")}
+                    {T("学科や入学年でアドレスが分かれているときは、そのぶんだけ入れてください。")}
+                    <br />
+                    {T("全部空にすると「決めていない」に戻ります。")}
                     <br />
                     <b>{T("いまログインしている人は、変えても入ったままです。")}</b>
                     {T("この設定は、これから席を作る人にだけ効きます。")}
@@ -1828,7 +1906,11 @@ export default function RosterPage() {
                     disabled={busy || !changed}
                     className="mt-2 w-full rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
                   >
-                    {busy ? "変えています…" : changed ? `${kind.label}のドメインを変える` : "変わっていません"}
+                    {busy
+                      ? "変えています…"
+                      : changed
+                        ? `${kind.label}のドメインを ${clean.length} つにする`
+                        : "変わっていません"}
                   </button>
                 </>
               );

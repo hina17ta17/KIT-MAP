@@ -296,6 +296,20 @@ export function canRegisterClass(role: Role | null): boolean {
 }
 
 /**
+ * 登録されている予定を、日ごとに見られるか。
+ *
+ * 課外活動リーダー（Lv1）・教授（Lv2）・2.1・2.2・管理者。
+ * 予定を入れられる人と同じ顔ぶれにしてある。
+ * 自分が入れたものが、どの日のどの時限に入ったのかを
+ * 確かめる欄なので、入れられる人には見せる。
+ *
+ * 学生には出さない。学生は地図の「学内の情報」から時間割を見る。
+ */
+export function canViewPlans(role: Role | null): boolean {
+  return role === "admin_l1" || role === "admin_l2" || canManageAll(role);
+}
+
+/**
  * 教室を、まとめて選べるか。
  *
  * 「すべての号館」と「空いている教室をすべて選ぶ」の二つ。
