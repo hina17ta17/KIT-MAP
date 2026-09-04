@@ -169,6 +169,15 @@ const EN: Record<string, string> = {
   "その身分の人がいません": "There is no one with that role",
   /* 名簿の中を見る */
   "名簿の中を見る": "Browse the roster",
+  "この頁をすべて選ぶ": "Select this page",
+  "印を付ける": "Mark",
+  "印を付けた": "Delete the",
+  "件を消す": "marked entries",
+  "この内容にする": "Save these details",
+  /* 予定の教室選び（部屋の種類） */
+  研究室: "Lab",
+  事務: "Office",
+  設備: "Facility",
   "名簿を開く": "Open the roster",
   "学年（すべて）": "Year (all)",
   "学科（すべて）": "Department (all)",

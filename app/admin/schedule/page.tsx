@@ -28,8 +28,79 @@ import MultiDatePicker, { niceDate, todayYmd } from "@/components/MultiDatePicke
 
 type Kind = "class" | "event" | "activity";
 
+/**
+ * 教室をぜんぶ読む。
+ *
+ * ■ なぜ「ぜんぶ」を自分で書くのか
+ *
+ *   Supabase（PostgREST）は、一度に返す行の数に上限がある。
+ *   既定は 1000 行で、それを超えたぶんは黙って切られる。
+ *   エラーにはならないので、画面からは「無い」ようにしか見えない。
+ *
+ *   教室は 1600 室を超えていて、実際に 681 室が切られていた。
+ *   並びが号館の番号（文字の順）なので、後ろのほうの号館
+ *   —— 5・6・7・8・9・32・36・39・40・41・43・47 号館は
+ *   まるごと出てこず、選びようがなかった。
+ *
+ *   1000 室ずつ、返ってこなくなるまで読み継ぐ。
+ *
+ * ■ 数え直さない
+ *   件数を先に問い合わせてから読む形にはしない。往復が増えるうえ、
+ *   その間に増えた教室を取りこぼす。返りが 1000 未満になったら終わり。
+ */
+async function readAllRooms(supabase: ReturnType<typeof createClient>) {
+  const STEP = 1000;
+  const rows: Room[] = [];
+  for (let from = 0; ; from += STEP) {
+    const { data, error } = await supabase
+      .from("rooms")
+      .select("id, building_code, code, name, category")
+      .order("building_code")
+      .order("code")
+      .range(from, from + STEP - 1);
+    if (error) return { data: rows, error };
+    const got = (data as Room[]) ?? [];
+    rows.push(...got);
+    if (got.length < STEP) break;
+    // 念のための止め木。数え違いで永久に回らないように
+    if (from > 100000) break;
+  }
+  return { data: rows, error: null };
+}
+
 type Period = { id: number; label: string; starts_at: string; ends_at: string };
-type Room = { id: number; building_code: string; code: string; name: string };
+type Room = {
+  id: number;
+  building_code: string;
+  code: string;
+  name: string;
+  /** 部屋の種類。class（教室）・lab（研究室）・office（事務）・facility（設備）・other */
+  category: string;
+};
+
+/**
+ * 部屋の種類の呼び名。
+ *
+ * 予定を入れられるのは講義室だけではない。研究室でのゼミ、
+ * 体育館や食堂で行う催しもある。しぼり込みで探せるようにして、
+ * 「講義室しか選べない」と思われないようにする。
+ */
+const ROOM_KINDS: { id: string; label: string }[] = [
+  { id: "", label: "すべて" },
+  { id: "class", label: "教室" },
+  { id: "lab", label: "研究室" },
+  { id: "office", label: "事務" },
+  { id: "facility", label: "設備" },
+  { id: "other", label: "その他" },
+];
+
+const ROOM_KIND_LABEL: Record<string, string> = {
+  class: "教室",
+  lab: "研究室",
+  office: "事務",
+  facility: "設備",
+  other: "その他",
+};
 type Faculty = { id: number; name: string };
 /** code は学科のクラス記号（機械工学科なら KM）。006 を流す前は空 */
 type Dept = { id: number; faculty_id: number; name: string; code?: string };
@@ -141,6 +212,8 @@ export default function SchedulePage() {
   const [buildingCodes, setBuildingCodes] = useState<string[]>([]);
   /** 選んだ教室。まとめて同じ予定を入れられるよう複数持つ */
   const [roomIds, setRoomIds] = useState<number[]>([]);
+  /** 部屋の種類のしぼり。空なら「すべて」 */
+  const [roomKind, setRoomKind] = useState("");
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [deptId, setDeptId] = useState<number | null>(null);
   const [courseId, setCourseId] = useState<number | null>(null);
@@ -244,7 +317,7 @@ export default function SchedulePage() {
 
       const [p, r, f, d, c, a] = await Promise.all([
         supabase.from("periods").select("id, label, starts_at, ends_at").order("id"),
-        supabase.from("rooms").select("id, building_code, code, name").order("building_code").order("code"),
+        readAllRooms(supabase),
         supabase.from("faculties").select("id, name").order("sort_order"),
         // 記号の列がまだ無い場合もあるので、列を並べずにまとめて取る
         supabase.from("departments").select("*").order("sort_order"),
@@ -340,11 +413,35 @@ export default function SchedulePage() {
     [allBuildings, roomCount],
   );
 
-  /** いま選んでいる号館にある教室 */
+  /**
+   * いま選んでいる号館にある教室。種類でしぼっていれば、そのぶんだけ。
+   *
+   * しぼりの既定は「すべて」。研究室でのゼミも、体育館での催しも
+   * 入れられるので、はじめから隠さない。
+   */
   const roomsInScope = useMemo(
-    () => (buildingCodes.length === 0 ? [] : rooms.filter((r) => buildingCodes.includes(r.building_code))),
-    [rooms, buildingCodes],
+    () =>
+      buildingCodes.length === 0
+        ? []
+        : rooms.filter(
+            (r) =>
+              buildingCodes.includes(r.building_code) &&
+              (roomKind === "" || (r.category || "other") === roomKind),
+          ),
+    [rooms, buildingCodes, roomKind],
   );
+
+  /** 号館の中に、どの種類が何室あるか。しぼりのボタンに数を出す */
+  const kindCount = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rooms) {
+      if (!buildingCodes.includes(r.building_code)) continue;
+      const k = r.category || "other";
+      m.set(k, (m.get(k) ?? 0) + 1);
+      m.set("", (m.get("") ?? 0) + 1);
+    }
+    return m;
+  }, [rooms, buildingCodes]);
 
   const chosen = useMemo(
     () => roomIds.map((id) => rooms.find((r) => r.id === id)).filter((r): r is Room => !!r),
@@ -879,6 +976,38 @@ export default function SchedulePage() {
             )}
           </div>
 
+          {/*
+            部屋の種類でしぼる。
+
+            予定を入れられるのは講義室だけではない。研究室でのゼミも、
+            体育館や食堂での催しもある。号館を選んだら種類も出して、
+            「講義室しか選べない」と思われないようにする。
+            既定は「すべて」で、はじめから隠すものは無い。
+          */}
+          {buildingCodes.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {ROOM_KINDS.map((k) => {
+                const n = kindCount.get(k.id) ?? 0;
+                const on = roomKind === k.id;
+                return (
+                  <button
+                    key={k.id || "all"}
+                    onClick={() => setRoomKind(k.id)}
+                    disabled={n === 0}
+                    className={`rounded-lg px-2 py-1.5 text-[10px] font-bold transition active:scale-95 disabled:opacity-40 ${
+                      on ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {T(k.label)}
+                    <span className={`ml-1 font-normal ${on ? "text-slate-300" : "text-slate-400"}`}>
+                      {n}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {roomsInScope.length > 0 && (
             <>
               <div className="mt-1.5 flex gap-1.5">
@@ -948,12 +1077,22 @@ export default function SchedulePage() {
                         )}
                         <span className="w-14 shrink-0 text-xs font-bold">{r.code}</span>
                         <span
-                          className={`min-w-0 truncate text-[11px] ${on && !taken ? "text-blue-100" : "text-slate-500"}`}
+                          className={`min-w-0 flex-1 truncate text-[11px] ${on && !taken ? "text-blue-100" : "text-slate-500"}`}
                         >
                           {taken
                             ? `使用中：${KIND_LABEL[taken.kind]}`
                             : r.name || "（部屋名なし）"}
                         </span>
+                        {/* 種類。講義室以外も入れられることが、並びから分かるように */}
+                        {!taken && roomKind === "" && (
+                          <span
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                              on ? "bg-blue-500 text-blue-50" : "bg-slate-200 text-slate-500"
+                            }`}
+                          >
+                            {T(ROOM_KIND_LABEL[r.category] ?? "その他")}
+                          </span>
+                        )}
                       </button>
                     </li>
                   );

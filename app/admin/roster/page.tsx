@@ -29,7 +29,7 @@
  *   import_roster に一本化してあり、ここは渡して結果を見せるだけ。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
@@ -37,6 +37,7 @@ import { useAdminT } from "@/lib/adminLang";
 import {
   CLASS_CODES,
   CLASS_NOS,
+  DEPT_MAX,
   GRADES,
   canManageAll,
   canReadRoster,
@@ -259,6 +260,25 @@ export default function RosterPage() {
   const [rDept, setRDept] = useState<string | null>(null);
   /** クラス（1〜10）で絞る */
   const [rClassNo, setRClassNo] = useState<number | null>(null);
+  /**
+   * まとめて消すために印を付けた人。
+   *
+   * 学生は学籍番号、教授とその他はアドレスで持つ。
+   * 消すときにデータベースへ渡す鍵と、同じものにしてある。
+   */
+  const [rPicked, setRPicked] = useState<string[]>([]);
+  /** いま直している人の鍵。null なら誰も直していない */
+  const [rEdit, setREdit] = useState<string | null>(null);
+  /** 直している最中の中身 */
+  const [rForm, setRForm] = useState<{
+    name: string;
+    grade: number;
+    class_code: string;
+    class_no: number;
+    seat_no: string;
+    number: string;
+    depts: string[];
+  } | null>(null);
   const [q, setQ] = useState("");
   const [page, setPage] = useState(0);
   const [people, setPeople] = useState<Person[]>([]);
@@ -382,6 +402,14 @@ export default function RosterPage() {
       if (!supabaseReady) return;
       setRBusy(true);
       if (!keepMsg) setMsg(null);
+      /*
+       * 印と、直しかけの欄は捨てる。
+       * 並びが変われば、印の付いていた鍵はもう画面に無い。
+       * 見えていないものが消えるのがいちばん困る。
+       */
+      setRPicked([]);
+      setREdit(null);
+      setRForm(null);
       try {
         const supabase = createClient();
         if (kind === "student") {
@@ -429,6 +457,18 @@ export default function RosterPage() {
       }
     },
     [rq, rGrade, rDept, rClassNo],
+  );
+
+  /**
+   * いま並んでいる人の鍵。
+   *
+   * 学生は学籍番号、教授とその他はアドレス。
+   * まとめて消すときにデータベースへ渡すものと、同じにしてある。
+   */
+  const shownKeys = useMemo(
+    () =>
+      rKind === "student" ? rStudents.map((s) => s.student_no) : rStaff.map((t) => t.email),
+    [rKind, rStudents, rStaff],
   );
 
   /* 絞り込みや探す言葉を変えたら、少し待ってから引き直す */
@@ -562,9 +602,141 @@ export default function RosterPage() {
     label: string,
   ) => {
     await removeFromRoster(kind, key, label);
+    setRPicked((p) => p.filter((x) => x !== key));
     const at = rStudents.length + rStaff.length <= 1 ? Math.max(0, rPage - 1) : rPage;
     setRPage(at);
     await loadRoster(rKind, at, true);
+  };
+
+  /**
+   * 印を付けたぶんを、まとめて消す。
+   *
+   * 一人ずつ消せるだけだと、間違えて取り込んだ一学年ぶんを
+   * 消すのに何百回も押すことになる。
+   * 消す前に、何人ぶんかと名前の先頭を出して一度たずねる。
+   */
+  const removePicked = async () => {
+    if (rPicked.length === 0) return;
+    const kind = rKind === "student" ? "student" : "staff";
+    const names =
+      rKind === "student"
+        ? rStudents.filter((s) => rPicked.includes(s.student_no)).map((s) => s.full_name || s.student_no)
+        : rStaff.filter((t) => rPicked.includes(t.email)).map((t) => t.full_name || t.email);
+
+    if (
+      !window.confirm(
+        [
+          `印を付けた ${rPicked.length} 件を名簿から消します。`,
+          "",
+          ...names.slice(0, 10).map((n) => "  " + n),
+          names.length > 10 ? `  ほか ${rPicked.length - 10} 件` : "",
+          "",
+          "消えるのは突き合わせ用の名簿だけで、その人の席は残ります。",
+          "元には戻せません。よろしいですか？",
+        ]
+          .filter((s) => s !== "")
+          .join(BR),
+      )
+    )
+      return;
+
+    setRBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("roster_remove_many", {
+        p_kind: kind,
+        p_keys: rPicked,
+      });
+      if (error) throw error;
+      setMsg({ kind: "ok", text: `${data ?? 0} 件を名簿から消しました。` });
+      setRPicked([]);
+      const at = rPicked.length >= rStudents.length + rStaff.length ? Math.max(0, rPage - 1) : rPage;
+      setRPage(at);
+      await load();
+      await loadRoster(rKind, at, true);
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/12_roster_import.sql を入れ直していない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setRBusy(false);
+    }
+  };
+
+  /**
+   * 名簿の一人を直す。
+   *
+   * ★入れるときと同じ道（import_roster）を通す。
+   *
+   *   名簿は「同じ鍵なら上書き」で入る作りなので、直した中身を
+   *   一行ぶんの取り込みとして渡せば、そのまま置き換わる。
+   *   直す用の関数を別に作ると、弾く決まりが二か所になり、
+   *   xlsx からは通らない中身が画面からは入る、ということが起きる。
+   *
+   *   鍵（学生は学籍番号とアドレス、教授とその他はアドレス）は
+   *   直せない。変えたいときは、消して入れ直す。
+   *   鍵を変えると別人になり、古いほうが名簿に残ってしまうため。
+   */
+  const saveEdit = async (row: RosterStudent | RosterStaff) => {
+    if (!rForm) return;
+    const isStudent = rKind === "student";
+    const s = row as RosterStudent;
+    const t = row as RosterStaff;
+
+    const one = {
+      row: 1,
+      kind: isStudent ? "学生" : rKind === "teacher" ? "教授" : "その他",
+      email: row.email,
+      name: rForm.name,
+      grade: isStudent ? String(rForm.grade || "") : "",
+      class_code: isStudent ? rForm.class_code : "",
+      class_no: isStudent ? String(rForm.class_no || "") : "",
+      seat_no: isStudent ? rForm.seat_no : "",
+      student_no: isStudent ? s.student_no : "",
+      depts: rKind === "teacher" ? rForm.depts : [],
+      number: isStudent ? "" : rForm.number,
+    };
+
+    setRBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("import_roster", { p_rows: [one] });
+      if (error) throw error;
+      const rep = data as { students: number; staff: number; rejected: { why: string }[] };
+      if (rep.rejected.length > 0) {
+        setMsg({ kind: "err", text: `直せませんでした：${rep.rejected[0].why}` });
+        return;
+      }
+      setMsg({
+        kind: "ok",
+        text: `${rForm.name || (isStudent ? s.student_no : t.email)} を直しました。`,
+      });
+      setREdit(null);
+      setRForm(null);
+      await loadRoster(rKind, rPage, true);
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setRBusy(false);
+    }
+  };
+
+  /** その行を直しはじめる。いまの中身を欄に入れる */
+  const startEdit = (row: RosterStudent | RosterStaff, key: string) => {
+    const s = row as RosterStudent;
+    const t = row as RosterStaff;
+    setREdit(key);
+    setRForm({
+      name: row.full_name ?? "",
+      grade: s.grade ?? 0,
+      class_code: s.class_code ?? "",
+      class_no: s.class_no ?? 0,
+      seat_no: s.seat_no != null ? String(s.seat_no) : "",
+      number: t.number ?? "",
+      depts: t.dept_codes ?? [],
+    });
   };
 
   /*
@@ -1082,79 +1254,206 @@ export default function RosterPage() {
               )}
             </div>
 
+            {/*
+              まとめて消す。
+
+              印を付けたぶんを一度で消す。間違えて取り込んだ一学年ぶんを
+              一人ずつ押して消すのは、現実には終わらない。
+              印が付いているときだけ出す。ふだんは並びを邪魔しない。
+            */}
+            {canWrite && (rStudents.length > 0 || rStaff.length > 0) && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={() =>
+                    setRPicked(
+                      rPicked.length === shownKeys.length ? [] : shownKeys,
+                    )
+                  }
+                  className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+                >
+                  {rPicked.length === shownKeys.length
+                    ? T("印を外す")
+                    : `${T("この頁をすべて選ぶ")}（${shownKeys.length}）`}
+                </button>
+                {rPicked.length > 0 && (
+                  <button
+                    onClick={() => void removePicked()}
+                    disabled={rBusy || listBusy}
+                    className="rounded-lg bg-red-600 px-2.5 py-1.5 text-[10px] font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
+                  >
+                    {T("印を付けた")} {rPicked.length} {T("件を消す")}
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* 一人ぶんの中身は、名簿が持っているものを全部出す */}
             <ul className="mt-1.5 max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-slate-50">
               {rKind === "student"
                 ? rStudents.map((s) => (
-                    <li key={s.student_no} className="flex items-start gap-2 px-2.5 py-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-1.5">
-                          {s.seat_no !== null && (
-                            <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700">
-                              {s.seat_no}
+                    <li key={s.student_no} className="px-2.5 py-2">
+                      <div className="flex items-start gap-2">
+                        {canWrite && (
+                          <button
+                            onClick={() =>
+                              setRPicked((p) =>
+                                p.includes(s.student_no)
+                                  ? p.filter((x) => x !== s.student_no)
+                                  : [...p, s.student_no],
+                              )
+                            }
+                            aria-label={T("印を付ける")}
+                            className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold transition ${
+                              rPicked.includes(s.student_no)
+                                ? "bg-red-600 text-white"
+                                : "bg-white text-transparent ring-1 ring-slate-300"
+                            }`}
+                          >
+                            ✓
+                          </button>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-1.5">
+                            {s.seat_no !== null && (
+                              <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700">
+                                {s.seat_no}
+                              </span>
+                            )}
+                            <span className="truncate text-xs font-bold text-slate-800">
+                              {s.full_name || "（名前なし）"}
                             </span>
-                          )}
-                          <span className="truncate text-xs font-bold text-slate-800">
-                            {s.full_name || "（名前なし）"}
-                          </span>
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                            {s.grade > 0 && <span>{s.grade}年</span>}
+                            {s.class_code && <span>{s.class_code}</span>}
+                            {!!s.class_no && (
+                              <span>
+                                {T("クラス")}
+                                {s.class_no}
+                              </span>
+                            )}
+                            <span className="font-mono">学籍番号 {s.student_no}</span>
+                          </div>
+                          <div className="truncate font-mono text-[10px] text-slate-400">
+                            {s.email}
+                          </div>
                         </div>
-                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
-                          {s.grade > 0 && <span>{s.grade}年</span>}
-                          {s.class_code && <span>{s.class_code}</span>}
-                          {!!s.class_no && (
-                            <span>
-                              {T("クラス")}
-                              {s.class_no}
-                            </span>
-                          )}
-                          <span className="font-mono">学籍番号 {s.student_no}</span>
-                        </div>
-                        <div className="truncate font-mono text-[10px] text-slate-400">{s.email}</div>
+                        {/* 直す・消すは 2.1・2.2・管理者だけ。教授には出さない */}
+                        {canWrite && (
+                          <div className="flex shrink-0 gap-1">
+                            <button
+                              onClick={() =>
+                                rEdit === s.student_no
+                                  ? (setREdit(null), setRForm(null))
+                                  : startEdit(s, s.student_no)
+                              }
+                              disabled={rBusy || listBusy}
+                              className="rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-100 active:scale-95 disabled:text-slate-300"
+                            >
+                              {rEdit === s.student_no ? T("やめる") : T("直す")}
+                            </button>
+                            <button
+                              onClick={() =>
+                                void removeShown(
+                                  "student",
+                                  s.student_no,
+                                  `${s.full_name || "名前なし"}（${s.student_no}）`,
+                                )
+                              }
+                              disabled={rBusy || listBusy}
+                              className="rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                            >
+                              {T("消す")}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      {/* 消せるのは 2.1・2.2・管理者だけ。教授には出さない */}
-                      {canWrite && (
-                        <button
-                          onClick={() =>
-                            void removeShown(
-                              "student",
-                              s.student_no,
-                              `${s.full_name || "名前なし"}（${s.student_no}）`,
-                            )
-                          }
-                          disabled={rBusy || listBusy}
-                          className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
-                        >
-                          {T("消す")}
-                        </button>
+
+                      {rEdit === s.student_no && rForm && (
+                        <EditForm
+                          t={T}
+                          kind="student"
+                          form={rForm}
+                          setForm={setRForm}
+                          busy={rBusy}
+                          onSave={() => void saveEdit(s)}
+                        />
                       )}
                     </li>
                   ))
                 : rStaff.map((t) => (
-                    <li key={t.email} className="flex items-start gap-2 px-2.5 py-2">
-                      <div className="min-w-0 flex-1">
-                        <span className="truncate text-xs font-bold text-slate-800">
-                          {t.full_name || "（名前なし）"}
-                        </span>
-                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
-                          <span className="font-mono">番号 {t.number}</span>
-                          {(t.dept_codes ?? []).length > 0 && (
-                            <span>
-                              {T("担当")} {(t.dept_codes ?? []).join("・")}
-                            </span>
-                          )}
+                    <li key={t.email} className="px-2.5 py-2">
+                      <div className="flex items-start gap-2">
+                        {canWrite && (
+                          <button
+                            onClick={() =>
+                              setRPicked((p) =>
+                                p.includes(t.email)
+                                  ? p.filter((x) => x !== t.email)
+                                  : [...p, t.email],
+                              )
+                            }
+                            aria-label={T("印を付ける")}
+                            className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold transition ${
+                              rPicked.includes(t.email)
+                                ? "bg-red-600 text-white"
+                                : "bg-white text-transparent ring-1 ring-slate-300"
+                            }`}
+                          >
+                            ✓
+                          </button>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <span className="truncate text-xs font-bold text-slate-800">
+                            {t.full_name || "（名前なし）"}
+                          </span>
+                          <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                            <span className="font-mono">番号 {t.number}</span>
+                            {(t.dept_codes ?? []).length > 0 && (
+                              <span>
+                                {T("担当")} {(t.dept_codes ?? []).join("・")}
+                              </span>
+                            )}
+                          </div>
+                          <div className="truncate font-mono text-[10px] text-slate-400">
+                            {t.email}
+                          </div>
                         </div>
-                        <div className="truncate font-mono text-[10px] text-slate-400">{t.email}</div>
+                        {canWrite && (
+                          <div className="flex shrink-0 gap-1">
+                            <button
+                              onClick={() =>
+                                rEdit === t.email
+                                  ? (setREdit(null), setRForm(null))
+                                  : startEdit(t, t.email)
+                              }
+                              disabled={rBusy || listBusy}
+                              className="rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-100 active:scale-95 disabled:text-slate-300"
+                            >
+                              {rEdit === t.email ? T("やめる") : T("直す")}
+                            </button>
+                            <button
+                              onClick={() =>
+                                void removeShown("staff", t.email, `${t.full_name || t.email}`)
+                              }
+                              disabled={rBusy || listBusy}
+                              className="rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                            >
+                              {T("消す")}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      {canWrite && (
-                        <button
-                          onClick={() =>
-                            void removeShown("staff", t.email, `${t.full_name || t.email}`)
-                          }
-                          disabled={rBusy || listBusy}
-                          className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
-                        >
-                          {T("消す")}
-                        </button>
+
+                      {rEdit === t.email && rForm && (
+                        <EditForm
+                          t={T}
+                          kind={rKind === "teacher" ? "teacher" : "other"}
+                          form={rForm}
+                          setForm={setRForm}
+                          busy={rBusy}
+                          onSave={() => void saveEdit(t)}
+                        />
                       )}
                     </li>
                   ))}
@@ -1909,6 +2208,184 @@ export default function RosterPage() {
 /** 手で入れる欄の見た目。同じものを何度も書かないでまとめておく */
 const manualInput =
   "mt-0.5 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500";
+
+/** 名簿を直す欄の、共通の見た目 */
+const editInput =
+  "mt-0.5 w-full rounded-lg bg-white px-2 py-1.5 text-xs outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-500";
+
+/**
+ * 名簿の一人を、その場で直す欄。
+ *
+ * 直せるのは中身だけ。鍵（学生は学籍番号とアドレス、教授とその他は
+ * アドレス）は出さない。ここを変えると別人になり、古いほうが
+ * 名簿に残ってしまう。変えたいときは消して入れ直す。
+ *
+ * 入れるときと同じ道（import_roster）へ渡すので、
+ * 弾く決まりは xlsx から入れるときとまったく同じになる。
+ */
+function EditForm({
+  t: T,
+  kind,
+  form,
+  setForm,
+  busy,
+  onSave,
+}: {
+  t: (ja: string) => string;
+  kind: "student" | "teacher" | "other";
+  form: {
+    name: string;
+    grade: number;
+    class_code: string;
+    class_no: number;
+    seat_no: string;
+    number: string;
+    depts: string[];
+  };
+  setForm: (
+    f: (p: {
+      name: string;
+      grade: number;
+      class_code: string;
+      class_no: number;
+      seat_no: string;
+      number: string;
+      depts: string[];
+    } | null) => typeof form | null,
+  ) => void;
+  busy: boolean;
+  onSave: () => void;
+}) {
+  const set = (patch: Partial<typeof form>) =>
+    setForm((p) => (p ? { ...p, ...patch } : p));
+
+  /* 担当学科。選ぶと下に空の欄が一つ増える */
+  const deptRows = form.depts.length < DEPT_MAX ? [...form.depts, ""] : form.depts;
+
+  return (
+    <div className="mt-2 rounded-lg bg-white p-2 ring-1 ring-slate-200">
+      <label className="block text-[10px] font-bold text-slate-500">{T("氏名")}</label>
+      <input
+        value={form.name}
+        onChange={(e) => set({ name: e.target.value })}
+        className={editInput}
+      />
+
+      {kind === "student" ? (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500">{T("学年")}</label>
+            <select
+              value={form.grade || ""}
+              onChange={(e) => set({ grade: Number(e.target.value) || 0 })}
+              className={editInput}
+            >
+              <option value="">—</option>
+              {GRADES.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                  {T("年")}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500">{T("学科")}</label>
+            <select
+              value={form.class_code}
+              onChange={(e) => set({ class_code: e.target.value })}
+              className={editInput}
+            >
+              <option value="">—</option>
+              {CLASS_CODES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code}　{T(c.name)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500">{T("クラス")}</label>
+            <select
+              value={form.class_no || ""}
+              onChange={(e) => set({ class_no: Number(e.target.value) || 0 })}
+              className={editInput}
+            >
+              <option value="">—</option>
+              {CLASS_NOS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500">{T("名列番号")}</label>
+            <input
+              value={form.seat_no}
+              onChange={(e) => set({ seat_no: e.target.value.replace(/\D/g, "").slice(0, 3) })}
+              inputMode="numeric"
+              className={editInput}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          <label className="mt-2 block text-[10px] font-bold text-slate-500">
+            {T("8桁の番号")}
+          </label>
+          <input
+            value={form.number}
+            onChange={(e) => set({ number: e.target.value.trim().slice(0, 8) })}
+            inputMode="text"
+            autoCapitalize="off"
+            className={`${editInput} font-mono`}
+          />
+          {kind === "teacher" && (
+            <>
+              <label className="mt-2 block text-[10px] font-bold text-slate-500">
+                {T("担当学科")}
+              </label>
+              <div className="grid gap-1">
+                {deptRows.map((code, i) => (
+                  <select
+                    key={i}
+                    value={code}
+                    onChange={(e) => {
+                      const next = [...form.depts];
+                      if (e.target.value === "") next.splice(i, 1);
+                      else if (i < next.length) next[i] = e.target.value;
+                      else next.push(e.target.value);
+                      set({ depts: next });
+                    }}
+                    className={editInput}
+                  >
+                    <option value="">{code ? T("（外す）") : T("学科を選ぶ")}</option>
+                    {CLASS_CODES.filter(
+                      (c) => c.code === code || !form.depts.includes(c.code),
+                    ).map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code}　{T(c.name)}
+                      </option>
+                    ))}
+                  </select>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      <button
+        onClick={onSave}
+        disabled={busy || form.name.trim() === ""}
+        className="mt-2 w-full rounded-lg bg-blue-600 px-2 py-2 text-[11px] font-bold text-white transition hover:bg-blue-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+      >
+        {busy ? T("処理中…") : T("この内容にする")}
+      </button>
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
