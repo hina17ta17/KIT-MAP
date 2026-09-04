@@ -45,6 +45,7 @@ import {
   AFFILIATIONS,
   AFFILIATION_LABEL,
   CLASS_CODES,
+  CLASS_NOS,
   GRADES,
   GROUPS,
   ROLE_LABEL,
@@ -78,6 +79,9 @@ type Row = {
    */
   affiliation: Affiliation | null;
 };
+
+/** 確かめの文で使う改行 */
+const BR = String.fromCharCode(10);
 
 /** ここから付けられる権限。いちばん上の権限は入れない */
 const ASSIGNABLE: Role[] = [
@@ -159,6 +163,10 @@ export default function AdminPage() {
   const [fGrade, setFGrade] = useState<number | null>(null);
   const [fClass, setFClass] = useState<string | null>(null);
   const [fGroup, setFGroup] = useState<number | null>(null);
+  /** 身分で絞る（学生・教授・その他）。null なら絞らない */
+  const [fAff, setFAff] = useState<Affiliation | null>(null);
+  /** クラス（1〜10）で絞る */
+  const [fClassNo, setFClassNo] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     if (!supabaseReady) {
@@ -317,6 +325,61 @@ export default function AdminPage() {
             ? e.message + "（base/06_admin.sql をまだ入れ直していない場合は、先に入れてください）"
             : String(e),
       });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * その人ひとりだけを消す。
+   *
+   * 中身は印を付けて消すのと同じ（reset_users）。
+   * 申請してきた一人を入り直させたいだけのときに、
+   * 印を付けて画面の下まで送るのが遠かったので、
+   * その人の欄から直に押せるようにした。
+   */
+  const resetOne = async (r: Row) => {
+    setMsg(null);
+    const who = r.full_name || r.email;
+
+    if (
+      !window.confirm(
+        [
+          `${who} を消します。`,
+          "",
+          "この人から、次のものが消えます。",
+          "  ・ログイン中の状態",
+          "  ・パスワード",
+          "  ・本人確認（認証アプリ）",
+          "  ・氏名・学年・学科・クラス・名列番号",
+          "  ・承認した権限",
+          "",
+          "申請の最初からやり直しになります。元には戻せません。",
+          "",
+          "続けますか？",
+        ].join(BR),
+      )
+    )
+      return;
+    if (!window.confirm(`本当に ${who} を消しますか？${BR}${BR}これが最後の確認です。`)) return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("reset_users", {
+        p_ids: [r.id],
+        p_password: password || null,
+      });
+      if (error) throw error;
+      setPicked((p) => p.filter((x) => x !== r.id));
+      setOpen(null);
+      await load();
+      setMsg(
+        (data as number) > 0
+          ? { kind: "ok", text: `${who} を消しました。申請からやり直しになります。` }
+          : { kind: "err", text: `${who} は消せませんでした（いちばん上の権限の人か、あなた自身です）` },
+      );
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -559,6 +622,12 @@ export default function AdminPage() {
       {/* 既存の絞り込み */}
       {tab === "existing" && (
         <div className="mb-3 rounded-xl bg-slate-50 p-2.5">
+          <Filter
+            label="身分"
+            value={fAff}
+            onPick={setFAff}
+            options={AFFILIATIONS.map((a) => [a.id, a.label])}
+          />
           <Filter label="学年" value={fGrade} onPick={setFGrade} options={GRADES.map((g) => [g, `${g}年`])} />
           <Filter
             label="学科"
@@ -566,8 +635,14 @@ export default function AdminPage() {
             onPick={setFClass}
             options={CLASS_CODES.map((c) => [c.code, c.code])}
           />
+          <Filter
+            label="クラス"
+            value={fClassNo}
+            onPick={setFClassNo}
+            options={CLASS_NOS.map((n) => [n, String(n)])}
+          />
           {/* 名列番号は200通りあるので、並べて絞り込む形にはしない。
-              学年と学科で絞ったうえで、一覧から探す */}
+              身分・学年・学科・クラスで絞ったうえで、一覧から探す */}
         </div>
       )}
 
@@ -765,6 +840,38 @@ export default function AdminPage() {
                         );
                       })}
                     </div>
+                  </div>
+
+                  {/*
+                    この人だけをリセットする。
+
+                    印を付けて下のボタンから消す道もあるが、
+                    申請してきた一人を入り直させたいだけのときに、
+                    印を付けて画面の下まで送るのは遠い。
+                    開いているこの欄から、その場でできるようにする。
+                  */}
+                  <div className="mt-3 border-t border-slate-700 pt-2">
+                    <div className="mb-1.5 text-[10px] font-bold text-slate-400">
+                      {T("この人をリセットする")}
+                      <span className="ml-1.5 font-normal text-slate-500">
+                        {T("申請の最初からやり直しになります")}
+                      </span>
+                    </div>
+                    <input
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      type="password"
+                      placeholder={T("あなたのログインパスワード")}
+                      autoComplete="current-password"
+                      className="w-full rounded-lg bg-slate-800 px-3 py-2 text-xs text-white outline-none ring-1 ring-slate-700 focus:ring-2 focus:ring-red-400"
+                    />
+                    <button
+                      onClick={() => void resetOne(r)}
+                      disabled={busy}
+                      className="mt-1.5 w-full rounded-lg bg-red-600 px-2 py-2 text-[11px] font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-700 disabled:text-slate-500"
+                    >
+                      {busy ? T("処理中…") : T("この人を消して、申請からやり直させる")}
+                    </button>
                   </div>
                 </div>
               )}

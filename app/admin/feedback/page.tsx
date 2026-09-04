@@ -95,13 +95,37 @@ export default function FeedbackPage() {
     setRole(r);
 
     if (canReadFeedback(r)) {
-      const { data, error } = await supabase
-        .from("feedback")
-        .select("id, body, rating, lang, created_at, handled, reported")
-        .order("created_at", { ascending: false })
-        .limit(500);
-      if (error) setMsg(error.message);
-      setRows((data as Row[]) ?? []);
+      /*
+       * reported の列は 05_feedback.sql で足したもの。
+       *
+       * ★列を一つ並べただけで、届いた感想が全部消える
+       *
+       *   PostgREST は、知らない列が一つでもあると問い合わせ全部を断る。
+       *   画面は data が空になり、感想は届いているのに
+       *   「一件もありません」と出る。実際にそうなっていた
+       *   （データベースには5件あったのに、画面には出ていなかった）。
+       *
+       *   感想が読めることのほうが大事なので、断られたら
+       *   足したぶんの列を外して、もう一度訊く。
+       */
+      const base = "id, body, rating, lang, created_at, handled";
+      const read = async (cols: string) =>
+        supabase
+          .from("feedback")
+          .select(cols)
+          .order("created_at", { ascending: false })
+          .limit(500);
+
+      let got = await read(`${base}, reported`);
+      if (got.error) {
+        got = await read(base);
+        if (got.error) setMsg(got.error.message);
+        else
+          setMsg(
+            "「良くないコメント」の欄はまだ使えません（base/05_feedback.sql を入れると使えます）。感想はそのまま読めます。",
+          );
+      }
+      setRows((got.data as unknown as Row[]) ?? []);
     }
     setLoading(false);
   }, []);

@@ -259,6 +259,26 @@ export default function Guide() {
   /** いま土台が落ちているか。落ちているあいだは、その旨を出す */
   const [glLost, setGlLost] = useState(false);
 
+  /*
+   * 土台が落ちたまま戻ってこないときは、こちらから作り直す。
+   *
+   * ブラウザは、余裕ができると戻す合図（webglcontextrestored）をくれる。
+   * ただ iPhone では、その合図がいつまでも来ないことがある。
+   * 待っているあいだ地図は白いままで、押しても何も起きない。
+   *
+   * 1.5秒だけ待って、来なければ番号を進めて丸ごと組み直す。
+   * 出発地・目的地・お気に入りは地図の外に置いてあるので、
+   * 作り直しても消えない。
+   */
+  useEffect(() => {
+    if (!glLost) return;
+    const id = window.setTimeout(() => {
+      setGlLost(false);
+      setMapKey((k) => k + 1);
+    }, 1500);
+    return () => window.clearTimeout(id);
+  }, [glLost]);
+
   const [fix, setFix] = useState<Fix | null>(null);
   /** 向いている方角。真北を0として時計回りの度数。分からなければ null */
   const [heading, setHeading] = useState<number | null>(null);
@@ -577,198 +597,57 @@ export default function Guide() {
       if (still !== 1) map.setPixelRatio(still);
 
       /*
-       * 指で動かしているあいだは、さらに1倍まで落とす。
+       * ■ 指で動かしている間、さらに落とすのはやめた
        *
-       * 上限2倍だけでも 10fps → 57fps になったが、指を動かしている
-       * 最中の引っかかりは残っていた（9割点 55.9ms）。
-       * 動かしている間だけ1倍にすると 22.8ms まで下がる。
-       * 動いている最中は細かさが落ちても見た目には分からない。
+       *   前は、つまんでいる間だけ 1倍に落として軽くしていた。
+       *   見た目には効いていたが、代償が二つあった。
        *
-       * 合図に地図の move や zoom は使わない。
-       * 細かさを変えると地図が測り直しになり、その拍子に move が出る。
-       * それをまた合図として拾うので、下げる→戻す→下げる…と回り続け、
-       * 結局1倍のまま戻らなくなった（実際にそうなった）。
+       *   ① 画面が白くなる
+       *      setPixelRatio は canvas の裏側（WebGL の描画先）を
+       *      作り直す。つまむたびに作り直していると、端末の持ち物が
+       *      足りなくなり、ブラウザが土台を取り上げる。取り上げられると
+       *      地図は真っ白のまま戻らない。「割れる」のはこれ。
        *
-       * 指やホイールの操作そのものを合図にする。こちらは地図の都合では
-       * 出ないので、堂々巡りにならない。戻すのは最後の操作から 350ms 後。
-       * タイマーは必ず来るので、落としたままにはならない。
+       *   ② 出発地を置いたあと、つまむのが効かない
+       *      resize は map.stop() を呼び、stop は「いま触っている
+       *      指の組」を捨てる。出発地を置くと地図が寄る（fitBounds）ので、
+       *      その最中や直後につまむと、寄る動きと作り直しの両方から
+       *      指の組を捨てられていた。出発地を置いていないときは
+       *      寄る動きが無いぶん、当たりにくかっただけ。
        *
-       * ■ 触れた瞬間には落とさない
+       *   上限2倍だけでも 10fps → 57fps になっている。そこは残す。
+       *   その先の 1倍は、白くなるのと引き換えにするほどの得ではない。
        *
-       * はじめは touchstart でそのまま落としていた。これが
-       * 「Chrome で押した感じが悪い」の正体だった。
+       * ■ 代わりに、指が乗っている間は「操作を捨てさせない」
        *
-       * setPixelRatio は中で resize() を呼ぶ。canvas の裏側を作り直す
-       * 重い処理で、Chrome では GPU の描画先ごと取り直しになる。
-       * ただ押しただけでも、指が触れた瞬間と 400ms 後の二度これが走る。
-       * 実際に Chrome（画面3倍・CPU 4分の1）で測ると、
-       *   5回押しただけで 18 回 作り直していた。
-       * 押しはじめの数コマがそれに食われるので、狙った所に当たらない。
-       *
-       * ■ 落とすのは「拡大縮小のとき」だけ
-       *
-       * はじめは、指が動いたら一本指でも落としていた。
-       * これも測ってみると、一本指で動かしているだけの最中に
-       * _resizeCanvas が出ていた（一本指で動かす30コマ中 12ms）。
-       *
-       * 一本指で動かすのは、地図としては絵をずらしているだけで重くない。
-       * 実測でも 90番目のコマが 20ms、32ms を超えたのは 123コマ中 3コマ。
-       * 落とす値打ちがないのに、作り直しの分だけ損をしていた。
-       *
-       * 重いのは拡大縮小のほう。縮尺が変わると絵を作り直すので、
-       * 塗る点の数がそのまま効く。そこでだけ落とす。
-       *
-       *   ・二本目の指が触れた（＝拡大縮小）
-       *   ・ホイールを回した
-       *
-       * 押すだけ、動かすだけなら作り直しは 0 回。
-       * いちばんよく使う二つの操作が、どちらも作り直しなしになる。
+       *   捨てているのは handlers.stop（MapLibre の中身）。
+       *   指が二本乗ったらこれを何もしない関数にすり替え、
+       *   全部離れたら戻す。こうすると、その間に何が起きても
+       *   ——地図が自分で寄っても、絵を作り直しても——
+       *   指の組は残る。触っている人の操作がいちばん強い、という形。
        */
       {
         const cv = map.getCanvas();
 
-        /** 最後に動かしてから、細かさを戻すまでの間 */
-        const BACK_MS = 350;
-
-        /*
-         * ■ 落とすのは「縮尺が動き出してから」
-         *
-         *   ここは長いあいだ間違えていた。指が触れた時点や、
-         *   触れてから 130ms 後に setPixelRatio(1) を呼んでいた。
-         *
-         *   setPixelRatio は中で map.resize() を呼ぶ。
-         *   そして resize() は、地図がまだ動いていないときに
-         *   map.stop() を呼ぶ（MapLibre の作り）。
-         *   stop() は、いま触っている指の組をぜんぶ捨てる
-         *   （HandlerManager.stop → 各 handler.reset）。
-         *
-         *   つまり「二本指を置いて 130ms」で、
-         *   MapLibre が覚えていた二本指の組が消えていた。
-         *   そのあとどれだけ指を動かしても、地図は
-         *   「二本指の操作」として受け取らない。
-         *
-         *   実際に測ると、指の間を 300点から 200点まで縮めても
-         *   縮尺は 18.000 のまま一つも動かなかった。
-         *   指の間が広いほど効きはじめが遅いので、
-         *   広く開くと「まったく反応しない」ことになる。
-         *
-         *   縮尺が動き出したあとなら、resize() は stop() を呼ばない
-         *   （地図が動いている最中は止めない作りになっている）。
-         *   だから合図を zoom にする。動き出してから落とせば、
-         *   指の組は消えないし、軽くしたいのはまさにその最中。
-         *
-         *   ホイールも zoom を出すので、こちらだけで足りる。
-         *   wheel を直に聞くと、上と同じ理由で回しはじめが消える。
-         *
-         * ■ 戻すのは、指が全部離れてから
-         *
-         *   戻すときも resize() が走る。指が残っているうちに戻すと、
-         *   今度はそこで指の組が消える。長く止めたまま持ち替える人が
-         *   いるので、時間だけを見て戻してはいけない。
-         */
-        let low = false;
-        let back = 0;
-        /** いま画面に触れている指の数。戻してよいかを決めるのに使う */
-        let fingers = 0;
-        /** ホイールを回していた時刻。ここまでは人が動かしているとみなす */
-        let wheelUntil = 0;
-
-        /*
-         * 画面の細かさが 1 倍の端末では、落とす先が無い。
-         * それでも setPixelRatio を呼ぶと resize() だけが走って、
-         * 何も得ずに作り直すことになる。呼ばない。
-         */
-        const canDrop = still > 1;
-
-        const later = () => {
-          if (back) window.clearTimeout(back);
-          back = window.setTimeout(() => {
-            back = 0;
-            if (!low) return;
-            // 指が残っているうちは戻さない。戻すと操作が切れる
-            if (fingers > 0) {
-              later();
-              return;
-            }
-            low = false;
-            setRatio(still);
-          }, BACK_MS);
-        };
-
-        /**
-         * 細かさを変える。そのあいだだけ「操作を止めない」ようにする。
-         *
-         * ■ なぜ要るか
-         *
-         *   setPixelRatio は中で map.resize() を呼び、
-         *   resize() は map.stop() を呼ぶ。stop() は、いま触っている
-         *   指の組をぜんぶ捨てる（handlers.stop → 各 handler.reset）。
-         *
-         *   はじめは「縮尺が動き出してからなら安全」と考えたが、
-         *   実際に測ると違った。指で動かしている最中の縮尺の変化では
-         *   MapLibre の _moving は立たないので、resize() はやはり
-         *   stop() を呼ぶ。指を置いて最初のひと動きで縮尺が少し動き、
-         *   そこで組を捨てられ、あとはどれだけ動かしても効かない
-         *   ——これが「拡大縮小できないことがある」の正体だった。
-         *
-         * ■ どう避けるか
-         *
-         *   この resize のあいだだけ、handlers.stop を何もしない関数に
-         *   すり替える。止めてほしくないのは指の組だけで、
-         *   ほかの後始末（絵の作り直し）はそのまま走る。
-         *   すり替えは必ず元へ戻す。
-         *
-         * ■ すり替えられないときは、落とさない
-         *
-         *   MapLibre の作りが変わって handlers.stop が見つからない版では、
-         *   細かさを落とさずに済ませる。少し重くなるだけで、
-         *   拡大縮小が効かなくなるよりずっとよい。
-         */
         type Handlers = { stop?: (allowEndAnimation?: boolean) => void };
-        /*
-         * 置き場所は版によって違う。6系は _handlers、それより前は handlers。
-         * どちらも無ければ、細かさは触らない（下の canGuard）。
-         */
+        /* 置き場所は版によって違う。6系は _handlers、それより前は handlers */
         const m = map as unknown as { _handlers?: Handlers; handlers?: Handlers };
         const handlers = m._handlers ?? m.handlers;
-        const canGuard = typeof handlers?.stop === "function";
 
-        const setRatio = (v: number) => {
-          if (!canGuard || !handlers) return;
-          const real = handlers.stop;
+        /** すり替える前の、本物の stop。戻すときに使う */
+        let realStop: ((allowEndAnimation?: boolean) => void) | undefined;
+
+        /** 指が乗っているあいだ、操作を捨てさせない */
+        const holdOn = () => {
+          if (!handlers || typeof handlers.stop !== "function" || realStop) return;
+          realStop = handlers.stop;
           handlers.stop = () => {};
-          try {
-            map.setPixelRatio(v);
-          } finally {
-            handlers.stop = real;
-          }
         };
-
-        /**
-         * 縮尺が動いた。指かホイールで動かしているときだけ落とす。
-         *
-         * ★人が動かしているときに限るのが大事。
-         *
-         *   ラベルを押すと fitBounds で 700ms かけて寄る。これも zoom を出す。
-         *   そこで細かさを変えると、中の resize() が
-         *   「走っている動き」を止めてしまい、寄る途中で固まる。
-         *   上ですり替えているのは指の組のほうで、寄る動きは止まる。
-         *
-         *   落として得があるのは、人が指で動かし続けている最中だけ。
-         *   自分で寄っているぶんは 700ms で終わるので、そのままでよい。
-         */
-        const onZoom = () => {
-          const byHand = fingers >= 2 || Date.now() < wheelUntil;
-          if (canDrop && canGuard && byHand && !low) {
-            low = true;
-            setRatio(1);
-          }
-          if (byHand) later();
-        };
-
-        /** ホイールを回した時刻。ここから少しのあいだは「人が動かしている」 */
-        const onWheel = () => {
-          wheelUntil = Date.now() + 400;
+        /** 全部離れたら、元に戻す */
+        const holdOff = () => {
+          if (!handlers || !realStop) return;
+          handlers.stop = realStop;
+          realStop = undefined;
         };
 
         /**
@@ -792,17 +671,10 @@ export default function Guide() {
          *
          *     割合 = -log2(1 - 動かす距離 ÷ 間隔)
          *
-         *   ここは近似ではなく、そのままの式で出す。
-         *   間隔が広いほど近似のずれが効いてくるため。
-         *
          *   狭いときに敏感になりすぎないよう、既定の 0.1 より
          *   きつくはしない。広いほうは 0.005 まで下げる。
          *   画面の幅いっぱいに開いても、その3倍ほどに開いても
-         *   （横向きや大きな端末で起きる）、同じ手ごたえになる。
-         *
-         *   下げても暴れない。効きはじめたあとの縮尺は
-         *   「間隔が何割変わったか」で決まるので、広く開いた指の
-         *   数点のぶれは、縮尺にすると 0.01 にも満たない。
+         *   同じ手ごたえになる。
          */
         /** 効かせるのに動かす距離（画面の点）。狭くても広くもこれくらい */
         const MOVE = 6;
@@ -821,57 +693,44 @@ export default function Guide() {
         };
 
         /**
-         * 二本目の指が触れた＝拡大縮小のはじまり。
-         *
-         * ★走っている動きだけを止める。
-         *
-         *   ラベルを押すと fitBounds で 700ms かけて寄る。
-         *   その途中や直後に指を置くと、地図は自分の動きを続けようとし、
-         *   指の動きと引っ張り合う。押しても戻らない、戻ってもまた寄る、
-         *   という「反応がとても悪い」感じになる。
-         *
-         *   ただし stop() は指の組も捨てるので、いつも呼んではいけない。
-         *   寄っている最中（isEasing）のときだけにする。
-         */
-        /*
          * 「いま寄っている最中か」。
          *
          * MapLibre は持っているが、型には出していない。
          * 無い版に当たったときは「寄っていない」として扱う。
-         * 止め損ねるだけで済み、指の組を捨てる側には転ばない。
          */
         const easing = () =>
           (map as unknown as { isEasing?: () => boolean }).isEasing?.() === true;
 
+        /**
+         * 二本目の指が触れた＝拡大縮小のはじまり。
+         *
+         * ★順番が大事。
+         *   ① 先に「捨てさせない」を立てる
+         *   ② そのうえで、走っている動きを止める
+         *
+         *   逆にすると、止めた拍子に指の組まで捨てられる。
+         *   出発地を置いた直後（地図が寄っている最中）に指を置くと
+         *   効かなかったのは、これだった。
+         */
         const onTouchStart = (e: TouchEvent) => {
-          fingers = e.touches.length;
           if (e.touches.length < 2) return;
+          holdOn();
           if (easing()) map.stop();
           tuneThreshold(e);
         };
-        const onTouchMove = (e: TouchEvent) => {
-          fingers = e.touches.length;
-        };
-        /* 指を離したら、そこから数えて戻す */
+        /* 指が全部離れたら、元に戻す */
         const onTouchEnd = (e: TouchEvent) => {
-          fingers = e.touches.length;
-          if (low && fingers === 0) later();
+          if (e.touches.length === 0) holdOff();
         };
 
-        map.on("zoom", onZoom);
         cv.addEventListener("touchstart", onTouchStart, { passive: true });
-        cv.addEventListener("touchmove", onTouchMove, { passive: true });
-        cv.addEventListener("wheel", onWheel, { passive: true });
         // 指が地図の外へ出ても必ず受け取れるよう、離す合図は窓で拾う
         window.addEventListener("touchend", onTouchEnd, { passive: true });
         window.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
         pixelOff = () => {
-          if (back) window.clearTimeout(back);
-          map.off("zoom", onZoom);
+          holdOff();
           cv.removeEventListener("touchstart", onTouchStart);
-          cv.removeEventListener("touchmove", onTouchMove);
-          cv.removeEventListener("wheel", onWheel);
           window.removeEventListener("touchend", onTouchEnd);
           window.removeEventListener("touchcancel", onTouchEnd);
         };
@@ -2117,9 +1976,11 @@ export default function Guide() {
         描く土台が落ちて、地図が白くなっているとき。
 
         ふつうは、余裕ができるとブラウザが自分で戻してくれて、
-        こちらもそれを合図に作り直す。戻ってこないこともあるので、
-        手で出し直せる道も出しておく。
-        白いまま何も言わないのが、いちばん困る。
+        こちらもそれを合図に作り直す。
+        ただ iPhone では、その合図（webglcontextrestored）が
+        いつまでも来ないことがある。待っているあいだ白いままなので、
+        1.5秒待って来なければ、こちらから作り直す（下の useEffect）。
+        手で出し直せる道も、そのまま残しておく。
       */}
       {glLost && !fatal && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-100/95 p-6">
