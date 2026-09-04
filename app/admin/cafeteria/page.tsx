@@ -15,6 +15,7 @@ import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
+import MultiDatePicker from "@/components/MultiDatePicker";
 import { ROLE_LABEL, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
 import { dayColor, holidayName } from "@/lib/holidays";
 
@@ -31,6 +32,8 @@ function sameDay(a: Date, b: Date) {
 
 type Item = {
   id: number;
+  /** どの食堂の枠か。控え（テンプレ）を食堂ごとに分けるのに使う */
+  cafeteria_id: number;
   kind: "counter" | "slot";
   parent_id: number | null;
   name: string;
@@ -45,6 +48,9 @@ const STATES = [
 
 /** 確かめの文で使う改行 */
 const BR = String.fromCharCode(10);
+
+/** よく出す品の控え */
+type Preset = { id: number; cafeteria_id: number; name: string; price: number | null };
 
 export default function CafeteriaAdminPage() {
   const T = useAdminT();
@@ -67,6 +73,23 @@ export default function CafeteriaAdminPage() {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
 
+  /**
+   * よく出す品の控え（テンプレ）。
+   *
+   * 出てくるものはだいたい決まっているのに、来るたびに
+   * 品名と値段を打ち直していた。一度控えておけば、次からは押すだけ。
+   */
+  const [presets, setPresets] = useState<Preset[]>([]);
+  /**
+   * まとめて入れる日。
+   *
+   * 同じ品を何日も出すことがある。日を一つずつ選び直して
+   * 同じものを打つのは、週に5回、月に20回になる。
+   */
+  const [bulkDates, setBulkDates] = useState<string[]>([]);
+  /** まとめて入れる欄を開いているか */
+  const [bulkOpen, setBulkOpen] = useState(false);
+
   useEffect(() => {
     if (!supabaseReady) {
       setLoading(false);
@@ -88,9 +111,20 @@ export default function CafeteriaAdminPage() {
 
       const { data } = await supabase
         .from("cafeteria_items")
-        .select("id, kind, parent_id, name, sort_order")
+        .select("id, cafeteria_id, kind, parent_id, name, sort_order")
         .order("sort_order");
       setItems((data as Item[]) ?? []);
+
+      /*
+       * よく出す品の控え。
+       * 表がまだ無い版でも画面が止まらないよう、失敗しても黙って空にする。
+       */
+      const pr = await supabase
+        .from("menu_presets")
+        .select("id, cafeteria_id, name, price")
+        .order("sort_order")
+        .order("name");
+      setPresets((pr.data as Preset[]) ?? []);
       setLoading(false);
     })();
   }, []);
@@ -168,6 +202,116 @@ export default function CafeteriaAdminPage() {
       new Map(prev).set(target.id, { name: name.trim(), price: price.trim() ? Number(price) : null }),
     );
     setMsg({ kind: "ok", text: `${target.name} を「${name.trim()}」にしました` });
+  };
+
+  /** 控えを読み直す */
+  const loadPresets = async () => {
+    const { data } = await createClient()
+      .from("menu_presets")
+      .select("id, cafeteria_id, name, price")
+      .order("sort_order")
+      .order("name");
+    setPresets((data as Preset[]) ?? []);
+  };
+
+  /**
+   * いま打っている品名と値段を、控えに入れる。
+   *
+   * 同じ品名がもう控えてあれば、値段のほうを新しくする。
+   * 同じ名前で値段違いが並ぶと、どちらを押せばよいか分からなくなる。
+   */
+  const savePreset = async () => {
+    if (!target || !name.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    const { error } = await createClient()
+      .from("menu_presets")
+      .upsert(
+        {
+          cafeteria_id: target.cafeteria_id,
+          name: name.trim(),
+          price: price.trim() ? Number(price) : null,
+        },
+        { onConflict: "cafeteria_id,name" },
+      );
+    setBusy(false);
+    if (error) {
+      setMsg({
+        kind: "err",
+        text: `${error.message}（base/04_cafeteria.sql を入れ直していない場合は、先に入れてください）`,
+      });
+      return;
+    }
+    await loadPresets();
+    setMsg({ kind: "ok", text: `「${name.trim()}」を控えに入れました` });
+  };
+
+  /** 控えを一つ消す */
+  const removePreset = async (pr: Preset) => {
+    if (!window.confirm(`「${pr.name}」を控えから消します。よろしいですか？`)) return;
+    setBusy(true);
+    const { error } = await createClient().from("menu_presets").delete().eq("id", pr.id);
+    setBusy(false);
+    if (error) {
+      setMsg({ kind: "err", text: error.message });
+      return;
+    }
+    await loadPresets();
+    setMsg({ kind: "ok", text: `「${pr.name}」を控えから消しました` });
+  };
+
+  /**
+   * いま打っている中身を、選んだ日ぜんぶに入れる。
+   *
+   * 同じ品を何日も出すことがある。日を一つずつ選び直して
+   * 同じものを打つのは、月に20回になる。
+   * 入れる先は「いま選んでいる枠」だけ。枠まで一度に変えると、
+   * どこへ入るのか分からなくなる。
+   */
+  const saveMany = async () => {
+    if (!target || !name.trim() || bulkDates.length === 0) return;
+    const rows = bulkDates.map((d) => ({
+      item_id: target.id,
+      on_date: d,
+      name: name.trim(),
+      price: price.trim() ? Number(price) : null,
+    }));
+
+    if (
+      !window.confirm(
+        [
+          `${target.name} に「${name.trim()}${price.trim() ? ` ${price}円` : ""}」を`,
+          `${bulkDates.length} 日ぶん入れます。`,
+          "",
+          bulkDates.slice(0, 8).join("、") + (bulkDates.length > 8 ? " ほか" : ""),
+          "",
+          "その日にすでに入っているものは、置き換わります。",
+          "よろしいですか？",
+        ].join(BR),
+      )
+    )
+      return;
+
+    setBusy(true);
+    setMsg(null);
+    const { error } = await createClient()
+      .from("menu_days")
+      .upsert(rows, { onConflict: "item_id,on_date" });
+    setBusy(false);
+    if (error) {
+      setMsg({ kind: "err", text: error.message });
+      return;
+    }
+    // いま見ている日が入っていれば、画面のほうも合わせる
+    if (date && bulkDates.includes(ymd(date))) {
+      setMenus((prev) =>
+        new Map(prev).set(target.id, {
+          name: name.trim(),
+          price: price.trim() ? Number(price) : null,
+        }),
+      );
+    }
+    setMsg({ kind: "ok", text: `${bulkDates.length} 日ぶんに入れました` });
   };
 
   const clearMenu = async () => {
@@ -411,6 +555,49 @@ export default function CafeteriaAdminPage() {
                 </>
               ) : (
                 <>
+                  {/*
+                    よく出す品の控え。
+
+                    出てくるものはだいたい決まっているのに、来るたびに
+                    品名と値段を打ち直していた。押せば両方が入る。
+                  */}
+                  {presets.filter((pr) => pr.cafeteria_id === target.cafeteria_id).length > 0 && (
+                    <div className="mb-2 rounded-xl bg-slate-50 p-2">
+                      <div className="text-[10px] font-bold text-slate-500">
+                        {T("よく出す品（押すと入ります）")}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {presets
+                          .filter((pr) => pr.cafeteria_id === target.cafeteria_id)
+                          .map((pr) => (
+                            <span key={pr.id} className="flex items-stretch">
+                              <button
+                                onClick={() => {
+                                  setName(pr.name);
+                                  setPrice(pr.price != null ? String(pr.price) : "");
+                                }}
+                                className="rounded-l-lg bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 shadow-sm transition hover:bg-blue-50 active:scale-95"
+                              >
+                                {pr.name}
+                                {pr.price != null && (
+                                  <span className="ml-1 font-normal text-slate-400">
+                                    {pr.price}円
+                                  </span>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => void removePreset(pr)}
+                                title={T("控えから消す")}
+                                className="rounded-r-lg bg-white px-1.5 text-[10px] font-bold text-slate-300 shadow-sm transition hover:bg-red-50 hover:text-red-500"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   <p className="mb-2 text-[11px] text-slate-500">
                     {T("この日の名称を入れてください")}
                   </p>
@@ -435,8 +622,55 @@ export default function CafeteriaAdminPage() {
                     disabled={busy}
                     className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
                   >
-                    {busy ? "保存中…" : "保存する"}
+                    {busy ? "保存中…" : `この日（${date ? ymd(date) : ""}）に入れる`}
                   </button>
+
+                  {/* 控えに入れる。次からは押すだけで済む */}
+                  <button
+                    onClick={() => void savePreset()}
+                    disabled={busy || !name.trim()}
+                    className="mt-1.5 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200 disabled:text-slate-300"
+                  >
+                    {T("この品を控えに入れる（次から押すだけ）")}
+                  </button>
+
+                  {/*
+                    まとめて入れる。
+
+                    同じ品を何日も出すことがある。日を一つずつ選び直して
+                    同じものを打つと、月に20回になる。
+                    入れる先はいま選んでいる枠だけ。枠まで一度に変えると、
+                    どこへ入るのか分からなくなる。
+                  */}
+                  <button
+                    onClick={() => {
+                      setBulkOpen((v) => !v);
+                      if (!bulkOpen && date) setBulkDates([ymd(date)]);
+                    }}
+                    disabled={busy || !name.trim()}
+                    className="mt-1.5 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200 disabled:text-slate-300"
+                  >
+                    {bulkOpen ? T("まとめて入れるのをやめる") : T("何日ぶんかまとめて入れる")}
+                  </button>
+
+                  {bulkOpen && (
+                    <div className="mt-2 rounded-xl bg-slate-50 p-2">
+                      <div className="mb-1 text-[10px] font-bold text-slate-500">
+                        {target.name} に「{name.trim() || "（品名を入れてください）"}
+                        {price.trim() ? ` ${price}円` : ""}」を入れる日
+                      </div>
+                      <MultiDatePicker value={bulkDates} onChange={setBulkDates} />
+                      <button
+                        onClick={() => void saveMany()}
+                        disabled={busy || bulkDates.length === 0 || !name.trim()}
+                        className="mt-2 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
+                      >
+                        {busy
+                          ? "保存中…"
+                          : `${bulkDates.length} 日ぶんに入れる`}
+                      </button>
+                    </div>
+                  )}
                   {menus.get(target.id) && (
                     <button
                       onClick={() => void clearMenu()}

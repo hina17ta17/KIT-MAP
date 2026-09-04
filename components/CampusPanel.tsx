@@ -623,12 +623,20 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       let q = createClient()
         .from("timetable")
         .select(
-          "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id, grade)",
+          "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id, department_ids, grade)",
         )
         .eq("on_date", ymd(date))
         .eq("period_id", periodId)
         .eq("kind", "class")
-        .eq("courses.department_id", dept.id);
+        /*
+         * 学科は並びで持っている。
+         *
+         * 教養や共通の科目は、いくつもの学科が同じものを受ける。
+         * 代表の一つ（department_id）だけを見ていたときは、
+         * そういう科目がどこか一つの学科にしか出なかった。
+         * 並びに入っていれば出す。
+         */
+        .contains("courses.department_ids", [dept.id]);
 
       /*
        * 学年で絞る。0 の科目は「学年を問わない」ので必ず残す。
@@ -636,7 +644,26 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
        */
       if (byGrade && grade) q = q.in("courses.grade", [0, grade]);
 
-      const { data } = await q;
+      const { data, error } = await q;
+      if (error) {
+        /*
+         * 並びの列がまだ無い版のときは、前の形（代表の一つ）で訊き直す。
+         * 入れ直すまでのあいだ、時間割が真っ白になるのを避ける。
+         */
+        let q2 = createClient()
+          .from("timetable")
+          .select(
+            "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id, grade)",
+          )
+          .eq("on_date", ymd(date))
+          .eq("period_id", periodId)
+          .eq("kind", "class")
+          .eq("courses.department_id", dept.id);
+        if (byGrade && grade) q2 = q2.in("courses.grade", [0, grade]);
+        const again = await q2;
+        setRows((again.data as unknown as ClassRow[]) ?? []);
+        return;
+      }
       setRows((data as unknown as ClassRow[]) ?? []);
     })();
   }, [dept, date, periodId, byGrade, grade]);

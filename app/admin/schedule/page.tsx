@@ -55,7 +55,7 @@ async function readAllRooms(supabase: ReturnType<typeof createClient>) {
   for (let from = 0; ; from += STEP) {
     const { data, error } = await supabase
       .from("rooms")
-      .select("id, building_code, code, name, category")
+      .select("id, building_id, building_code, code, name, category")
       .order("building_code")
       .order("code")
       .range(from, from + STEP - 1);
@@ -72,6 +72,8 @@ async function readAllRooms(supabase: ReturnType<typeof createClient>) {
 type Period = { id: number; label: string; starts_at: string; ends_at: string };
 type Room = {
   id: number;
+  /** 地図の建物の目印（"B-04"）。号館番号を持たない場所もあるので、こちらで結ぶ */
+  building_id: string;
   building_code: string;
   code: string;
   name: string;
@@ -200,8 +202,13 @@ export default function SchedulePage() {
 
   const [periods, setPeriods] = useState<Period[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  /** 地図が知っている号館の番号。教室が一つも入っていない号館も含む */
-  const [mapBuildings, setMapBuildings] = useState<string[]>([]);
+  /**
+   * 予定を入れられる場所。
+   *
+   * 号館ぜんぶと、グラウンド・テニスコートだけを並べる。
+   * 駐輪場やバス停も地図には載っているが、予定を入れる所ではない。
+   */
+  const [places, setPlaces] = useState<{ id: string; label: string; code: string }[]>([]);
   const [facs, setFacs] = useState<Faculty[]>([]);
   const [depts, setDepts] = useState<Dept[]>([]);
   const [cats, setCats] = useState<Cat[]>([]);
@@ -222,7 +229,16 @@ export default function SchedulePage() {
    * 一つずつ登録し直すのは手間なので、まとめて入れられるようにする。
    */
   const [periodIds, setPeriodIds] = useState<number[]>([]);
-  const [deptId, setDeptId] = useState<number | null>(null);
+  /**
+   * どの学科の授業か。いくつでも選べる。
+   *
+   * 教養や共通の科目は、学科をまたいで同じ時間に同じ教室で行う。
+   * 一つしか選べないと、そういう科目がどこか一つの学科の
+   * 時間割にしか出なかった。
+   */
+  const [deptIds, setDeptIds] = useState<number[]>([]);
+  /** 何年生の授業か。0 は「学年を問わない」 */
+  const [grade, setGrade] = useState(0);
   const [courseId, setCourseId] = useState<number | null>(null);
   const [courseName, setCourseName] = useState("");
   /**
@@ -364,14 +380,42 @@ export default function SchedulePage() {
   useEffect(() => {
     void fetch("/data/buildings.geojson")
       .then((r) => r.json())
-      .then((fc: { features?: { properties?: { code?: string } }[] }) => {
-        const codes = (fc.features ?? [])
-          .map((f) => (f.properties?.code ?? "").trim())
-          .filter(Boolean);
-        setMapBuildings([...new Set(codes)]);
-      })
-      .catch(() => setMapBuildings([]));
+      .then(
+        (fc: {
+          features?: { properties?: { tempId?: string; code?: string; name?: string } }[];
+        }) => {
+          /*
+           * 並べるのは、号館（番号を持っているもの）と、
+           * グラウンド・テニスコートだけ。
+           * 駐輪場やバス停は地図には載っているが、予定を入れる所ではない。
+           */
+          const OUTDOOR = ["グラウンド", "テニスコート"];
+          const list = (fc.features ?? [])
+            .map((f) => ({
+              id: (f.properties?.tempId ?? "").trim(),
+              code: (f.properties?.code ?? "").trim(),
+              name: (f.properties?.name ?? "").trim(),
+            }))
+            .filter((b) => b.id && (b.code !== "" || OUTDOOR.includes(b.name)))
+            .map((b) => ({
+              id: b.id,
+              code: b.code,
+              label: b.code !== "" ? `${b.code}号館` : b.name,
+            }));
+          // 号館は番号の小さい順、外の場所はそのあと
+          list.sort((a, b) => {
+            const na = a.code === "" ? 9999 : Number(a.code) || 9999;
+            const nb = b.code === "" ? 9999 : Number(b.code) || 9999;
+            return na - nb || a.label.localeCompare(b.label, "ja");
+          });
+          setPlaces(list);
+        },
+      )
+      .catch(() => setPlaces([]));
   }, []);
+
+  /** 代表の学科。科目を読むときと、クラス記号を出すときに使う */
+  const deptId = deptIds[0] ?? null;
 
   /* 学科を選んだら、その学科の科目を読む */
   useEffect(() => {
@@ -400,30 +444,54 @@ export default function SchedulePage() {
    * ■ 番号の順に
    *   1, 2, 3 … と数として並べる。文字として並べると
    *   1, 10, 11, 2 の順になり、探すときに目が迷う。
+   *   グラウンドとテニスコートは番号を持たないので、いちばん後ろ。
+   *
+   * ■ 号館番号ではなく、地図の目印（building_id）で結ぶ
+   *   グラウンドとテニスコートには号館番号が無い。番号で結んでいると、
+   *   その二つは空の号館としてまとまってしまい、選べなかった。
    */
   const allBuildings = useMemo(() => {
-    const s = new Set<string>(mapBuildings);
-    for (const r of rooms) if (r.building_code) s.add(r.building_code);
-    return [...s].sort(
-      (a, b) => (Number(a) || 9999) - (Number(b) || 9999) || a.localeCompare(b, "ja"),
-    );
-  }, [rooms, mapBuildings]);
+    const seen = new Set(places.map((p) => p.id));
+    const out = [...places];
+    /*
+     * 地図に載っていない建物に教室が入っていることがある
+     * （建物の名前を変えたあとなど）。取りこぼすと選べなくなるので、
+     * 教室が持っている建物も足しておく。
+     */
+    for (const r of rooms) {
+      if (!r.building_id || seen.has(r.building_id)) continue;
+      seen.add(r.building_id);
+      out.push({
+        id: r.building_id,
+        code: r.building_code,
+        label: r.building_code ? `${r.building_code}号館` : r.building_id,
+      });
+    }
+    return out;
+  }, [rooms, places]);
 
-  /** 号館ごとの教室の数。押せるかどうかと、そのまま数の表示に使う */
+  /** 建物ごとの教室の数。押せるかどうかと、そのまま数の表示に使う */
   const roomCount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const r of rooms) m.set(r.building_code, (m.get(r.building_code) ?? 0) + 1);
+    for (const r of rooms) m.set(r.building_id, (m.get(r.building_id) ?? 0) + 1);
     return m;
   }, [rooms]);
 
-  /** 教室が一つでも入っている号館。「すべての号館」はこれだけを選ぶ */
+  /** 教室が一つでも入っている建物。「すべて選ぶ」はこれだけを選ぶ */
   const usableBuildings = useMemo(
-    () => allBuildings.filter((b) => (roomCount.get(b) ?? 0) > 0),
+    () => allBuildings.filter((b) => (roomCount.get(b.id) ?? 0) > 0).map((b) => b.id),
     [allBuildings, roomCount],
   );
 
+  /** 建物の目印から、見せる名前へ */
+  const placeLabel = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of allBuildings) m.set(b.id, b.label);
+    return m;
+  }, [allBuildings]);
+
   /**
-   * いま選んでいる号館にある教室。種類でしぼっていれば、そのぶんだけ。
+   * いま選んでいる建物にある教室。種類でしぼっていれば、そのぶんだけ。
    *
    * しぼりの既定は「すべて」。研究室でのゼミも、体育館での催しも
    * 入れられるので、はじめから隠さない。
@@ -434,17 +502,17 @@ export default function SchedulePage() {
         ? []
         : rooms.filter(
             (r) =>
-              buildingCodes.includes(r.building_code) &&
+              buildingCodes.includes(r.building_id) &&
               (roomKind === "" || (r.category || "other") === roomKind),
           ),
     [rooms, buildingCodes, roomKind],
   );
 
-  /** 号館の中に、どの種類が何室あるか。しぼりのボタンに数を出す */
+  /** 建物の中に、どの種類が何室あるか。しぼりのボタンに数を出す */
   const kindCount = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rooms) {
-      if (!buildingCodes.includes(r.building_code)) continue;
+      if (!buildingCodes.includes(r.building_id)) continue;
       const k = r.category || "other";
       m.set(k, (m.get(k) ?? 0) + 1);
       m.set("", (m.get("") ?? 0) + 1);
@@ -599,21 +667,31 @@ export default function SchedulePage() {
             setMsg({ kind: "err", text: T("授業名を入れてください") });
             return;
           }
-          if (deptId === null) {
+          if (deptIds.length === 0) {
             setMsg({ kind: "err", text: T("学科を選んでください") });
             return;
           }
-          const { data, error } = await supabase
-            .from("courses")
-            .insert({
-              name: courseName.trim(),
-              // 選んだクラスは「CC1・CC2」の形にそろえる。空なら「すべて」
-              class_name: classes.join("・"),
-              teacher: teacher.trim(),
-              department_id: deptId,
-            })
-            .select("id")
-            .single();
+          /*
+           * 学科は並びで持つ。前からある department_id は代表の一つで、
+           * データベース側の引き金が並びの先頭を入れてくれる。
+           * 並びの列がまだ無いときのために、両方を送る。
+           */
+          const row = {
+            name: courseName.trim(),
+            // 選んだクラスは「CC1・CC2」の形にそろえる。空なら「すべて」
+            class_name: classes.join("・"),
+            teacher: teacher.trim(),
+            department_id: deptIds[0],
+            department_ids: deptIds,
+            grade,
+          };
+          let made = await supabase.from("courses").insert(row).select("id").single();
+          if (made.error && /department_ids|grade/i.test(made.error.message)) {
+            // 列がまだ無い版。そのぶんを外して入れ直す
+            const { department_ids: _a, grade: _b, ...rest } = row;
+            made = await supabase.from("courses").insert(rest).select("id").single();
+          }
+          const { data, error } = made;
           if (error) throw error;
           useCourseId = (data as { id: number }).id;
         }
@@ -745,7 +823,7 @@ export default function SchedulePage() {
         setBusy(false);
       }
     },
-    [kind, chosen, dates, periodIds, periods, courseId, courseName, classes, teacher, deptId, activityId, title, startAt, endAt],
+    [kind, chosen, dates, periodIds, periods, courseId, courseName, classes, teacher, deptIds, grade, activityId, title, startAt, endAt],
   );
 
   /* ---------------- その日の予定を消す ---------------- */
@@ -927,10 +1005,10 @@ export default function SchedulePage() {
         </Field>
 
         {/* ---- 教室。まとめて同じ予定を入れられるよう、いくつでも選べる ---- */}
-        <Field label="教室（号館ごと・全号館も選べます）">
+        <Field label="場所（号館・グラウンド・テニスコート）">
           {/* 号館を選ぶ。番号を打たなくても押すだけで選べるようにする */}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold text-slate-500">{T("号館")}</span>
+            <span className="text-[11px] font-bold text-slate-500">{T("場所")}</span>
             <span className="text-[11px] font-bold text-slate-600">
               {roomIds.length > 0 ? `${roomIds.length}室を選択中` : "未選択"}
             </span>
@@ -963,7 +1041,7 @@ export default function SchedulePage() {
                     : "bg-slate-200 text-slate-700 hover:bg-slate-300"
                 }`}
               >
-                {T("すべての号館")}（{usableBuildings.length}棟・{rooms.length}室）
+                {T("すべての場所")}（{usableBuildings.length}か所・{rooms.length}室）
               </button>
               <button
                 onClick={() => {
@@ -984,16 +1062,16 @@ export default function SchedulePage() {
           */}
           <div className="mt-1.5 grid max-h-44 grid-cols-4 gap-1.5 overflow-y-auto rounded-xl bg-slate-50 p-1.5 sm:grid-cols-6">
             {allBuildings.map((b) => {
-              const on = buildingCodes.includes(b);
-              const n = roomCount.get(b) ?? 0;
+              const on = buildingCodes.includes(b.id);
+              const n = roomCount.get(b.id) ?? 0;
               return (
                 <button
-                  key={b}
+                  key={b.id}
                   disabled={n === 0}
-                  title={n === 0 ? "この号館には教室が登録されていません" : `${n} 室`}
+                  title={n === 0 ? `${b.label}には教室が登録されていません` : `${b.label} ${n} 室`}
                   onClick={() =>
                     setBuildingCodes((prev) =>
-                      on ? prev.filter((x) => x !== b) : [...prev, b],
+                      on ? prev.filter((x) => x !== b.id) : [...prev, b.id],
                     )
                   }
                   className={`flex flex-col items-center justify-center rounded-lg px-1 py-2.5 transition active:scale-95 ${
@@ -1004,7 +1082,14 @@ export default function SchedulePage() {
                         : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"
                   }`}
                 >
-                  <span className="text-sm font-bold leading-none">{b}</span>
+                  {/* 号館は番号だけ、グラウンドなどは名前をそのまま */}
+                  <span
+                    className={`font-bold leading-none ${
+                      b.code ? "text-sm" : "text-[10px]"
+                    }`}
+                  >
+                    {b.code || b.label}
+                  </span>
                   <span
                     className={`mt-0.5 text-[9px] leading-none ${
                       n === 0 ? "text-slate-300" : on ? "text-blue-100" : "text-slate-400"
@@ -1116,9 +1201,9 @@ export default function SchedulePage() {
                         </span>
                         {buildingCodes.length > 1 && (
                           <span
-                            className={`w-10 shrink-0 text-[10px] ${on && !taken ? "text-blue-100" : "text-slate-400"}`}
+                            className={`w-14 shrink-0 truncate text-[10px] ${on && !taken ? "text-blue-100" : "text-slate-400"}`}
                           >
-                            {r.building_code}号
+                            {placeLabel.get(r.building_id) ?? `${r.building_code}号館`}
                           </span>
                         )}
                         <span className="w-14 shrink-0 text-xs font-bold">{r.code}</span>
@@ -1219,32 +1304,122 @@ export default function SchedulePage() {
               </div>
             </Field>
 
-            <Field label="どの学科の授業か">
-              <select
-                value={deptId ?? ""}
-                onChange={(e) => {
-                  setDeptId(e.target.value ? Number(e.target.value) : null);
-                  setCourseId(null);
-                }}
-                className="w-full rounded-xl bg-slate-100 px-3 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">{T("学科を選ぶ")}</option>
-                {facs.map((f) => (
-                  <optgroup key={f.id} label={f.name}>
-                    {depts
-                      .filter((d) => d.faculty_id === f.id)
-                      .map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                ))}
-              </select>
-              {/* 準備が済んでいないときは上の帯で伝えているので、ここでは繰り返さない */}
-              {!setupNeeded && facs.length === 0 && (
-                <p className="mt-1 text-[10px] text-amber-700">{T("学科が登録されていません")}</p>
+            {/*
+              どの学科の授業か。いくつでも選べる。
+
+              教養や共通の科目は、学科をまたいで同じ時間に同じ教室で行う。
+              一つしか選べないと、そういう科目がどこか一つの学科の
+              時間割にしか出なかった。
+
+              学部ごとにまとめて並べ、押して選ぶ形にしてある。
+              選んだものは上に大きく出して、その場で外せるようにする。
+            */}
+            <Field label="どの学科の授業か（いくつでも選べます）">
+              {deptIds.length > 0 ? (
+                <div className="mb-1.5 flex flex-wrap gap-1">
+                  {deptIds.map((id) => {
+                    const d = depts.find((x) => x.id === id);
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => setDeptIds((p) => p.filter((x) => x !== id))}
+                        className="flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:bg-blue-700 active:scale-95"
+                      >
+                        {d?.name ?? id}
+                        <span className="text-blue-200">×</span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => setDeptIds([])}
+                    className="rounded-lg px-2 py-1.5 text-[11px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95"
+                  >
+                    {T("全部外す")}
+                  </button>
+                </div>
+              ) : (
+                <p className="mb-1.5 text-[11px] font-bold text-amber-700">
+                  {T("学科を選んでください")}
+                </p>
               )}
+
+              <div className="max-h-40 overflow-y-auto rounded-xl bg-slate-50 p-1.5">
+                {facs.map((f) => {
+                  const list = depts.filter((d) => d.faculty_id === f.id);
+                  if (list.length === 0) return null;
+                  const allOn = list.every((d) => deptIds.includes(d.id));
+                  return (
+                    <div key={f.id} className="mb-1.5 last:mb-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-slate-500">{f.name}</span>
+                        <button
+                          onClick={() =>
+                            setDeptIds((p) =>
+                              allOn
+                                ? p.filter((x) => !list.some((d) => d.id === x))
+                                : [...new Set([...p, ...list.map((d) => d.id)])],
+                            )
+                          }
+                          className="rounded px-1.5 py-0.5 text-[9px] font-bold text-slate-500 transition hover:bg-slate-200"
+                        >
+                          {allOn ? T("この学部を外す") : T("この学部をすべて")}
+                        </button>
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {list.map((d) => {
+                          const on = deptIds.includes(d.id);
+                          return (
+                            <button
+                              key={d.id}
+                              onClick={() => {
+                                setDeptIds((p) =>
+                                  on ? p.filter((x) => x !== d.id) : [...p, d.id],
+                                );
+                                setCourseId(null);
+                              }}
+                              className={`rounded-lg px-2 py-1.5 text-[11px] font-bold transition active:scale-95 ${
+                                on
+                                  ? "bg-blue-600 text-white"
+                                  : "bg-white text-slate-600 shadow-sm hover:bg-slate-100"
+                              }`}
+                            >
+                              {d.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* 準備が済んでいないときは上の帯で伝えているので、ここでは繰り返さない */}
+                {!setupNeeded && facs.length === 0 && (
+                  <p className="p-1 text-[10px] text-amber-700">{T("学科が登録されていません")}</p>
+                )}
+              </div>
+            </Field>
+
+            {/*
+              何年生の授業か。
+
+              時間割は学生の学年で絞って出しているので、ここを入れておくと
+              その学年の人にだけ出る。分からないときは「すべての学年」。
+            */}
+            <Field label="何年生の授業か">
+              <div className="grid grid-cols-5 gap-1.5">
+                {[0, 1, 2, 3, 4].map((g) => (
+                  <button
+                    key={g}
+                    onClick={() => setGrade(g)}
+                    className={`rounded-xl py-2 text-xs font-bold transition active:scale-95 ${
+                      grade === g
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    {g === 0 ? T("すべて") : `${g}年`}
+                  </button>
+                ))}
+              </div>
             </Field>
 
             <Field label="授業名">
@@ -1286,7 +1461,49 @@ export default function SchedulePage() {
                   <div className="text-[10px] font-bold text-slate-500">
                     {T("クラス（いくつでも選べます）")}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
+
+                  {/*
+                    いま選んでいるクラス。
+
+                    前は説明文の中に小さく「いま選んでいるのは …」と
+                    書いていただけで、選んだかどうかが分かりにくかった。
+                    大きく並べて、押せばその場で外せるようにする。
+                  */}
+                  <div className="mt-1 rounded-xl bg-slate-50 p-2">
+                    <div className="text-[10px] font-bold text-slate-500">
+                      {T("選んでいるクラス")}
+                    </div>
+                    {classes.length === 0 ? (
+                      <p className="mt-0.5 text-xs font-bold text-slate-700">
+                        {T("すべて")}
+                        <span className="ml-1 text-[10px] font-normal text-slate-400">
+                          （{T("分かれていない")}）
+                        </span>
+                      </p>
+                    ) : (
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        {classes.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => setClasses((p) => p.filter((x) => x !== c))}
+                            title={T("押すと外せます")}
+                            className="flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white transition hover:bg-blue-700 active:scale-95"
+                          >
+                            {c}
+                            <span className="text-blue-200">×</span>
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setClasses([])}
+                          className="rounded-lg px-2 py-1.5 text-[11px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95"
+                        >
+                          {T("全部外す")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <button
                       onClick={() => setClasses([])}
                       className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition active:scale-95 ${
@@ -1350,12 +1567,6 @@ export default function SchedulePage() {
                     : "KM1・CC2 のように、学科の記号と組の番号で書きます。"}
                   <br />
                   何も選ばなければ<b>{T("すべて")}</b>（分かれていない）になります。
-                  {classes.length > 0 && (
-                    <>
-                      <br />
-                      いま選んでいるのは <b>{classes.join("・")}</b> です。
-                    </>
-                  )}
                 </p>
               )}
             </Field>
