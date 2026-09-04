@@ -631,100 +631,220 @@ export default function Guide() {
         const BACK_MS = 350;
 
         /*
-         * 落とすまで、少し待つ。
+         * ■ 落とすのは「縮尺が動き出してから」
          *
-         * ■ 「縮めはじめの反応が悪い」の正体
+         *   ここは長いあいだ間違えていた。指が触れた時点や、
+         *   触れてから 130ms 後に setPixelRatio(1) を呼んでいた。
          *
-         *   二本目の指が触れた瞬間に setPixelRatio(1) を呼んでいた。
-         *   この中では resize() が走り、canvas と WebGL の描き先を
-         *   まるごと取り直す。いちばん重い処理が、
-         *   いちばん反応してほしい瞬間に入っていたことになる。
+         *   setPixelRatio は中で map.resize() を呼ぶ。
+         *   そして resize() は、地図がまだ動いていないときに
+         *   map.stop() を呼ぶ（MapLibre の作り）。
+         *   stop() は、いま触っている指の組をぜんぶ捨てる
+         *   （HandlerManager.stop → 各 handler.reset）。
          *
-         *   指を置いてから最初の数コマは「動いたかどうか」を決める。
-         *   そこを作り直しに食われると、押しても効かない感じになる。
+         *   つまり「二本指を置いて 130ms」で、
+         *   MapLibre が覚えていた二本指の組が消えていた。
+         *   そのあとどれだけ指を動かしても、地図は
+         *   「二本指の操作」として受け取らない。
          *
-         * ■ 待つ長さ
+         *   実際に測ると、指の間を 300点から 200点まで縮めても
+         *   縮尺は 18.000 のまま一つも動かなかった。
+         *   指の間が広いほど効きはじめが遅いので、
+         *   広く開くと「まったく反応しない」ことになる。
          *
-         *   130ms 待つ。ちょっと縮めて離すだけの短い操作なら、
-         *   作り直しは一度も起きない。長く動かし続けるときだけ、
-         *   途中から細かさを落として軽くする。
-         *   落とす値打ちがあるのは、もともと長い操作のほうなので、
-         *   得るものはほとんど変わらない。
+         *   縮尺が動き出したあとなら、resize() は stop() を呼ばない
+         *   （地図が動いている最中は止めない作りになっている）。
+         *   だから合図を zoom にする。動き出してから落とせば、
+         *   指の組は消えないし、軽くしたいのはまさにその最中。
+         *
+         *   ホイールも zoom を出すので、こちらだけで足りる。
+         *   wheel を直に聞くと、上と同じ理由で回しはじめが消える。
+         *
+         * ■ 戻すのは、指が全部離れてから
+         *
+         *   戻すときも resize() が走る。指が残っているうちに戻すと、
+         *   今度はそこで指の組が消える。長く止めたまま持ち替える人が
+         *   いるので、時間だけを見て戻してはいけない。
          */
-        const WAIT_MS = 130;
-
         let low = false;
         let back = 0;
-        let soon = 0;
+        /** いま画面に触れている指の数。戻してよいかを決めるのに使う */
+        let fingers = 0;
+        /** ホイールを回していた時刻。ここまでは人が動かしているとみなす */
+        let wheelUntil = 0;
 
         /*
          * 画面の細かさが 1 倍の端末では、落とす先が無い。
          * それでも setPixelRatio を呼ぶと resize() だけが走って、
          * 何も得ずに作り直すことになる。呼ばない。
-         * 指が触れたら動きを止める、のほうは端末を選ばず要る。
          */
         const canDrop = still > 1;
 
-        const dropNow = () => {
-          soon = 0;
-          if (low || !canDrop) return;
-          low = true;
-          map.setPixelRatio(1);
-        };
-        /** すぐには落とさず、動かし続けていたら落とす */
-        const dropSoon = () => {
-          if (low || soon || !canDrop) return;
-          soon = window.setTimeout(dropNow, WAIT_MS);
-        };
         const later = () => {
           if (back) window.clearTimeout(back);
           back = window.setTimeout(() => {
             back = 0;
             if (!low) return;
+            // 指が残っているうちは戻さない。戻すと操作が切れる
+            if (fingers > 0) {
+              later();
+              return;
+            }
             low = false;
-            map.setPixelRatio(still);
+            setRatio(still);
           }, BACK_MS);
+        };
+
+        /**
+         * 細かさを変える。そのあいだだけ「操作を止めない」ようにする。
+         *
+         * ■ なぜ要るか
+         *
+         *   setPixelRatio は中で map.resize() を呼び、
+         *   resize() は map.stop() を呼ぶ。stop() は、いま触っている
+         *   指の組をぜんぶ捨てる（handlers.stop → 各 handler.reset）。
+         *
+         *   はじめは「縮尺が動き出してからなら安全」と考えたが、
+         *   実際に測ると違った。指で動かしている最中の縮尺の変化では
+         *   MapLibre の _moving は立たないので、resize() はやはり
+         *   stop() を呼ぶ。指を置いて最初のひと動きで縮尺が少し動き、
+         *   そこで組を捨てられ、あとはどれだけ動かしても効かない
+         *   ——これが「拡大縮小できないことがある」の正体だった。
+         *
+         * ■ どう避けるか
+         *
+         *   この resize のあいだだけ、handlers.stop を何もしない関数に
+         *   すり替える。止めてほしくないのは指の組だけで、
+         *   ほかの後始末（絵の作り直し）はそのまま走る。
+         *   すり替えは必ず元へ戻す。
+         *
+         * ■ すり替えられないときは、落とさない
+         *
+         *   MapLibre の作りが変わって handlers.stop が見つからない版では、
+         *   細かさを落とさずに済ませる。少し重くなるだけで、
+         *   拡大縮小が効かなくなるよりずっとよい。
+         */
+        type Handlers = { stop?: (allowEndAnimation?: boolean) => void };
+        /*
+         * 置き場所は版によって違う。6系は _handlers、それより前は handlers。
+         * どちらも無ければ、細かさは触らない（下の canGuard）。
+         */
+        const m = map as unknown as { _handlers?: Handlers; handlers?: Handlers };
+        const handlers = m._handlers ?? m.handlers;
+        const canGuard = typeof handlers?.stop === "function";
+
+        const setRatio = (v: number) => {
+          if (!canGuard || !handlers) return;
+          const real = handlers.stop;
+          handlers.stop = () => {};
+          try {
+            map.setPixelRatio(v);
+          } finally {
+            handlers.stop = real;
+          }
+        };
+
+        /**
+         * 縮尺が動いた。指かホイールで動かしているときだけ落とす。
+         *
+         * ★人が動かしているときに限るのが大事。
+         *
+         *   ラベルを押すと fitBounds で 700ms かけて寄る。これも zoom を出す。
+         *   そこで細かさを変えると、中の resize() が
+         *   「走っている動き」を止めてしまい、寄る途中で固まる。
+         *   上ですり替えているのは指の組のほうで、寄る動きは止まる。
+         *
+         *   落として得があるのは、人が指で動かし続けている最中だけ。
+         *   自分で寄っているぶんは 700ms で終わるので、そのままでよい。
+         */
+        const onZoom = () => {
+          const byHand = fingers >= 2 || Date.now() < wheelUntil;
+          if (canDrop && canGuard && byHand && !low) {
+            low = true;
+            setRatio(1);
+          }
+          if (byHand) later();
+        };
+
+        /** ホイールを回した時刻。ここから少しのあいだは「人が動かしている」 */
+        const onWheel = () => {
+          wheelUntil = Date.now() + 400;
+        };
+
+        /**
+         * つまむときの、効きはじめの近さを指の間隔から決める。
+         *
+         * ■ なぜ要るか
+         *
+         *   MapLibre は「指の間隔が何割変わったか」で効きはじめを決める
+         *   （既定 0.1 ＝ 約 7.2%）。割合なので、指を広く開くほど、
+         *   同じ 7.2% を作るのに動かす距離が伸びる。
+         *
+         *     間隔 100点 →  7点動かせば効く
+         *     間隔 340点 → 23点動かさないと効かない
+         *
+         *   広く開いたときに「反応しない」と感じるのは、これが理由。
+         *
+         * ■ どう直すか
+         *
+         *   どの間隔でも、動かす距離がだいたい同じ（6点ほど）になるよう、
+         *   指を置いた瞬間の間隔から割合を決め直す。
+         *
+         *     割合 ≒ 6 ÷ (間隔 × ln2)
+         *
+         *   狭いときに敏感になりすぎないよう、既定の 0.1 より
+         *   きつくはしない。広いときも 0.02 で止める
+         *   （それ以下だと、二本指で平行に動かしたときの
+         *     わずかなぶれで縮尺が動いてしまう）。
+         */
+        const tuneThreshold = (e: TouchEvent) => {
+          const a = e.touches[0];
+          const b = e.touches[1];
+          const gap = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+          if (!(gap > 0)) return;
+          const want = 6 / (gap * Math.LN2);
+          map.touchZoomRotate.setZoomThreshold(Math.min(0.1, Math.max(0.02, want)));
         };
 
         /**
          * 二本目の指が触れた＝拡大縮小のはじまり。
          *
-         * ★ここで、走っている動きを止める。
+         * ★走っている動きだけを止める。
          *
          *   ラベルを押すと fitBounds で 700ms かけて寄る。
          *   その途中や直後に指を置くと、地図は自分の動きを続けようとし、
          *   指の動きと引っ張り合う。押しても戻らない、戻ってもまた寄る、
          *   という「反応がとても悪い」感じになる。
-         *   指が触れたら、そちらを優先する。
+         *
+         *   ただし stop() は指の組も捨てるので、いつも呼んではいけない。
+         *   寄っている最中（isEasing）のときだけにする。
          */
+        /*
+         * 「いま寄っている最中か」。
+         *
+         * MapLibre は持っているが、型には出していない。
+         * 無い版に当たったときは「寄っていない」として扱う。
+         * 止め損ねるだけで済み、指の組を捨てる側には転ばない。
+         */
+        const easing = () =>
+          (map as unknown as { isEasing?: () => boolean }).isEasing?.() === true;
+
         const onTouchStart = (e: TouchEvent) => {
+          fingers = e.touches.length;
           if (e.touches.length < 2) return;
-          map.stop();
-          dropSoon();
-          later();
+          if (easing()) map.stop();
+          tuneThreshold(e);
         };
         const onTouchMove = (e: TouchEvent) => {
-          if (e.touches.length < 2) return;
-          dropSoon();
-          // 動かし続けているあいだは、戻す時刻を後ろにずらし続ける
-          later();
+          fingers = e.touches.length;
         };
         /* 指を離したら、そこから数えて戻す */
-        const onTouchEnd = () => {
-          // まだ落としていないなら、落とす予定も取り消す。
-          // 離したあとに作り直しが走ると、指を離した先で画面が固まる
-          if (soon) {
-            window.clearTimeout(soon);
-            soon = 0;
-          }
-          if (low) later();
-        };
-        /* ホイールは一段ずつ来るので、待たずに落としてよい */
-        const onWheel = () => {
-          dropNow();
-          later();
+        const onTouchEnd = (e: TouchEvent) => {
+          fingers = e.touches.length;
+          if (low && fingers === 0) later();
         };
 
+        map.on("zoom", onZoom);
         cv.addEventListener("touchstart", onTouchStart, { passive: true });
         cv.addEventListener("touchmove", onTouchMove, { passive: true });
         cv.addEventListener("wheel", onWheel, { passive: true });
@@ -734,7 +854,7 @@ export default function Guide() {
 
         pixelOff = () => {
           if (back) window.clearTimeout(back);
-          if (soon) window.clearTimeout(soon);
+          map.off("zoom", onZoom);
           cv.removeEventListener("touchstart", onTouchStart);
           cv.removeEventListener("touchmove", onTouchMove);
           cv.removeEventListener("wheel", onWheel);
