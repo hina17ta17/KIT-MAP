@@ -100,9 +100,14 @@ export const AFFILIATION_LABEL: Record<Affiliation, string> = {
   other: "その他",
 };
 
-/** 学年・クラス・名列番号を訊く相手か */
+/** 学年・学科・クラス・名列番号を訊く相手か */
 export function needsClassInfo(a: Affiliation | null): boolean {
   return a === "student";
+}
+
+/** 担当学科を訊く相手か。教授だけ */
+export function needsDepts(a: Affiliation | null): boolean {
+  return a === "teacher";
 }
 
 /** 学年。申請のときに選ぶ */
@@ -129,11 +134,41 @@ export function checkSeat(n: number): string | null {
 export const GROUPS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 /**
- * クラス記号。学科ごとに決まっている。
+ * クラス（1〜10）。
+ *
+ * 同じ学科・同じ学年の中で、さらに分かれている組のこと。
+ * 名簿の F 列に入っている番号と同じものを指す。
+ *
+ * 学科（下の CLASS_CODES）とは別。以前はこの二つを
+ * ひとまとめに「クラス」と呼んでいて、画面の表記も
+ * そうなっていたが、名簿と突き合わせるときに区別が要る。
+ */
+export const CLASS_NOS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
+/** クラスとして正しいか。合っていれば null、違えば理由を返す */
+export function checkClassNo(n: number): string | null {
+  if (!Number.isInteger(n) || n < 1 || n > 10) return "クラスは1から10までの数字です";
+  return null;
+}
+
+/**
+ * 教授が申請で入れられる、担当学科の数。
+ *
+ * 名簿の I〜N 列（6つ）と同じ数にしてある。
+ * 画面でこれより多く入れられると、名簿へ写せなくなる。
+ */
+export const DEPT_MAX = 6;
+
+/**
+ * 学科の記号。
  *
  * departments.code と同じ並び。ここに直書きしているのは、
  * 申請の画面がログイン前に出るため。ログインしていないと
  * RLS で departments を読めず、選択肢が空になってしまう。
+ *
+ * 名前は CLASS_CODES のまま。データベースの列
+ * （profiles.class_code、roster_students.class_code）と
+ * 揃えてある。指しているのは学科で、クラス（1〜10）ではない。
  */
 export const CLASS_CODES = [
   { code: "KM", name: "機械工学科" },
@@ -257,6 +292,24 @@ export type SlotKind = "class" | "event" | "activity";
  * ここは画面の出し分けのため。
  */
 export function canRegisterClass(role: Role | null): boolean {
+  return role === "admin_l2" || canManageAll(role);
+}
+
+/**
+ * 教室を、まとめて選べるか。
+ *
+ * 「すべての号館」と「空いている教室をすべて選ぶ」の二つ。
+ * 教授（レベル2）と、2.1・2.2・管理者だけ。
+ *
+ * 課外活動リーダー（Lv1）には出さない。一度押すだけで
+ * 全号館ぶんの予定が立ってしまい、押し間違いの取り返しがつかない。
+ * 一つずつ選ぶ道は、その人にも残してある。
+ *
+ * 中身は canRegisterClass と同じ顔ぶれだが、別の関数にしてある。
+ * 「授業を入れられる人」と「まとめて選べる人」は別の決まりで、
+ * 片方を変えたときにもう片方まで動くと困るため。
+ */
+export function canPickAllRooms(role: Role | null): boolean {
   return role === "admin_l2" || canManageAll(role);
 }
 

@@ -152,6 +152,47 @@ const EN: Record<string, string> = {
   "本人だと確かめられていないので、ここからは権限を付けられません。": "they have not been verified, so no role can be given from here.",
   "本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると、": "Once they verify with Microsoft Authenticator and enter their details,",
   "「申請」に移ります。": "they move to “Applied”.",
+  "申請してきた人": "People who applied",
+  /* リセット選択 */
+  "リセット選択": "Choose who to reset",
+  "消したい身分に印を付けてください。印を付けたものは、まとめて消えます。":
+    "Tick the kinds of people you want to reset. Everything ticked is removed together.",
+  "その人たちから、ログイン・パスワード・本人確認・大学の情報がすべて消え、申請の最初からやり直しになります。元には戻せません。":
+    "They lose their login, password, verification and university details, and start again from the beginning. This cannot be undone.",
+  "副管理者（2.1・2.2）と管理者、そしてあなた自身は消えません。":
+    "Sub-admins (2.1 / 2.2), administrators and you yourself are never removed.",
+  "この人たちを消すときは、先に権限を下げてください。":
+    "To remove them, lower their role first.",
+  "消す身分を選んでください": "Choose who to reset",
+  選んだ: "Remove the",
+  名を消す: "people you chose",
+  "その身分の人がいません": "There is no one with that role",
+  /* 名簿の中を見る */
+  "名簿の中を見る": "Browse the roster",
+  "名簿を開く": "Open the roster",
+  "学年（すべて）": "Year (all)",
+  "学科（すべて）": "Department (all)",
+  "クラス（すべて）": "Class (all)",
+  "担当学科（すべて）": "Departments taught (all)",
+  "探しています…": "Searching…",
+  人: " people",
+  "見つかりませんでした。": "Nothing found.",
+  "この身分は、まだ名簿に入っていません。": "No one of this kind is in the roster yet.",
+  /* 予定の教室選び */
+  "すべての号館": "All buildings",
+  教室なし: "no rooms",
+  既存: "Existing",
+  "この中の": "Of these,",
+  "名は、まだ本人確認か所属の記入が済んでいません":
+    " have not yet verified themselves or entered their details",
+  "本人だと確かめられていないので、その人には権限を付けられません。":
+    "They have not been verified, so they cannot be given a role.",
+  "本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると承認できるようになります。":
+    "Once they verify with Microsoft Authenticator and enter their details, you can approve them.",
+  "名前を押すと権限を変えられます": "Tap a name to change their role",
+  名: " people",
+  名に印: " marked",
+  担当: "Teaches",
   "本人確認まだ": "Not verified yet",
   "所属まだ": "No details yet",
   "権限を変える": "Change role",
@@ -406,11 +447,13 @@ const EN: Record<string, string> = {
   "メールアドレス": "Email",
   氏名: "Full name",
   学年: "Year",
+  学科: "Department",
   クラス: "Class",
   組: "Group",
   名列番号: "Seat no.",
   "学年・クラス・名列番号をすべて入れてください": "Please enter year, class and seat number",
   "名列番号は1から200までの数字です": "The seat number must be between 1 and 200",
+  "クラスは1から10までの数字です": "The class must be between 1 and 10",
   "処理中…": "Working…",
   "送信中…": "Sending…",
   "確認中…": "Checking…",
@@ -453,12 +496,39 @@ const EN: Record<string, string> = {
   /* 申請の段どり（4段）。順番は 記入 → 所属 → 本人確認 → パスワード */
   "メールアドレスと氏名": "Email address and name",
   "学年・クラス・名列番号": "Year, class and roll number",
+  "学年・学科・クラス・名列番号": "Year, department, class and roll number",
+  "8桁の番号と担当学科": "8-digit number and departments taught",
+  担当学科: "Departments taught",
+  "担当している学科を選んでください。いくつでも入れられます。":
+    "Choose the departments you teach. You can add as many as you like.",
+  "（外す）": "(remove)",
+  "一つ以上選んでください": "Please choose at least one",
   "Microsoft Authenticator で本人確認": "Verify with Microsoft Authenticator",
   "パスワードを決めて申請": "Choose a password and apply",
   "次へ": "Next",
   "戻る": "Back",
   "これができたら、パスワードを決めて申請します。":
     "After this you choose a password and apply.",
+  /* パスワードを忘れたとき */
+  "パスワードを忘れた": "Forgot your password?",
+  "申請のときに登録した": "We check you again with the ",
+  "で、もう一度本人確認をします。": " you registered when you applied.",
+  "上のメールアドレスを入れたうえで、アプリに出ている6桁と、新しいパスワードを入れてください。":
+    "Enter your email address above, then the 6 digits from the app and a new password.",
+  "新しいパスワード": "New password",
+  "本人確認して、入れ直す": "Verify and set a new password",
+  "認証アプリを消してしまった・端末を替えた場合は、ここからは入れ直せません。管理者にお知らせください。":
+    "If you deleted the app or changed devices, you cannot reset it here. Please tell an administrator.",
+  "新しいパスワードにしました。": "Your password has been changed.",
+  "新しいパスワードにしました。ログインしてください。":
+    "Your password has been changed. Please log in.",
+  "入れ直せませんでした": "Could not change the password",
+  "アドレスか、認証アプリの6桁が違います":
+    "The address or the 6 digits from the app is wrong",
+  "メールアドレスを入れてください": "Please enter your email address",
+  "認証アプリの6桁を入れてください": "Please enter the 6 digits from the app",
+  "この席には認証アプリが登録されていないため、ここからは入れ直せません。管理者にお知らせください。":
+    "No authenticator app is registered for this account, so it cannot be reset here. Please tell an administrator.",
   "パスワードを決めてください": "Choose a password",
   "次からのログインに使います。": "You will use it to log in from next time.",
   "半角の英数字で8〜20字。数字を1文字以上入れてください。":

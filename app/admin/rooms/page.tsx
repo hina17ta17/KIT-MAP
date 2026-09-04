@@ -144,10 +144,38 @@ export default function RoomsPage() {
     if (error) setMsg(error.message);
   };
 
+  /**
+   * 教室を一つ消す。
+   *
+   * 押す前に一度たずねる。消したものは戻せない
+   * （どこにも控えを残していない）ので、
+   * 打ち間違いで一つ消えたことに気づけないほうが困る。
+   *
+   * 何を消すのかを、確認の文にそのまま出す。
+   * 「本当に消しますか？」だけだと、どれを押したのか分からない。
+   */
   const remove = async (id: number) => {
+    const r = rows.find((x) => x.id === id);
+    if (!r) return;
+    const b = buildings.find((x) => x.tempId === r.building_id);
+
+    const ok = window.confirm(
+      [
+        "この教室を名簿から消します。",
+        "",
+        `  ${b?.label ?? r.building_code + "号館"}  ${r.code}${r.name ? `（${r.name}）` : ""}`,
+        "",
+        "元には戻せません。もう一度入れ直すことはできます。",
+        "この教室に入れてある予定は、教室が決まっていない扱いになります。",
+        "",
+        "消しますか？",
+      ].join("\n"),
+    );
+    if (!ok) return;
+
     const { error } = await createClient().from("rooms").delete().eq("id", id);
     if (error) setMsg(error.message);
-    else setRows((prev) => prev.filter((r) => r.id !== id));
+    else setRows((prev) => prev.filter((x) => x.id !== id));
   };
 
   if (loading) return <Shell>{T("読み込み中…")}</Shell>;

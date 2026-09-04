@@ -17,7 +17,13 @@ import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
-import { canManageAll, effectiveKind, pickableKinds, type Role } from "@/lib/auth";
+import {
+  canManageAll,
+  canPickAllRooms,
+  effectiveKind,
+  pickableKinds,
+  type Role,
+} from "@/lib/auth";
 import MultiDatePicker, { niceDate, todayYmd } from "@/components/MultiDatePicker";
 
 type Kind = "class" | "event" | "activity";
@@ -122,6 +128,8 @@ export default function SchedulePage() {
 
   const [periods, setPeriods] = useState<Period[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  /** 地図が知っている号館の番号。教室が一つも入っていない号館も含む */
+  const [mapBuildings, setMapBuildings] = useState<string[]>([]);
   const [facs, setFacs] = useState<Faculty[]>([]);
   const [depts, setDepts] = useState<Dept[]>([]);
   const [cats, setCats] = useState<Cat[]>([]);
@@ -261,6 +269,28 @@ export default function SchedulePage() {
     })();
   }, []);
 
+  /*
+   * 号館の一覧は、地図のデータから取る。
+   *
+   * 教室（rooms）から作ると、教室を入れた号館しか出てこない。
+   * 講義室だけ入れている段では、ほかの号館を選びようがなかった。
+   * 地図が知っている号館を土台にして、そこへ教室の数を重ねる。
+   *
+   * 読めなくても止めない。そのときは教室のある号館だけが並ぶ
+   * （前と同じ姿）ので、画面は使える。
+   */
+  useEffect(() => {
+    void fetch("/data/buildings.geojson")
+      .then((r) => r.json())
+      .then((fc: { features?: { properties?: { code?: string } }[] }) => {
+        const codes = (fc.features ?? [])
+          .map((f) => (f.properties?.code ?? "").trim())
+          .filter(Boolean);
+        setMapBuildings([...new Set(codes)]);
+      })
+      .catch(() => setMapBuildings([]));
+  }, []);
+
   /* 学科を選んだら、その学科の科目を読む */
   useEffect(() => {
     if (deptId === null) {
@@ -275,11 +305,40 @@ export default function SchedulePage() {
       .then(({ data }) => setCourses((data as Course[]) ?? []));
   }, [deptId]);
 
-  /** 教室が登録されている号館。番号の小さい順に並べる */
+  /**
+   * 号館の並び。1号館から昇順。
+   *
+   * ■ 教室が入っていない号館も並べる
+   *   以前は「教室が登録されている号館」だけを並べていた。
+   *   講義室しか入れていないと、そのぶんの号館しか出てこず、
+   *   ほかの号館は選びようがなかった。
+   *   地図が知っている号館を全部並べ、教室のあるものだけ押せるようにする。
+   *   押せない号館も見えていれば、「入れ忘れている」と分かる。
+   *
+   * ■ 番号の順に
+   *   1, 2, 3 … と数として並べる。文字として並べると
+   *   1, 10, 11, 2 の順になり、探すときに目が迷う。
+   */
   const allBuildings = useMemo(() => {
-    const s = [...new Set(rooms.map((r) => r.building_code).filter(Boolean))];
-    return s.sort((a, b) => (Number(a) || 9999) - (Number(b) || 9999) || a.localeCompare(b, "ja"));
+    const s = new Set<string>(mapBuildings);
+    for (const r of rooms) if (r.building_code) s.add(r.building_code);
+    return [...s].sort(
+      (a, b) => (Number(a) || 9999) - (Number(b) || 9999) || a.localeCompare(b, "ja"),
+    );
+  }, [rooms, mapBuildings]);
+
+  /** 号館ごとの教室の数。押せるかどうかと、そのまま数の表示に使う */
+  const roomCount = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rooms) m.set(r.building_code, (m.get(r.building_code) ?? 0) + 1);
+    return m;
   }, [rooms]);
+
+  /** 教室が一つでも入っている号館。「すべての号館」はこれだけを選ぶ */
+  const usableBuildings = useMemo(
+    () => allBuildings.filter((b) => (roomCount.get(b) ?? 0) > 0),
+    [allBuildings, roomCount],
+  );
 
   /** いま選んでいる号館にある教室 */
   const roomsInScope = useMemo(
@@ -746,68 +805,101 @@ export default function SchedulePage() {
             </p>
           )}
 
-          <div className="mt-1 flex gap-1.5">
-            <button
-              onClick={() => setBuildingCodes(allBuildings)}
-              className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${
-                buildingCodes.length === allBuildings.length && allBuildings.length > 0
-                  ? "bg-slate-900 text-white"
-                  : "bg-slate-200 text-slate-700 hover:bg-slate-300"
-              }`}
-            >
-              すべての号館（{allBuildings.length}棟・{rooms.length}室）
-            </button>
-            <button
-              onClick={() => {
-                setBuildingCodes([]);
-                setRoomIds([]);
-              }}
-              className="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-100"
-            >
-              {T("解除")}
-            </button>
-          </div>
+          {/*
+            まとめて選ぶ道は、教授（レベル2）と副管理者・管理者だけ。
+            課外活動リーダーが押すと、全号館ぶんの予定を一度に立てられてしまう。
+          */}
+          {canPickAllRooms(role) && (
+            <div className="mt-1 flex gap-1.5">
+              <button
+                onClick={() => setBuildingCodes(usableBuildings)}
+                disabled={usableBuildings.length === 0}
+                className={`flex-1 rounded-lg px-2 py-2 text-[11px] font-bold transition disabled:bg-slate-100 disabled:text-slate-400 ${
+                  buildingCodes.length === usableBuildings.length && usableBuildings.length > 0
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                }`}
+              >
+                {T("すべての号館")}（{usableBuildings.length}棟・{rooms.length}室）
+              </button>
+              <button
+                onClick={() => {
+                  setBuildingCodes([]);
+                  setRoomIds([]);
+                }}
+                className="rounded-lg bg-white px-2 py-2 text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-100"
+              >
+                {T("解除")}
+              </button>
+            </div>
+          )}
 
-          <div className="mt-1.5 flex max-h-28 flex-wrap gap-1 overflow-y-auto rounded-xl bg-slate-50 p-1.5">
+          {/*
+            号館を一つずつ。押しやすいよう、一つを大きめにしてある。
+            教室が入っていない号館は押せない。数が 0 と見えていれば、
+            入れ忘れていることがその場で分かる。
+          */}
+          <div className="mt-1.5 grid max-h-44 grid-cols-4 gap-1.5 overflow-y-auto rounded-xl bg-slate-50 p-1.5 sm:grid-cols-6">
             {allBuildings.map((b) => {
               const on = buildingCodes.includes(b);
+              const n = roomCount.get(b) ?? 0;
               return (
                 <button
                   key={b}
+                  disabled={n === 0}
+                  title={n === 0 ? "この号館には教室が登録されていません" : `${n} 室`}
                   onClick={() =>
                     setBuildingCodes((prev) =>
                       on ? prev.filter((x) => x !== b) : [...prev, b],
                     )
                   }
-                  className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
-                    on ? "bg-blue-600 text-white" : "bg-white text-slate-600 shadow-sm hover:bg-slate-100"
+                  className={`flex flex-col items-center justify-center rounded-lg px-1 py-2.5 transition active:scale-95 ${
+                    n === 0
+                      ? "cursor-not-allowed bg-slate-100 text-slate-300"
+                      : on
+                        ? "bg-blue-600 text-white"
+                        : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"
                   }`}
                 >
-                  {b}
+                  <span className="text-sm font-bold leading-none">{b}</span>
+                  <span
+                    className={`mt-0.5 text-[9px] leading-none ${
+                      n === 0 ? "text-slate-300" : on ? "text-blue-100" : "text-slate-400"
+                    }`}
+                  >
+                    {n === 0 ? T("教室なし") : `${n}室`}
+                  </span>
                 </button>
               );
             })}
             {allBuildings.length === 0 && (
-              <span className="p-1 text-[10px] text-amber-700">{T("教室が登録されていません")}</span>
+              <span className="col-span-full p-1 text-[10px] text-amber-700">
+                {T("教室が登録されていません")}
+              </span>
             )}
           </div>
 
           {roomsInScope.length > 0 && (
             <>
               <div className="mt-1.5 flex gap-1.5">
-                {/* すでに使われている教室は、まとめて選ぶときも含めない */}
-                <button
-                  onClick={() =>
-                    setRoomIds(roomsInScope.filter((r) => !takenRooms.has(r.id)).map((r) => r.id))
-                  }
-                  className="flex-1 rounded-lg bg-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-slate-300"
-                >
-                  {T("空いている教室をすべて選ぶ（")}
-                  {roomsInScope.filter((r) => !takenRooms.has(r.id)).length}室）
-                </button>
+                {/* すでに使われている教室は、まとめて選ぶときも含めない。
+                    まとめて選べるのは、上の「すべての号館」と同じ人だけ */}
+                {canPickAllRooms(role) && (
+                  <button
+                    onClick={() =>
+                      setRoomIds(roomsInScope.filter((r) => !takenRooms.has(r.id)).map((r) => r.id))
+                    }
+                    className="flex-1 rounded-lg bg-slate-200 px-2 py-2 text-[11px] font-bold text-slate-700 transition hover:bg-slate-300"
+                  >
+                    {T("空いている教室をすべて選ぶ（")}
+                    {roomsInScope.filter((r) => !takenRooms.has(r.id)).length}室）
+                  </button>
+                )}
                 <button
                   onClick={() => setRoomIds([])}
-                  className="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-100"
+                  className={`rounded-lg bg-white px-2 py-2 text-[11px] font-bold text-slate-500 shadow-sm transition hover:bg-slate-100 ${
+                    canPickAllRooms(role) ? "" : "flex-1"
+                  }`}
                 >
                   {T("全部外す")}
                 </button>

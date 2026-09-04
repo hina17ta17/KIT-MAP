@@ -34,11 +34,65 @@ import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
-import { canManageAll, canReadRoster, type Role } from "@/lib/auth";
+import {
+  CLASS_CODES,
+  CLASS_NOS,
+  GRADES,
+  canManageAll,
+  canReadRoster,
+  type Role,
+} from "@/lib/auth";
 import { readXlsx, type Row } from "@/lib/xlsx";
 
-/** xlsx の列。A列から順に */
-const COLS = ["kind", "email", "name", "grade", "class_code", "seat_no", "student_no", "number"] as const;
+/**
+ * xlsx の列。A列から順に。
+ *
+ *   A 身分（学生・教授・その他）
+ *   B メールアドレス
+ *   C 氏名
+ *   D 学年            学生だけ
+ *   E 学科            学生だけ。KM・CC など
+ *   F クラス（1〜10）  学生だけ
+ *   G 名列番号        学生だけ
+ *   H 学籍番号        学生だけ。アドレスの7桁と同じもの
+ *   I〜N 担当学科     教授だけ。いくつでも（空けてよい）
+ *   O 8桁の番号       教授とその他
+ *
+ * 身分ごとに使う列
+ *   学生    A B C D E F G H
+ *   教授    A B C  I〜N O
+ *   その他  A B C      O
+ *
+ * ★E列は以前「クラス」と書いていたが、指しているのは学科。
+ *   クラス（1〜10）は新しく F 列に分けた。
+ */
+const COLS = [
+  "kind",
+  "email",
+  "name",
+  "grade",
+  "class_code",
+  "class_no",
+  "seat_no",
+  "student_no",
+  "dept1",
+  "dept2",
+  "dept3",
+  "dept4",
+  "dept5",
+  "dept6",
+  "number",
+] as const;
+
+/** そのうち担当学科の列（I〜N）。まとめて一つの並びにして送る */
+const DEPT_COLS = ["dept1", "dept2", "dept3", "dept4", "dept5", "dept6"] as const;
+
+type DeptCol = (typeof DEPT_COLS)[number];
+/** 担当学科以外の列。こちらは一つずつそのまま送る */
+type PlainCol = Exclude<(typeof COLS)[number], DeptCol>;
+
+const isDeptCol = (c: (typeof COLS)[number]): c is DeptCol =>
+  (DEPT_COLS as readonly string[]).includes(c);
 
 /** 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
@@ -61,7 +115,8 @@ function studentNoOf(text: string): string {
   return digits.length === 7 ? digits : "";
 }
 
-type Sending = { row: number } & Record<(typeof COLS)[number], string>;
+/** データベースへ渡す一行。担当学科だけは並びにまとめる */
+type Sending = { row: number; depts: string[] } & Record<PlainCol, string>;
 type Rejected = { row: number; why: string };
 type Report = { students: number; staff: number; rejected: Rejected[] };
 /** all が false なら「学生の数しか見せてもらえていない」（教授のとき） */
@@ -90,6 +145,44 @@ const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
   { id: "other", label: "その他", byDept: false },
 ];
 
+/**
+ * 名簿（突き合わせ用の表）の中を見るときの身分。
+ *
+ * 上の PeopleKind（登録している人）とは別のもの。
+ * 名簿は学生・教授・その他の三つしか持っていない。
+ */
+type RosterKind = "student" | "teacher" | "other";
+
+const ROSTER_KINDS: { id: RosterKind; label: string }[] = [
+  { id: "student", label: "学生" },
+  { id: "teacher", label: "教授" },
+  { id: "other", label: "その他" },
+];
+
+/** 名簿にいる学生の一行 */
+type RosterStudent = {
+  student_no: string;
+  email: string;
+  full_name: string;
+  grade: number;
+  class_code: string;
+  class_no: number | null;
+  seat_no: number | null;
+  updated_at: string;
+  total: number;
+};
+
+/** 名簿にいる教授・その他の一行 */
+type RosterStaff = {
+  email: string;
+  full_name: string;
+  number: string;
+  kind: string;
+  dept_codes: string[] | null;
+  updated_at: string;
+  total: number;
+};
+
 type Person = {
   id: string;
   email: string;
@@ -97,8 +190,13 @@ type Person = {
   staff_no: string;
   full_name: string;
   grade: number;
+  /** 学科の記号。列の名前は昔のまま */
   class_code: string;
+  /** クラス（1〜10）。入れていない人は 0 */
+  class_no: number | null;
   seat_no: number | null;
+  /** 教授の担当学科 */
+  dept_codes: string[] | null;
   role: string;
   affiliation: string;
   total: number;
@@ -109,6 +207,10 @@ type Dept = { id: number; faculty_id: number; name: string; code: string };
 
 /** 一度に読む件数。多すぎると画面が重く、少なすぎるとめくる回数が増える */
 const PAGE = 50;
+
+/** 名簿の絞り込みに使う、選ぶ欄の見た目。三つ並ぶので一か所にまとめる */
+const rSelect =
+  "w-full rounded-lg bg-slate-100 px-2 py-2 text-[11px] outline-none focus:bg-white focus:ring-2 focus:ring-blue-500";
 
 /** ドメイン名確認の中の、身分の並び */
 const DOMAIN_KINDS: { id: DomainKind; label: string; note: string }[] = [
@@ -141,6 +243,22 @@ export default function RosterPage() {
   /** 登録している人を見る欄 */
   const [listOpen, setListOpen] = useState(false);
   const [listKind, setListKind] = useState<PeopleKind>("student");
+
+  /* 名簿の中を一人ずつ見る欄 */
+  const [rOpen, setROpen] = useState(false);
+  const [rKind, setRKind] = useState<RosterKind>("student");
+  const [rStudents, setRStudents] = useState<RosterStudent[]>([]);
+  const [rStaff, setRStaff] = useState<RosterStaff[]>([]);
+  const [rTotal, setRTotal] = useState(0);
+  const [rPage, setRPage] = useState(0);
+  const [rBusy, setRBusy] = useState(false);
+  const [rq, setRq] = useState("");
+  /** 学年で絞る。null なら絞らない */
+  const [rGrade, setRGrade] = useState<number | null>(null);
+  /** 学科の記号で絞る。学生は自分の学科、教授は担当学科を見る */
+  const [rDept, setRDept] = useState<string | null>(null);
+  /** クラス（1〜10）で絞る */
+  const [rClassNo, setRClassNo] = useState<number | null>(null);
   const [q, setQ] = useState("");
   const [page, setPage] = useState(0);
   const [people, setPeople] = useState<Person[]>([]);
@@ -174,10 +292,15 @@ export default function RosterPage() {
     email: "",
     name: "",
     grade: "",
+    /** 学科。E列と同じもの */
     class_code: "",
+    /** クラス（1〜10）。F列と同じもの */
+    class_no: "",
     seat_no: "",
     student_no: "",
     number: "",
+    /** 教授の担当学科。I〜N列と同じもの */
+    depts: [] as string[],
   });
 
   const load = useCallback(async () => {
@@ -235,6 +358,83 @@ export default function RosterPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* ---------------- 名簿の中を、一人ずつ見る ---------------- */
+
+  /**
+   * 名簿を読み直す。
+   *
+   * ★これは「入れておいた突き合わせ用の表」のほう。
+   *   下の「登録している人を見る」（list_people）とは別のもの。
+   *   あちらは席がある人、こちらは名簿に入れた人。
+   *   入れたはずの人が名簿にいるかを確かめるのは、こちら。
+   *
+   * 学生は学年・学科・クラスで、教授は担当学科で絞れる。
+   * 何千人もいると、探す言葉だけでは目当ての一人に届かない。
+   */
+  const loadRoster = useCallback(
+    async (kind: RosterKind, at: number) => {
+      if (!supabaseReady) return;
+      setRBusy(true);
+      setMsg(null);
+      try {
+        const supabase = createClient();
+        if (kind === "student") {
+          const { data, error } = await supabase.rpc("roster_list_students", {
+            p_q: rq.trim(),
+            p_limit: PAGE,
+            p_offset: at * PAGE,
+            p_grade: rGrade ?? 0,
+            p_class_code: rDept ?? "",
+            p_class_no: rClassNo ?? 0,
+          });
+          if (error) throw error;
+          const rows = (data as RosterStudent[]) ?? [];
+          setRStudents(rows);
+          setRStaff([]);
+          setRTotal(rows.length > 0 ? Number(rows[0].total) : 0);
+        } else {
+          const { data, error } = await supabase.rpc("roster_list_staff", {
+            p_kind: kind,
+            p_q: rq.trim(),
+            p_limit: PAGE,
+            p_offset: at * PAGE,
+            // 担当学科で絞れるのは教授だけ。その他は持っていない
+            p_dept: kind === "teacher" ? (rDept ?? "") : "",
+          });
+          if (error) throw error;
+          const rows = (data as RosterStaff[]) ?? [];
+          setRStaff(rows);
+          setRStudents([]);
+          setRTotal(rows.length > 0 ? Number(rows[0].total) : 0);
+        }
+      } catch (e) {
+        setRStudents([]);
+        setRStaff([]);
+        setRTotal(0);
+        setMsg({
+          kind: "err",
+          text:
+            e instanceof Error
+              ? `${e.message}（base/12_roster_import.sql を入れ直していない場合は、先に入れてください）`
+              : String(e),
+        });
+      } finally {
+        setRBusy(false);
+      }
+    },
+    [rq, rGrade, rDept, rClassNo],
+  );
+
+  /* 絞り込みや探す言葉を変えたら、少し待ってから引き直す */
+  useEffect(() => {
+    if (!rOpen) return;
+    const id = window.setTimeout(() => {
+      setRPage(0);
+      void loadRoster(rKind, 0);
+    }, 250);
+    return () => window.clearTimeout(id);
+  }, [rOpen, rKind, loadRoster]);
 
   /* ---------------- 登録している人を見る ---------------- */
 
@@ -371,14 +571,22 @@ export default function RosterPage() {
        * 「xlsx の何行目を直せばよいか」を言えるようにするため。
        */
       const sending: Sending[] = raw.map((cells, i) => {
-        const o = { row: i + 1 } as Sending;
+        const o = { row: i + 1, depts: [] as string[] } as Sending;
         COLS.forEach((c, n) => {
-          o[c] = (cells[n] ?? "").trim();
+          const v = (cells[n] ?? "").trim();
+          // 担当学科（I〜N）はまとめて一つの並びに。空けてある列は飛ばす
+          if (isDeptCol(c)) {
+            if (v !== "") o.depts.push(v);
+          } else {
+            o[c] = v;
+          }
         });
         return o;
       });
       // まったくの空行は送らない
-      const kept = sending.filter((s) => COLS.some((c) => s[c] !== ""));
+      const kept = sending.filter(
+        (s) => s.depts.length > 0 || COLS.some((c) => !isDeptCol(c) && s[c] !== ""),
+      );
       setFileName(file.name);
       setRows(kept);
       if (kept.length === 0) setMsg({ kind: "err", text: T("中身のある行がありませんでした") });
@@ -444,9 +652,11 @@ export default function RosterPage() {
           name: "",
           grade: "",
           class_code: "",
+          class_no: "",
           seat_no: "",
           student_no: "",
           number: "",
+          depts: [],
         }));
         await load();
         if (listOpen) await loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), page);
@@ -674,6 +884,238 @@ export default function RosterPage() {
       </div>
 
       {/*
+        名簿の中を、一人ずつ見る。
+
+        ★こちらは「入れておいた突き合わせ用の表」。
+          下の「登録している人を見る」とは別のもの。
+          入れたはずの人が名簿にいるか、中身が合っているかを
+          確かめるのは、こちら。
+
+        学生は学年・学科・クラスで、教授は担当学科で絞れる。
+        何千人もいると、探す言葉だけでは目当ての一人に届かない。
+      */}
+      <section className="mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-slate-900">{T("名簿の中を見る")}</div>
+          <button
+            onClick={() => {
+              const next = !rOpen;
+              setROpen(next);
+              if (next) {
+                setRPage(0);
+                void loadRoster(rKind, 0);
+              }
+            }}
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+          >
+            {rOpen ? T("閉じる") : T("名簿を開く")}
+          </button>
+        </div>
+
+        {rOpen && (
+          <div className="mt-2">
+            {/* 身分。教授（レベル2）が見られるのは学生の名簿だけ */}
+            {canWrite ? (
+              <div className="grid grid-cols-3 gap-1.5">
+                {ROSTER_KINDS.map((k) => (
+                  <button
+                    key={k.id}
+                    onClick={() => {
+                      setRKind(k.id);
+                      setRPage(0);
+                      // 身分を変えたら絞り込みは外す。前の条件が残ると
+                      // 「誰もいない」に見えて、外し方が分からなくなる
+                      setRGrade(null);
+                      setRDept(null);
+                      setRClassNo(null);
+                    }}
+                    className={`rounded-lg px-2 py-2 text-[11px] font-bold transition active:scale-95 ${
+                      rKind === k.id
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {T(k.label)}
+                    <span className="mt-0.5 block text-[9px] font-normal opacity-70">
+                      {k.id === "student"
+                        ? (counts?.students ?? 0)
+                        : k.id === "teacher"
+                          ? (counts?.teachers ?? 0)
+                          : (counts?.others ?? 0)}{" "}
+                      {T("人")}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
+                教授（レベル2）が見られるのは<b>{T("学生の名簿だけ")}</b>です。
+              </p>
+            )}
+
+            {/* 学生の絞り込み。学年 → 学科 → クラス */}
+            {rKind === "student" && (
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
+                <select
+                  value={rGrade ?? ""}
+                  onChange={(e) => setRGrade(e.target.value ? Number(e.target.value) : null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("学年（すべて）")}</option>
+                  {GRADES.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                      {T("年")}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={rDept ?? ""}
+                  onChange={(e) => setRDept(e.target.value || null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("学科（すべて）")}</option>
+                  {CLASS_CODES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code}　{T(c.name)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={rClassNo ?? ""}
+                  onChange={(e) => setRClassNo(e.target.value ? Number(e.target.value) : null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("クラス（すべて）")}</option>
+                  {CLASS_NOS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* 教授の絞り込み。担当学科 */}
+            {rKind === "teacher" && (
+              <select
+                value={rDept ?? ""}
+                onChange={(e) => setRDept(e.target.value || null)}
+                className={`${rSelect} mt-2`}
+              >
+                <option value="">{T("担当学科（すべて）")}</option>
+                {CLASS_CODES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code}　{T(c.name)}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <input
+              value={rq}
+              onChange={(e) => setRq(e.target.value)}
+              autoComplete="off"
+              placeholder={
+                rKind === "student" ? "名前・学籍番号・アドレスで探す" : "名前・アドレス・番号で探す"
+              }
+              className="mt-2 w-full rounded-lg bg-slate-100 px-3 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+            />
+
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+              <span className="font-bold">
+                {rBusy ? T("探しています…") : `${rTotal} ${T("人")}`}
+              </span>
+              {rTotal > PAGE && (
+                <span className="ml-auto flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      const at = Math.max(0, rPage - 1);
+                      setRPage(at);
+                      void loadRoster(rKind, at);
+                    }}
+                    disabled={rPage === 0 || rBusy}
+                    className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-600 disabled:text-slate-300"
+                  >
+                    {T("前")}
+                  </button>
+                  <span>
+                    {rPage + 1} / {Math.max(1, Math.ceil(rTotal / PAGE))}
+                  </span>
+                  <button
+                    onClick={() => {
+                      const at = Math.min(Math.ceil(rTotal / PAGE) - 1, rPage + 1);
+                      setRPage(at);
+                      void loadRoster(rKind, at);
+                    }}
+                    disabled={rPage >= Math.ceil(rTotal / PAGE) - 1 || rBusy}
+                    className="rounded-md bg-slate-100 px-2 py-1 font-bold text-slate-600 disabled:text-slate-300"
+                  >
+                    {T("次")}
+                  </button>
+                </span>
+              )}
+            </div>
+
+            {/* 一人ぶんの中身は、名簿が持っているものを全部出す */}
+            <ul className="mt-1.5 max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-slate-50">
+              {rKind === "student"
+                ? rStudents.map((s) => (
+                    <li key={s.student_no} className="px-2.5 py-2">
+                      <div className="flex items-baseline gap-1.5">
+                        {s.seat_no !== null && (
+                          <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700">
+                            {s.seat_no}
+                          </span>
+                        )}
+                        <span className="truncate text-xs font-bold text-slate-800">
+                          {s.full_name || "（名前なし）"}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                        {s.grade > 0 && <span>{s.grade}年</span>}
+                        {s.class_code && <span>{s.class_code}</span>}
+                        {!!s.class_no && (
+                          <span>
+                            {T("クラス")}
+                            {s.class_no}
+                          </span>
+                        )}
+                        <span className="font-mono">学籍番号 {s.student_no}</span>
+                      </div>
+                      <div className="truncate font-mono text-[10px] text-slate-400">{s.email}</div>
+                    </li>
+                  ))
+                : rStaff.map((t) => (
+                    <li key={t.email} className="px-2.5 py-2">
+                      <span className="truncate text-xs font-bold text-slate-800">
+                        {t.full_name || "（名前なし）"}
+                      </span>
+                      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                        <span className="font-mono">番号 {t.number}</span>
+                        {(t.dept_codes ?? []).length > 0 && (
+                          <span>
+                            {T("担当")} {(t.dept_codes ?? []).join("・")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="truncate font-mono text-[10px] text-slate-400">{t.email}</div>
+                    </li>
+                  ))}
+
+              {!rBusy && rStudents.length === 0 && rStaff.length === 0 && (
+                <li className="px-2.5 py-6 text-center text-[11px] leading-relaxed text-slate-500">
+                  {rq.trim() || rGrade || rDept || rClassNo
+                    ? T("見つかりませんでした。")
+                    : T("この身分は、まだ名簿に入っていません。")}
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </section>
+
+      {/*
         登録している人を見る。
 
         ★名簿（突き合わせ用の表）とは別のもの。
@@ -800,7 +1242,7 @@ export default function RosterPage() {
                 {listBusy ? "探しています…" : `${total} 人`}
               </span>
               <span className="text-slate-400">
-                {kindDef.byDept ? "学年 → クラス → 名列番号の順" : "氏名の順"}
+                {kindDef.byDept ? T("学年 → 学科 → クラス → 名列番号の順") : T("氏名の順")}
               </span>
               {total > PAGE && (
                 <span className="ml-auto flex items-center gap-1.5">
@@ -835,8 +1277,8 @@ export default function RosterPage() {
 
             {/*
               一人ぶんの中身は、持っているものを全部出す。
-              学生は学籍番号と学年・クラス・名列番号、
-              教職員は8桁の番号。持っていない欄は出さない。
+              学生は学籍番号と学年・学科・クラス・名列番号、
+              教授は8桁の番号と担当学科。持っていない欄は出さない。
             */}
             <ul className="mt-1.5 max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-slate-50">
               {people.map((p) => (
@@ -854,11 +1296,24 @@ export default function RosterPage() {
                   <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
                     {p.grade > 0 && <span>{p.grade}年</span>}
                     {p.class_code && <span>{p.class_code}</span>}
+                    {/* クラス（1〜10）。まだ入れていない人には出さない */}
+                    {!!p.class_no && (
+                      <span>
+                        {T("クラス")}
+                        {p.class_no}
+                      </span>
+                    )}
                     {p.seat_no !== null && <span>{p.seat_no}番</span>}
                     {p.student_no && (
                       <span className="font-mono">学籍番号 {p.student_no}</span>
                     )}
                     {p.staff_no && <span className="font-mono">番号 {p.staff_no}</span>}
+                    {/* 教授の担当学科 */}
+                    {(p.dept_codes ?? []).length > 0 && (
+                      <span>
+                        {T("担当")} {(p.dept_codes ?? []).join("・")}
+                      </span>
+                    )}
                   </div>
                   <div className="truncate font-mono text-[10px] text-slate-400">{p.email}</div>
                 </li>
@@ -1033,11 +1488,33 @@ export default function RosterPage() {
       <section className="mt-4 rounded-xl border border-slate-200 p-3">
         <div className="text-xs font-bold text-slate-900">{T("xlsx から取り込む")}</div>
         <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-          1行が1人。<b>{T("A 身分（学生／教授／その他）・B メールアドレス・C 名前")}</b>。
-          学生はさらに <b>{T("D 学年・E クラス・F 名列番号・G 学籍番号")}</b>、
-          教授とその他は <b>{T("H 8桁の番号")}</b>。
+          1行が1人。<b>{T("A 身分（学生／教授／その他）・B メールアドレス・C 名前")}</b>
+          {T("は全員に要ります。")}
           <br />
-          <b>{T("G 学籍番号")}</b>{T("は、アドレスに書いてある")}<b>{T("7桁の数字")}</b>です
+          {T("そのあとは身分で変わります。")}
+        </p>
+        <ul className="mt-1 space-y-0.5 rounded-lg bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600">
+          <li>
+            <b className="text-slate-900">{T("学生")}</b>　A B C ＋{" "}
+            <b>{T("D 学年・E 学科・F クラス（1〜10）・G 名列番号・H 学籍番号")}</b>
+          </li>
+          <li>
+            <b className="text-slate-900">{T("教授")}</b>　A B C ＋{" "}
+            <b>{T("I〜N 担当学科（いくつでも。空けてよい）・O 8桁の番号")}</b>
+          </li>
+          <li>
+            <b className="text-slate-900">{T("その他")}</b>　A B C ＋ <b>{T("O 8桁の番号")}</b>
+          </li>
+        </ul>
+        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+          <b>{T("E 学科")}</b>
+          {T("は KM・CC などの記号です。")}
+          <b>{T("F クラス")}</b>
+          {T("は、同じ学科・学年の中で分かれている組（1〜10）。")}
+          <br />
+          <b>{T("H 学籍番号")}</b>
+          {T("は、アドレスに書いてある")}
+          <b>{T("7桁の数字")}</b>です
           {T("（c1234567@… なら 1234567）。頭の一文字ごと書いてあっても構いません。")}
           <br />
           {T("見出しの行があっても構いません（A列が三択でないので自動で飛ばされます）。")}
@@ -1063,7 +1540,10 @@ export default function RosterPage() {
               {rows.slice(0, 30).map((r) => (
                 <li key={r.row} className="truncate">
                   {r.row}: {r.kind} / {r.email} / {r.name}
+                  {r.class_code ? ` / ${r.class_code}` : ""}
+                  {r.class_no ? `-${r.class_no}` : ""}
                   {r.student_no ? ` / ${r.student_no}` : ""}
+                  {r.depts.length > 0 ? ` / ${r.depts.join("・")}` : ""}
                   {r.number ? ` / ${r.number}` : ""}
                 </li>
               ))}
@@ -1143,7 +1623,7 @@ export default function RosterPage() {
 
             {one.kind === "学生" ? (
               <>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   <Field label="学年">
                     <input
                       value={one.grade}
@@ -1155,13 +1635,27 @@ export default function RosterPage() {
                       className={manualInput}
                     />
                   </Field>
-                  <Field label="クラス">
+                  <Field label="学科">
                     <input
                       value={one.class_code}
                       onChange={(e) =>
                         setOne((o) => ({ ...o, class_code: e.target.value.toUpperCase().slice(0, 4) }))
                       }
                       placeholder="CC"
+                      className={manualInput}
+                    />
+                  </Field>
+                  <Field label="クラス">
+                    <input
+                      value={one.class_no}
+                      onChange={(e) =>
+                        setOne((o) => ({
+                          ...o,
+                          class_no: e.target.value.replace(/\D/g, "").slice(0, 2),
+                        }))
+                      }
+                      inputMode="numeric"
+                      placeholder="1〜10"
                       className={manualInput}
                     />
                   </Field>
@@ -1207,15 +1701,49 @@ export default function RosterPage() {
                 </Field>
               </>
             ) : (
-              <Field label="8桁の番号">
-                <input
-                  value={one.number}
-                  onChange={(e) => setOne((o) => ({ ...o, number: e.target.value.trim().slice(0, 8) }))}
-                  autoComplete="off"
-                  placeholder="12345678"
-                  className={`${manualInput} text-center tracking-[0.3em]`}
-                />
-              </Field>
+              <>
+                <Field label="8桁の番号">
+                  <input
+                    value={one.number}
+                    onChange={(e) =>
+                      setOne((o) => ({ ...o, number: e.target.value.trim().slice(0, 8) }))
+                    }
+                    autoComplete="off"
+                    placeholder="12345678"
+                    className={`${manualInput} text-center tracking-[0.3em]`}
+                  />
+                </Field>
+
+                {/*
+                  担当学科（I〜N列）。教授だけ。
+                  その他の人には受け取ってもらえないので、出さない。
+                */}
+                {one.kind === "教授" && (
+                  <Field label="担当学科（いくつでも）">
+                    <input
+                      value={one.depts.join(" ")}
+                      onChange={(e) =>
+                        setOne((o) => ({
+                          ...o,
+                          // 空白でも読点でも区切れるようにする。打ちやすいほうで入れてもらう
+                          depts: e.target.value
+                            .toUpperCase()
+                            .split(/[\s,、・]+/)
+                            .filter((s) => s !== "")
+                            .slice(0, DEPT_COLS.length),
+                        }))
+                      }
+                      autoComplete="off"
+                      placeholder="CC KM"
+                      className={manualInput}
+                    />
+                    <p className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                      {T("KM・CC などの記号を、間を空けて並べてください。")}
+                      {T("空でも構いません。")}
+                    </p>
+                  </Field>
+                )}
+              </>
             )}
 
             {/*

@@ -6,7 +6,7 @@
  * ■ 申請の流れ
  *   ① メールアドレスと氏名 →［次へ］
  *      → 大学のドメインでないと通らない
- *   ② 学年・クラス・名列番号 →［次へ］
+ *   ② 学年・学科・クラス・名列番号 →［次へ］
  *      → ここで席を作る。①②のあいだは何も書き込まない
  *   ③ Microsoft Authenticator で本人確認
  *      → QRを読ませ、出てきた6桁を入れる。その端末と結び付く
@@ -35,8 +35,8 @@
  * ■ そのぶん守れないこと
  *   「そのアドレスの持ち主か」までは分からない。大学のドメインで
  *   ありさえすれば、他人のアドレスでも申請できてしまう。
- *   最後の関門は管理者の承認。承認画面に氏名・学年・クラス・
- *   名列番号が出るので、名簿と突き合わせて判断する。
+ *   最後の関門は管理者の承認。承認画面に氏名・学年・学科・
+ *   クラス・名列番号が出るので、名簿と突き合わせて判断する。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -48,9 +48,12 @@ import { isTrustedDevice, trustDevice } from "@/lib/device";
 import {
   AFFILIATIONS,
   CLASS_CODES,
+  CLASS_NOS,
+  DEPT_MAX,
   GRADES,
   SEAT_MAX,
   SEAT_MIN,
+  checkClassNo,
   checkSeat,
   PASSWORD_MAX,
   PASSWORD_MIN,
@@ -58,6 +61,7 @@ import {
   checkPassword,
   isAllowedEmail,
   needsClassInfo,
+  needsDepts,
   type Affiliation,
   type Role,
 } from "@/lib/auth";
@@ -65,7 +69,7 @@ import {
 /**
  * 席を作ったあとの段。
  *
- * 席を作る前（メールアドレス・氏名と、学年・クラス・名列番号）は
+ * 席を作る前（メールアドレス・氏名と、学年・学科・クラス・名列番号）は
  * まだログインしていないので、ここには入らない。SignupStep のほう。
  */
 type Step = "mfa" | "info" | "password" | "verify" | "done";
@@ -76,7 +80,7 @@ type Step = "mfa" | "info" | "password" | "verify" | "done";
  *   1 … 身分（学生・教授・その他）
  *   2 … メールアドレスと氏名
  *
- * 大学の情報（学年・クラス・名列番号、または8桁の番号）は、
+ * 大学の情報（学年・学科・クラス・名列番号、または8桁の番号と担当学科）は、
  * 席を作って本人確認を終えたあとに訊く。Step の "info" のほう。
  *
  * 身分を先に訊くのは、そのあと何を訊くかがここで変わるため。
@@ -89,12 +93,17 @@ type Me = {
   role: Role;
   full_name: string;
   grade: number;
+  /** 学科の記号。列の名前は昔のまま */
   class_code: string;
+  /** クラス（1〜10）。まだ入れていない人は 0 */
+  class_no: number;
   group_no: number;
   /** 名列番号。組から置き換えた */
   seat_no: number;
   /** 教授とその他が入れる8桁の番号 */
   staff_no: string;
+  /** 教授の担当学科 */
+  dept_codes: string[];
   verified: boolean;
 };
 
@@ -108,6 +117,44 @@ function tempPassword(): string {
   const a = new Uint8Array(24);
   crypto.getRandomValues(a);
   return "T" + Array.from(a, (b) => b.toString(36)).join("").slice(0, 30) + "9";
+}
+
+/**
+ * 席に書き込む。まだ無い列は、あきらめて外す。
+ *
+ * ■ なぜ要るか
+ *   列は SQL を貼って増やす。画面のほうが先に配られるので、
+ *   そのあいだ「画面は知っているが、データベースには無い列」ができる。
+ *   PostgREST は一つでも知らない列があると、送ったもの全部を断る。
+ *
+ *   そこで止めると、申請そのものが出せなくなる。
+ *   入れられるものだけでも入れておけば、あとから足せる。
+ *   申請が通ることのほうが大事。
+ *
+ * ■ どうやって外すか
+ *   断り文に列の名前が入っている（PGRST204 の "…the 'dept_codes' column…"、
+ *   42703 の 'column "dept_codes" of relation …'）。そこから拾って外し、
+ *   もう一度送る。外しても知らない列が残っていることがあるので、
+ *   送るものが無くなるまで繰り返す。
+ */
+async function updateProfile(
+  supabase: ReturnType<typeof createClient>,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const body = { ...patch };
+  // 列の数だけ試せば必ず終わる。無限に回らないよう上限を持たせる
+  for (let i = 0; i <= Object.keys(patch).length; i++) {
+    if (Object.keys(body).length === 0) return;
+    const { error } = await supabase.from("profiles").update(body).eq("id", id);
+    if (!error) return;
+
+    const missing = Object.keys(body).find((k) =>
+      new RegExp(`['"\`]${k}['"\`]`).test(error.message),
+    );
+    if (!missing) throw error;
+    delete body[missing];
+  }
 }
 
 export default function LoginPage() {
@@ -145,6 +192,17 @@ export default function LoginPage() {
   }, []);
 
   const [mode, setMode] = useState<"login" | "signup">("login");
+  /**
+   * パスワードを忘れた人の欄を開いているか。
+   *
+   * ログインの下に畳んで置く。ふだんは要らないもので、
+   * 並べておくと「どちらを押すのか」で迷わせる。
+   */
+  const [forgotOpen, setForgotOpen] = useState(false);
+  /** 入れ直しに使う、認証アプリの6桁 */
+  const [forgotCode, setForgotCode] = useState("");
+  /** 入れ直したあとの、新しいパスワード */
+  const [forgotPw, setForgotPw] = useState("");
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -156,17 +214,27 @@ export default function LoginPage() {
 
   /* 申請 */
   const [step, setStep] = useState<Step>("mfa");
-  /** 席を作る前の段。① 身分 → ② メールと氏名 → ③ 学年・クラス・名列番号 */
+  /** 席を作る前の段。① 身分 → ② メールと氏名 */
   const [signupStep, setSignupStep] = useState<SignupStep>(1);
   /** 申請のいちばん最初に選んでもらう身分。まだ選んでいなければ null */
   const [affiliation, setAffiliation] = useState<Affiliation | null>(null);
   const [name, setName] = useState("");
   const [grade, setGrade] = useState<number>(0);
+  /** 学科の記号。以前ここを「クラス」と呼んでいたが、指しているのは学科 */
   const [classCode, setClassCode] = useState("");
+  /** クラス（1〜10）。学科の中でさらに分かれている組 */
+  const [classNo, setClassNo] = useState<number>(0);
   /** 名列番号（1〜200）。入力中は文字で持つ。空にできるようにするため */
   const [seat, setSeat] = useState("");
   /** 教授とその他が入れる8桁の番号 */
   const [staffNo, setStaffNo] = useState("");
+  /**
+   * 教授の担当学科。
+   *
+   * 選んだぶんだけ並ぶ。最後にひとつ空の欄を足して見せるので、
+   * ここには「選び終わったもの」だけが入る（空は混ざらない）。
+   */
+  const [depts, setDepts] = useState<string[]>([]);
   /** いま入っている人の席のID。端末を覚えるときの目印にする */
   const [uid, setUid] = useState("");
   /** 知らない端末から入ったときに使う、確認用の6桁 */
@@ -223,7 +291,9 @@ export default function LoginPage() {
       setName(p.full_name);
       setGrade(p.grade);
       setClassCode(p.class_code);
+      setClassNo(p.class_no ?? 0);
       setSeat(p.seat_no ? String(p.seat_no) : "");
+      if (Array.isArray(p.dept_codes) && p.dept_codes.length > 0) setDepts(p.dept_codes);
 
       /*
        * 認証アプリが登録されているかは、席の情報の列ではなく
@@ -256,6 +326,7 @@ export default function LoginPage() {
       if (!name && typeof meta.full_name === "string") setName(meta.full_name);
       if (!grade && typeof meta.grade === "number") setGrade(meta.grade);
       if (!classCode && typeof meta.class_code === "string") setClassCode(meta.class_code);
+      if (!classNo && typeof meta.class_no === "number") setClassNo(meta.class_no);
       if (!seat && typeof meta.seat_no === "number") setSeat(String(meta.seat_no));
       if (!staffNo) {
         const fromRow = (p as unknown as { staff_no?: string }).staff_no ?? "";
@@ -272,17 +343,29 @@ export default function LoginPage() {
        */
       /*
        * 大学の情報が入っているか。身分によって、要るものが違う。
-       *   学生         学年・クラス・名列番号
-       *   教授・その他   8桁の番号
+       *   学生   学年・学科・クラス・名列番号
+       *   教授   8桁の番号・担当学科
+       *   その他  8桁の番号
+       *
+       * クラスと担当学科はあとから足した欄。前に申請した人は
+       * まだ入れていないので、ここで足りないと見なされ、
+       * もう一度この段に戻ってくる。訊き直すのが目的なので、それでよい。
+       *
+       * ただし列そのものが無いとき（SQL をまだ流していないとき）は、
+       * 訊きようがないので足りているものとして扱う。
+       * そうしないと、埋めても先へ進めない画面になってしまう。
        */
       const affNow =
         (typeof meta.affiliation === "string" ? meta.affiliation : "") ||
         ((p as unknown as { affiliation?: string }).affiliation ?? "student");
       const staffNow = (p as unknown as { staff_no?: string }).staff_no ?? "";
+      const hasClassNo = "class_no" in (p as object);
+      const hasDepts = "dept_codes" in (p as object);
       const infoDone =
         affNow === "student"
-          ? !!(p.grade && p.class_code && p.seat_no)
-          : staffNow.length === 8;
+          ? !!(p.grade && p.class_code && p.seat_no) && (!hasClassNo || !!p.class_no)
+          : staffNow.length === 8 &&
+            (affNow !== "teacher" || !hasDepts || (p.dept_codes ?? []).length > 0);
 
       if (!hasFactor) {
         // まだ認証アプリが無い人は、承認済みでも登録から。
@@ -333,15 +416,21 @@ export default function LoginPage() {
   /**
    * 大学の情報。本人確認のあとに訊く段。
    *
-   * 学生には 学年・クラス・名列番号。
-   * 教授とその他には 8桁の番号。訊くものが違うので、
+   * 学生には 学年・学科・クラス・名列番号。
+   * 教授には 8桁の番号と担当学科。
+   * その他には 8桁の番号だけ。訊くものが違うので、
    * 「埋まったか」の見方も分ける。
    */
   const seatNum = Number(seat);
   const asksClass = needsClassInfo(affiliation);
+  const asksDepts = needsDepts(affiliation);
   const canInfo = asksClass
-    ? !!grade && !!classCode && seat.length > 0 && checkSeat(seatNum) === null
-    : staffNo.trim().length === 8;
+    ? !!grade &&
+      !!classCode &&
+      checkClassNo(classNo) === null &&
+      seat.length > 0 &&
+      checkSeat(seatNum) === null
+    : staffNo.trim().length === 8 && (!asksDepts || depts.length > 0);
 
   /**
    * 席を作り、本人確認へ進む。
@@ -469,7 +558,8 @@ export default function LoginPage() {
    * 席はもうできているので、控え（user_metadata）を経由せず
    * profiles へ直に書く。書けたらパスワードの段へ進む。
    *
-   * 学生には学年・クラス・名列番号、教授とその他には8桁の番号。
+   * 学生には学年・学科・クラス・名列番号、
+   * 教授には8桁の番号と担当学科、その他には8桁の番号。
    * 訊いていないほうは空のままにする。空にしておくと、
    * 名簿との突き合わせで「入っていない」と分かる。
    */
@@ -483,23 +573,25 @@ export default function LoginPage() {
       const id = u.user?.id ?? "";
       if (!id) throw new Error("ログインしていません");
 
-      const patch = asksClass
-        ? { grade, class_code: classCode, seat_no: seatNum, staff_no: "" }
-        : { grade: 0, class_code: "", seat_no: null, staff_no: staffNo.trim() };
+      const patch: Record<string, unknown> = asksClass
+        ? {
+            grade,
+            class_code: classCode,
+            class_no: classNo,
+            seat_no: seatNum,
+            staff_no: "",
+            dept_codes: [],
+          }
+        : {
+            grade: 0,
+            class_code: "",
+            class_no: 0,
+            seat_no: null,
+            staff_no: staffNo.trim(),
+            dept_codes: asksDepts ? depts : [],
+          };
 
-      const { error } = await supabase.from("profiles").update(patch).eq("id", id);
-      if (error) {
-        /*
-         * staff_no の列は 11_roster.sql で足したもの。
-         * 画面を先に配って SQL を後から流すと、そのあいだ列が無い。
-         * そこで止めると申請そのものが出せなくなるので、
-         * 列が無いと言われたときだけ、その一つを外してもう一度送る。
-         */
-        if (!/staff_no/i.test(error.message)) throw error;
-        const { staff_no: _drop, ...rest } = patch;
-        const { error: again } = await supabase.from("profiles").update(rest).eq("id", id);
-        if (again) throw again;
-      }
+      await updateProfile(supabase, id, patch);
       await reload();
       setStep("password");
     } catch (e) {
@@ -542,6 +634,8 @@ export default function LoginPage() {
       const gradeV = grade || (typeof meta.grade === "number" ? meta.grade : 0);
       const classV =
         classCode || (typeof meta.class_code === "string" ? meta.class_code : "");
+      const classNoV =
+        classNo || (typeof meta.class_no === "number" ? meta.class_no : 0);
       const seatV =
         Number(seat) || (typeof meta.seat_no === "number" ? meta.seat_no : 0);
       const nameV =
@@ -555,33 +649,24 @@ export default function LoginPage() {
        * ここでもう一度書くのは、途中で閉じて戻ってきた人のため。
        * 空で上書きしないよう、入っているものだけを送る。
        */
-      const base: Record<string, unknown> = { full_name: nameV };
+      const base: Record<string, unknown> = { full_name: nameV, affiliation: affV };
       if (asksClass) {
         if (gradeV) base.grade = gradeV;
         if (classV) base.class_code = classV;
+        if (classNoV) base.class_no = classNoV;
         if (seatV) base.seat_no = seatV;
       } else if (staffNo.trim().length === 8) {
         base.staff_no = staffNo.trim();
+        if (asksDepts && depts.length > 0) base.dept_codes = depts;
       }
       const id = u.user?.id ?? "";
 
       /*
-       * 身分の列は 016 で足したもの。
-       *
-       * 画面を先に配って SQL を後から流すと、そのあいだ列が無い。
-       * そこで落とすと、申請そのものが出せなくなる。
-       * 列が無いと言われたときだけ、身分を外してもう一度送る。
-       * 申請が通ることのほうが大事で、身分はあとから訊けばよい。
+       * 身分・クラス・担当学科の列は、あとから足したもの。
+       * まだ無いときは、その列だけ外して書き込む（updateProfile）。
+       * 申請が通ることのほうが大事で、足りないぶんはあとから訊ける。
        */
-      const { error: e2 } = await supabase
-        .from("profiles")
-        .update({ ...base, affiliation: affV })
-        .eq("id", id);
-      if (e2) {
-        if (!/affiliation/i.test(e2.message)) throw e2;
-        const { error: e3 } = await supabase.from("profiles").update(base).eq("id", id);
-        if (e3) throw e3;
-      }
+      await updateProfile(supabase, id, base);
 
       setPw("");
       await reload();
@@ -662,6 +747,77 @@ export default function LoginPage() {
   const signOut = async () => {
     await createClient().auth.signOut();
     location.reload();
+  };
+
+  /* ---------------- パスワードを忘れたとき ---------------- */
+
+  /**
+   * 認証アプリで本人だと示して、パスワードを入れ直す。
+   *
+   * ここではまだ何も確かめられない。パスワードが分からないので
+   * ログインできず、ログインできないと認証アプリも呼べないため。
+   * 確かめるのはサイトの内側（/api/password）。
+   * こちらは、打ってもらったものを渡して、返事を出すだけ。
+   *
+   * 通ったら、そのまま新しいパスワードでログインする。
+   * もう一度打たせると、いま決めたばかりのものを打ち直させることになる。
+   */
+  const resetPassword = async () => {
+    setMsg(null);
+    if (!email.trim()) {
+      setMsg({ kind: "err", text: T("メールアドレスを入れてください") });
+      return;
+    }
+    if (!/^\d{6}$/.test(forgotCode)) {
+      setMsg({ kind: "err", text: T("6桁の数字を入れてください") });
+      return;
+    }
+    const err = checkPassword(forgotPw);
+    if (err) {
+      setMsg({ kind: "err", text: T(err) });
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await fetch("/api/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim(),
+          code: forgotCode,
+          password: forgotPw,
+        }),
+      });
+      const out = (await res.json().catch(() => null)) as
+        | { ok?: boolean; message?: string }
+        | null;
+      if (!res.ok || !out?.ok) {
+        setMsg({ kind: "err", text: T(out?.message ?? "入れ直せませんでした") });
+        return;
+      }
+
+      // 決めたばかりのもので、そのまま入る
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: forgotPw,
+      });
+      setForgotCode("");
+      setForgotPw("");
+      setForgotOpen(false);
+      if (error) {
+        // 入れ直しは済んでいる。あとは打ってもらえばよい
+        setMsg({ kind: "ok", text: T("新しいパスワードにしました。ログインしてください。") });
+        return;
+      }
+      await reload();
+      setMsg({ kind: "ok", text: T("新しいパスワードにしました。") });
+    } catch {
+      setMsg({ kind: "err", text: T("サーバーに接続できません。") });
+    } finally {
+      setBusy(false);
+    }
   };
 
   /* ---------------- 表示 ---------------- */
@@ -766,7 +922,8 @@ export default function LoginPage() {
             step={step}
             me={me}
             {...{ mfa, code, setCode, enroll, verifyMfa, pw, setPw, finish, busy }}
-            {...{ lang, asksClass, grade, setGrade, classCode, setClassCode }}
+            {...{ lang, asksClass, asksDepts, grade, setGrade, classCode, setClassCode }}
+            {...{ classNo, setClassNo, depts, setDepts }}
             {...{ seat, setSeat, staffNo, setStaffNo, canInfo, saveInfo }}
           />
         ) : (
@@ -842,6 +999,67 @@ export default function LoginPage() {
           >
             {busy ? T("処理中…") : T("ログイン")}
           </button>
+
+          {/*
+            パスワードを忘れたとき。
+
+            ふだんは畳んでおく。ログインの欄と並べると、
+            どちらに打てばよいのかで迷わせる。
+          */}
+          <button
+            onClick={() => {
+              setForgotOpen((v) => !v);
+              setMsg(null);
+            }}
+            className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-100"
+          >
+            {forgotOpen ? T("閉じる") : T("パスワードを忘れた")}
+          </button>
+
+          {forgotOpen && (
+            <div className="mt-1 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+              <p className="text-[11px] leading-relaxed text-slate-600">
+                {T("申請のときに登録した")}
+                <b>{T("認証アプリ")}</b>
+                {T("で、もう一度本人確認をします。")}
+                <br />
+                {T("上のメールアドレスを入れたうえで、アプリに出ている6桁と、新しいパスワードを入れてください。")}
+              </p>
+
+              <input
+                value={forgotCode}
+                onChange={(e) => setForgotCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                inputMode="numeric"
+                placeholder={T("アプリに出た6桁")}
+                className={`${inputCls} mt-2 bg-white text-center text-lg tracking-[0.4em]`}
+              />
+              <input
+                value={forgotPw}
+                onChange={(e) => setForgotPw(e.target.value.slice(0, PASSWORD_MAX))}
+                type="password"
+                placeholder={`${T("新しいパスワード")}（${PASSWORD_MIN}〜${PASSWORD_MAX}）`}
+                autoComplete="new-password"
+                className={`${inputCls} mt-2 bg-white`}
+              />
+              {forgotPw.length > 0 && checkPassword(forgotPw) && (
+                <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">
+                  {T(checkPassword(forgotPw) ?? "")}
+                </p>
+              )}
+
+              <button
+                onClick={() => void resetPassword()}
+                disabled={busy || forgotCode.length !== 6 || !!checkPassword(forgotPw)}
+                className="mt-2 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {busy ? T("確認中…") : T("本人確認して、入れ直す")}
+              </button>
+
+              <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+                {T("認証アプリを消してしまった・端末を替えた場合は、ここからは入れ直せません。管理者にお知らせください。")}
+              </p>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -878,7 +1096,11 @@ export default function LoginPage() {
               T("身分（学生・教授・その他）"),
               T("メールアドレスと氏名"),
               T("Microsoft Authenticator で本人確認"),
-              asksClass ? T("学年・クラス・名列番号") : T("8桁の番号"),
+              asksClass
+                ? T("学年・学科・クラス・名列番号")
+                : asksDepts
+                  ? T("8桁の番号と担当学科")
+                  : T("8桁の番号"),
               T("パスワードを決めて申請"),
             ].map((label, i) => (
               <li key={label} className={signupStep === i + 1 ? "font-bold text-slate-900" : ""}>
@@ -1019,10 +1241,15 @@ function Wizard(props: {
   /* 大学の情報の段（本人確認のあと） */
   lang: Lang;
   asksClass: boolean;
+  asksDepts: boolean;
   grade: number;
   setGrade: (v: number) => void;
   classCode: string;
   setClassCode: (v: string) => void;
+  classNo: number;
+  setClassNo: (v: number) => void;
+  depts: string[];
+  setDepts: (v: string[]) => void;
   seat: string;
   setSeat: (v: string) => void;
   staffNo: string;
@@ -1095,11 +1322,22 @@ function Wizard(props: {
 
   /* 大学の情報。本人確認のあとに訊く */
   if (step === "info") {
-    const { lang, asksClass, grade, setGrade, classCode, setClassCode } = props;
+    const { lang, asksClass, asksDepts, grade, setGrade, classCode, setClassCode } = props;
+    const { classNo, setClassNo, depts, setDepts } = props;
     const { seat, setSeat, staffNo, setStaffNo, canInfo, saveInfo } = props;
     return (
       <div className="mt-4">
-        <Head n={4} total={5} text={asksClass ? T("学年・クラス・名列番号") : T("8桁の番号")} />
+        <Head
+          n={4}
+          total={5}
+          text={
+            asksClass
+              ? T("学年・学科・クラス・名列番号")
+              : asksDepts
+                ? T("8桁の番号と担当学科")
+                : T("8桁の番号")
+          }
+        />
 
         {asksClass ? (
           <>
@@ -1112,7 +1350,7 @@ function Wizard(props: {
               ))}
             </div>
 
-            <Label>{T("クラス")}</Label>
+            <Label>{T("学科")}</Label>
             <div className="grid grid-cols-4 gap-1.5">
               {CLASS_CODES.map((c) => (
                 <Pick
@@ -1127,9 +1365,18 @@ function Wizard(props: {
             </div>
             {classCode && (
               <p className="mt-1 text-[10px] text-slate-500">
-                {CLASS_CODES.find((c) => c.code === classCode)?.name}
+                {T(CLASS_CODES.find((c) => c.code === classCode)?.name ?? "")}
               </p>
             )}
+
+            <Label>{T("クラス")}</Label>
+            <div className="grid grid-cols-5 gap-1.5">
+              {CLASS_NOS.map((n) => (
+                <Pick key={n} on={classNo === n} onClick={() => setClassNo(n)}>
+                  {n}
+                </Pick>
+              ))}
+            </div>
 
             <Label>{T("名列番号")}</Label>
             <input
@@ -1159,6 +1406,8 @@ function Wizard(props: {
                 {T("8桁で入れてください")}（{staffNo.length}）
               </p>
             )}
+
+            {asksDepts && <DeptPicker t={T} depts={depts} setDepts={setDepts} />}
           </>
         )}
 
@@ -1246,6 +1495,76 @@ function Pick({
 }
 
 /** 見出し。段の番号は、申請の途中の人にだけ出す */
+/**
+ * 教授の担当学科を、いくつでも選べる欄。
+ *
+ * ■ 見た目
+ *   選んだぶんだけ欄が並び、その下にいつも空の欄が一つある。
+ *   空の欄で学科を選ぶと、それが確定して、また新しい空の欄が出る。
+ *   「＋」を押させないのは、押し忘れて一つしか入らないのを避けるため。
+ *
+ *   すでに選んだ学科は、ほかの欄の選択肢から消す。
+ *   同じ学科を二つ入れても意味が無く、名簿にもそのまま並んでしまう。
+ *
+ * ■ 上限
+ *   名簿の I〜N 列と同じ 6 つまで（DEPT_MAX）。
+ *   それより多いと、名簿へ写せない。埋まったら空の欄を出さない。
+ */
+function DeptPicker({
+  t: T,
+  depts,
+  setDepts,
+}: {
+  t: (ja: string) => string;
+  depts: string[];
+  setDepts: (v: string[]) => void;
+}) {
+  // 選んだもの＋空の欄一つ。上限まで埋まったら、空の欄は出さない
+  const rows = depts.length < DEPT_MAX ? [...depts, ""] : depts;
+
+  const change = (i: number, code: string) => {
+    const next = [...depts];
+    if (code === "") next.splice(i, 1); // 「外す」を選んだ
+    else if (i < next.length) next[i] = code; // 選び直した
+    else next.push(code); // 空の欄で選んだ。ここで一つ増える
+    setDepts(next);
+  };
+
+  return (
+    <>
+      <Label>{T("担当学科")}</Label>
+      <p className="mb-1 pl-1 text-[10px] leading-relaxed text-slate-500">
+        {T("担当している学科を選んでください。いくつでも入れられます。")}
+      </p>
+      <div className="grid gap-1.5">
+        {rows.map((code, i) => (
+          <select
+            key={i}
+            value={code}
+            onChange={(e) => change(i, e.target.value)}
+            className={inputCls}
+          >
+            <option value="">{code ? T("（外す）") : T("学科を選ぶ")}</option>
+            {CLASS_CODES.filter(
+              // ほかの欄で選んだものは出さない。自分がいま選んでいるものは残す
+              (c) => c.code === code || !depts.includes(c.code),
+            ).map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code}　{T(c.name)}
+              </option>
+            ))}
+          </select>
+        ))}
+      </div>
+      {depts.length === 0 && (
+        <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">
+          {T("一つ以上選んでください")}
+        </p>
+      )}
+    </>
+  );
+}
+
 function Head({ n, total, text }: { n?: number; total?: number; text: string }) {
   return (
     <div className="flex items-center gap-2">

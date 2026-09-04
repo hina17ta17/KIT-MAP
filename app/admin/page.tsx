@@ -4,8 +4,13 @@
  * 承認と権限の管理。
  *
  * ■ 二つの見方
- *   新規 … まだ承認していない人
- *   既存 … すでに使っている人。年・クラスで絞って見る
+ *   申請してきた人 … まだ権限が付いていない人。全員ここに出る
+ *   既存           … すでに使っている人。学年・学科で絞って見る
+ *
+ *   まだ本人確認や所属の記入が済んでいない人も、申請の一覧に出す。
+ *   以前は別の欄に分けていたが、申請したはずの人が見当たらず、
+ *   届いていないように見えた。出したうえで、その人には権限を
+ *   付けられないようにしてある（一覧の ready）。
  *
  * ■ 権限はその人の欄で変える
  *   以前は画面の下に固定のボタンを置き、選んでから押す形だった。
@@ -55,9 +60,14 @@ type Row = {
   role: Role;
   full_name: string;
   grade: number;
+  /** 学科の記号。列の名前は昔のまま */
   class_code: string;
+  /** クラス（1〜10）。まだ入れていない人は 0 */
+  class_no: number;
   group_no: number;
   seat_no: number;
+  /** 教授が申請で入れた担当学科 */
+  dept_codes: string[] | null;
   verified: boolean;
   created_at: string;
   /**
@@ -88,6 +98,23 @@ const ASSIGNABLE: Role[] = [
  */
 const HIDDEN: Role = "admin_l3";
 
+/**
+ * 消せない権限。
+ *
+ * 副管理者（2.1・2.2）と、いちばん上。
+ * リセットの選択肢にも並べないし、選ばれても消さない。
+ *
+ * 承認できる人がいなくなると、誰も入れないままアプリが止まる。
+ * この三つを消したいときは、先に権限を下げてから。
+ * 二手かかるが、押し間違いで戻せなくなるほうが困る。
+ * 守っているのはデータベース側（reset_by_roles）で、
+ * ここは並べないためのもの。
+ */
+const PROTECTED: Role[] = ["admin_l21", "admin_l22", "admin_l3"];
+
+/** リセットで選べる身分。上から、弱いものの順に並べる */
+const RESETTABLE: Role[] = ["pending", "student", "admin_l0", "admin_l1", "admin_l2"];
+
 const SHORT = ROLE_SHORT;
 
 export default function AdminPage() {
@@ -98,7 +125,15 @@ export default function AdminPage() {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [tab, setTab] = useState<"new" | "setup" | "existing">("new");
+  /**
+   * どちらの一覧を見ているか。
+   *
+   * 以前は「申請」と「手続き中」を分けていた。分ける理由はあったが、
+   * 申請した人が「申請」に出てこないことがあり、届いていないように見えた。
+   * いまは申請してきた人をひとまとめに出し、
+   * まだ手続きの途中の人には印を付けて見分ける。
+   */
+  const [tab, setTab] = useState<"new" | "existing">("new");
   /**
    * リセットの一式を開いているか。
    *
@@ -108,6 +143,8 @@ export default function AdminPage() {
   const [resetOpen, setResetOpen] = useState(false);
   /** チェックを入れた人 */
   const [picked, setPicked] = useState<string[]>([]);
+  /** リセット選択で印を付けた身分。ここに入っている身分の人をまとめて消す */
+  const [pickedRoles, setPickedRoles] = useState<Role[]>([]);
   /** 既存を変えるときの本人確認。一度打てば、この画面にいる間は覚えておく */
   const [password, setPassword] = useState("");
   /**
@@ -151,142 +188,16 @@ export default function AdminPage() {
     void load();
   }, [load]);
 
-  /**
-   * 全員を最初からやり直させる。
+  /*
+   * 以前ここにあった三つの消し方（学生と申請者／管理者も含めて全部／
+   * 身分ごと）は、一つの「リセット選択」にまとめた。
+   * どれがどこまで消すのかを押す前に読み解く必要があり、
+   * 取り違えると戻せなかったため。いまは印を付けて消す（下の resetRoles）。
    *
-   * ログイン・パスワード・本人確認・所属が消え、申請の最初に戻る。
-   * 取り返しがつかないので、二度たずねてから実行する。
-   * 一度目は何が消えるかを並べ、二度目は人数を出して念を押す。
+   * データベース側の関数（reset_everyone / reset_everything /
+   * reset_by_affiliation）は消していない。画面からは呼ばないが、
+   * どうしようもなくなったときに SQL から使える道は残しておく。
    */
-  const resetAll = async () => {
-    setMsg(null);
-    const target = listed.filter((r) => r.role === "pending" || r.role === "student").length;
-    const first = window.confirm(
-      [
-        "全員を最初からやり直させます。",
-        "",
-        "次のものが、学生と申請者から消えます（管理者は全員残ります）。",
-        "  ・ログイン中の状態",
-        "  ・パスワード",
-        "  ・本人確認（認証アプリ）",
-        "  ・氏名・学年・クラス・名列番号",
-        "  ・承認した権限",
-        "",
-        "消された人は、申請の最初からやり直しになります。",
-        "元には戻せません。",
-        "",
-        "続けますか？",
-      ].join("\n"),
-    );
-    if (!first) return;
-
-    const second = window.confirm(
-      [
-        `本当に実行しますか？（${target} 名が消えます）`,
-        "",
-        "これが最後の確認です。押すと元に戻せません。",
-        "承認済みの人も、もう一度申請と承認が要ります。",
-      ].join("\n"),
-    );
-    if (!second) return;
-
-    setBusy(true);
-    try {
-      const { data, error } = await createClient().rpc("reset_everyone");
-      if (error) throw error;
-      setPicked([]);
-      setOpen(null);
-      await load();
-      setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。全員が申請からやり直しになります。` });
-    } catch (e) {
-      setMsg({
-        kind: "err",
-        text:
-          e instanceof Error
-            ? e.message + "（supabase/reset_all.sql をまだ入れていない場合は、先に入れてください）"
-            : String(e),
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /**
-   * すべての席を消す。管理者も含む。
-   *
-   * さきの resetAll は管理者を残すが、こちらは残さない。
-   * 押した本人も消えるので、その場でログアウトされる。
-   *
-   * 承認できる人が誰もいなくなるので、あとで
-   * supabase/set_admin.sql を流して作り直す必要がある。
-   * そのことを、二度の確認の両方で伝える。
-   */
-  const resetEverything = async () => {
-    setMsg(null);
-    const total = rows.length;
-    const first = window.confirm(
-      [
-        "管理者も含めて、すべての席を消します。",
-        "",
-        "消えるもの",
-        "  ・ログイン中の状態",
-        "  ・パスワード",
-        "  ・本人確認（認証アプリ）",
-        "  ・氏名・学年・クラス・名列番号",
-        "  ・権限（管理者を含む）",
-        "",
-        "残るのは、いちばん上の権限の人だけです。",
-        "副管理者（2.1・2.2）も消えます。",
-        "あなたがいちばん上でなければ、あなたも消えてログアウトされます。",
-        "",
-        "続けますか？",
-      ].join("\n"),
-    );
-    if (!first) return;
-
-    const second = window.confirm(
-      [
-        `本当に実行しますか？（${total} 名すべてが消えます）`,
-        "",
-        "これが最後の確認です。押すと元に戻せません。",
-        "",
-        "いちばん上の権限の人だけが残ります。",
-        "その人がいなければ、set_admin.sql で作り直す必要があります。",
-      ].join("\n"),
-    );
-    if (!second) return;
-
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase.rpc("reset_everything");
-      if (error) throw error;
-      // 自分の席も消えている。控えを捨ててから入口へ戻す
-      // 自分がいちばん上なら残っている。読み直して確かめる
-      const { data: u } = await supabase.auth.getUser();
-      if (u.user) {
-        setPicked([]);
-        setOpen(null);
-        await load();
-        setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。あなたの席は残っています。` });
-        setBusy(false);
-        return;
-      }
-      await supabase.auth.signOut().catch(() => undefined);
-      window.alert(`${data ?? 0} 名を消しました。ログイン画面へ戻ります。`);
-      window.location.href = "/login";
-    } catch (e) {
-      setMsg({
-        kind: "err",
-        text:
-          e instanceof Error
-            ? e.message +
-              "（supabase/reset_all_including_admin.sql をまだ入れていない場合は、先に入れてください）"
-            : String(e),
-      });
-      setBusy(false);
-    }
-  };
 
   /**
    * 身分を直す。
@@ -325,41 +236,55 @@ export default function AdminPage() {
   };
 
   /**
-   * 選んだ身分の人を、まとめて消す。
+   * 選んだ身分の人を、まとめて消す（リセット選択）。
    *
-   * 身分は自己申告なので、管理者が「教授」を選んでいることもある。
-   * 巻き込む人数を数えて、確認のときにそのまま見せる。
+   * 以前は「学生と申請者」「いちばん上を除く全員」「身分ごと」と
+   * 別々のボタンに分かれていた。どれがどこまで消すのかを
+   * 押す前に読み解かないと分からず、取り違えると戻せない。
+   * いまは消したい身分に印を付けて、一度に消す。
+   *
+   * ★副管理者（2.1・2.2）と管理者は、そもそも選べない。
+   *   消したいときは、先に権限を下げてから。二手かかるが、
+   *   押し間違いで承認できる人がいなくなるほうが困る。
    */
-  const resetAffiliation = async (a: Affiliation) => {
+  const resetRoles = async () => {
     setMsg(null);
+    if (pickedRoles.length === 0) return;
+
     const targets = rows.filter(
-      (r) => (r.affiliation ?? "student") === a && r.role !== "admin_l3",
+      (r) => pickedRoles.includes(r.role) && !PROTECTED.includes(r.role),
     );
     if (targets.length === 0) {
-      setMsg({ kind: "err", text: `「${AFFILIATION_LABEL[a]}」の人がいません` });
+      setMsg({ kind: "err", text: T("その身分の人がいません") });
       return;
     }
-    const admins = targets.filter((r) => r.role.startsWith("admin_"));
 
+    const names = targets.map((r) => r.full_name || r.email).slice(0, 12);
     const first = window.confirm(
       [
-        `身分が「${AFFILIATION_LABEL[a]}」の ${targets.length} 名を消します。`,
+        `選んだ身分の ${targets.length} 名を消します。`,
         "",
-        ...(admins.length > 0
-          ? [
-              `※ この中に管理者が ${admins.length} 名います。`,
-              ...admins.slice(0, 8).map((r) => `    ・${r.full_name || r.email}（${ROLE_LABEL[r.role]}）`),
-              "  身分は本人が選んだものなので、権限とは関わりなく消えます。",
-              "",
-            ]
-          : []),
-        "この人たちから、ログイン・パスワード・本人確認・大学の情報が",
-        "すべて消え、申請の最初からやり直しになります。元には戻せません。",
+        ...pickedRoles.map(
+          (r) => `  ・${ROLE_LABEL[r]}（${targets.filter((x) => x.role === r).length} 名）`,
+        ),
         "",
-        "いちばん上の権限の人と、あなた自身は残ります。",
+        "この人たちから、次のものが消えます。",
+        "  ・ログイン中の状態",
+        "  ・パスワード",
+        "  ・本人確認（認証アプリ）",
+        "  ・氏名・学年・学科・クラス・名列番号",
+        "  ・承認した権限",
+        "",
+        ...names.map((n) => "  " + n),
+        targets.length > names.length ? `  ほか ${targets.length - names.length} 名` : "",
+        "",
+        "副管理者（2.1・2.2）と管理者、そしてあなた自身は残ります。",
+        "申請の最初からやり直しになります。元には戻せません。",
         "",
         "続けますか？",
-      ].join("\n"),
+      ]
+        .filter((s) => s !== "")
+        .join("\n"),
     );
     if (!first) return;
 
@@ -374,12 +299,13 @@ export default function AdminPage() {
 
     setBusy(true);
     try {
-      const { data, error } = await createClient().rpc("reset_by_affiliation", {
-        p_affiliation: a,
+      const { data, error } = await createClient().rpc("reset_by_roles", {
+        p_roles: pickedRoles,
         p_password: password || null,
       });
       if (error) throw error;
       setPicked([]);
+      setPickedRoles([]);
       setOpen(null);
       await load();
       setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。` });
@@ -388,8 +314,7 @@ export default function AdminPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? e.message +
-              "（supabase/migrations/017_reset_by_affiliation.sql をまだ入れていない場合は、先に入れてください）"
+            ? e.message + "（base/06_admin.sql をまだ入れ直していない場合は、先に入れてください）"
             : String(e),
       });
     } finally {
@@ -400,9 +325,9 @@ export default function AdminPage() {
   /**
    * 印を付けた人だけを消す。
    *
-   * 上の二つは「全員」しか選べない。一人だけ入り直させたい場面のために、
-   * 選んだ人だけを対象にできる道を作る。
-   * 強さは全員リセットと変わらないので、確認は同じく二度たずねる。
+   * 上のものは身分でまとめて選ぶ。一人だけ入り直させたい場面のために、
+   * 選んだ人だけを対象にできる道も残してある。
+   * 強さは変わらないので、確認は同じく二度たずねる。
    */
   const resetPicked = async () => {
     setMsg(null);
@@ -496,28 +421,32 @@ export default function AdminPage() {
     ((r.affiliation ?? "student") !== "student" ||
       (!!r.grade && !!r.class_code && !!r.seat_no));
 
-  /** 本人確認と所属が済み、承認を待っている人 */
-  const news = useMemo(
-    () => listed.filter((r) => r.role === "pending" && isApplied(r)),
-    [listed],
-  );
-  /** 席は作ったが、まだ手続きの途中の人。承認の対象にはしない */
-  const setup = useMemo(
-    () => listed.filter((r) => r.role === "pending" && !isApplied(r)),
-    [listed],
-  );
+  /**
+   * 申請してきた人。まだ権限が付いていない人を、全員ここに出す。
+   *
+   * 以前は「本人確認と所属が済んだ人」だけを出し、途中の人は別の欄にしていた。
+   * 申請したはずの人が見当たらず、届いていないように見えるので一つにした。
+   * 承認できるかどうかは、その人の行で見分ける（isApplied）。
+   *
+   * 出そろった人を上に置く。下へ行くほど、まだ待つ人になる。
+   */
+  const news = useMemo(() => {
+    const p = listed.filter((r) => r.role === "pending");
+    return [...p].sort((a, b) => Number(isApplied(b)) - Number(isApplied(a)));
+  }, [listed]);
+  /** そのうち、まだ手続きの途中の人。数を出すのに使う */
+  const waiting = useMemo(() => news.filter((r) => !isApplied(r)), [news]);
   const existing = useMemo(() => listed.filter((r) => r.role !== "pending"), [listed]);
 
   const shown = useMemo(() => {
     if (tab === "new") return news;
-    if (tab === "setup") return setup;
     return existing.filter(
       (r) =>
         (fGrade === null || r.grade === fGrade) &&
         (fClass === null || r.class_code === fClass) &&
         (fGroup === null || r.group_no === fGroup),
     );
-  }, [tab, news, setup, existing, fGrade, fClass, fGroup]);
+  }, [tab, news, existing, fGrade, fClass, fGroup]);
 
   /**
    * 権限を付ける。
@@ -590,12 +519,11 @@ export default function AdminPage() {
       <AdminHeader title={T("承認・権限の管理")} />
       <AdminMenu current="approve" role={myRole} />
 
-      {/* 申請 / 手続き中 / 既存 */}
+      {/* 申請してきた人 / 既存 */}
       <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1">
         {([
-          ["new", `申請（${news.length}）`],
-          ["setup", `手続き中（${setup.length}）`],
-          ["existing", `既存（${existing.length}）`],
+          ["new", `${T("申請してきた人")}（${news.length}）`],
+          ["existing", `${T("既存")}（${existing.length}）`],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -613,15 +541,18 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {/* 手続き中の説明。承認できないのが故障に見えないように */}
-      {tab === "setup" && (
+      {/* まだ手続きの途中の人がいるときだけ、なぜ承認できないかを書く */}
+      {tab === "new" && waiting.length > 0 && (
         <div className="mb-3 rounded-xl bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
-          {T("メールアドレスと氏名は入れたものの、")}
-          <b>{T("まだ本人確認か所属の記入が済んでいない人")}</b>です。
+          {T("この中の")}
+          <b>
+            {waiting.length}
+            {T("名は、まだ本人確認か所属の記入が済んでいません")}
+          </b>
+          。
           <br />
-          {T("本人だと確かめられていないので、ここからは権限を付けられません。")}
-          {T("本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると、")}
-          {T("「申請」に移ります。")}
+          {T("本人だと確かめられていないので、その人には権限を付けられません。")}
+          {T("本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると承認できるようになります。")}
         </div>
       )}
 
@@ -630,22 +561,24 @@ export default function AdminPage() {
         <div className="mb-3 rounded-xl bg-slate-50 p-2.5">
           <Filter label="学年" value={fGrade} onPick={setFGrade} options={GRADES.map((g) => [g, `${g}年`])} />
           <Filter
-            label="クラス"
+            label="学科"
             value={fClass}
             onPick={setFClass}
             options={CLASS_CODES.map((c) => [c.code, c.code])}
           />
           {/* 名列番号は200通りあるので、並べて絞り込む形にはしない。
-              学年とクラスで絞ったうえで、一覧から探す */}
+              学年と学科で絞ったうえで、一覧から探す */}
         </div>
       )}
 
       <p className="mb-2 text-[11px] text-slate-500">
-        {shown.length} 名
-        <span className="ml-2 text-slate-400">
-          {tab === "setup" ? "本人確認が済むと「申請」に移ります" : "名前を押すと権限を変えられます"}
-        </span>
-        {picked.length > 0 && <b className="ml-2 text-blue-700">{picked.length} 名に印</b>}
+        {shown.length} {T("名")}
+        <span className="ml-2 text-slate-400">{T("名前を押すと権限を変えられます")}</span>
+        {picked.length > 0 && (
+          <b className="ml-2 text-blue-700">
+            {picked.length} {T("名に印")}
+          </b>
+        )}
       </p>
 
       {/* 一覧 */}
@@ -655,6 +588,14 @@ export default function AdminPage() {
           const here = open === r.id;
           /* すでに承認した人を触るときは、本人のログインパスワードが要る（データベース側の決まり） */
           const needsPw = r.role !== "pending";
+          /*
+           * 権限を触れる相手か。
+           *
+           * 申請が出そろっていない人には触らせない。本人だと
+           * 確かめられていないので、承認してはいけない相手。
+           * 一覧には出す。届いていることは見えたほうがよい。
+           */
+          const ready = r.role !== "pending" || isApplied(r);
           return (
             <li key={r.id}>
               <div
@@ -669,8 +610,8 @@ export default function AdminPage() {
                 }`}
               >
                 {/* 印。まとめて変えたいときだけ使う。名前を押すのとは別の的にする。
-                    手続き中の人は承認の対象にしないので出さない */}
-                {tab !== "setup" && (
+                    手続きの途中の人は承認の対象にしないので出さない */}
+                {ready && (
                 <button
                   onClick={() => setPicked((p) => (on ? p.filter((x) => x !== r.id) : [...p, r.id]))}
                   aria-label={on ? "印を外す" : "印を付ける"}
@@ -684,7 +625,7 @@ export default function AdminPage() {
 
                 {/* 名前を押すと、その人の権限の欄が開く */}
                 <button
-                  onClick={() => tab !== "setup" && setOpen(here ? null : r.id)}
+                  onClick={() => ready && setOpen(here ? null : r.id)}
                   className="min-w-0 flex-1 text-left"
                 >
                   <span className="block truncate text-sm font-semibold text-slate-900">
@@ -720,14 +661,22 @@ export default function AdminPage() {
                     )}
                     {r.grade ? `${r.grade}年 ` : ""}
                     {r.class_code}
+                    {/* クラス（1〜10）。入れていない人には出さない */}
+                    {r.class_no ? `-${r.class_no}` : ""}
                     {r.seat_no ? ` ${r.seat_no}番` : r.group_no ? `-${r.group_no}` : ""}
+                    {/* 教授の担当学科。学生には無い */}
+                    {(r.dept_codes ?? []).length > 0 && (
+                      <span className="ml-2 text-slate-500">
+                        {T("担当")} {(r.dept_codes ?? []).join("・")}
+                      </span>
+                    )}
                     <span className="ml-2 rounded bg-slate-200 px-1 py-0.5 font-bold text-slate-700">
                       {SHORT[r.role]}
                     </span>
                   </span>
                 </button>
 
-                {tab !== "setup" && (
+                {ready && (
                   <span
                     className={`mt-1 shrink-0 text-slate-400 transition ${here ? "rotate-90" : ""}`}
                   >
@@ -737,7 +686,7 @@ export default function AdminPage() {
               </div>
 
               {/* その人の権限を変える欄。本人確認が済んでいない人には出さない */}
-              {here && tab !== "setup" && (
+              {here && ready && (
                 <div className="mt-1 rounded-xl bg-slate-900 p-2.5">
                   <div className="mb-1.5 text-[10px] font-bold text-slate-400">
                     {T("権限を変える")}
@@ -851,69 +800,60 @@ export default function AdminPage() {
       {resetOpen && (
         <>
       {/*
-        全員をやり直させる。取り返しがつかないので、
-        一覧のいちばん下に置き、色でも他と区別する。
+        リセット選択。
+
+        消したい身分に印を付けて、まとめて消す。
+        以前は「学生と申請者」「いちばん上を除く全員」「身分ごと」と
+        ボタンが分かれていて、どれがどこまで消すのかを
+        押す前に読み解かないと分からなかった。
+
+        副管理者（2.1・2.2）と管理者は、そもそも並べない。
+        消したいときは、先に権限を下げてから。
       */}
       <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3">
-        <div className="text-xs font-bold text-red-900">{T("学生と申請者をやり直させる")}</div>
+        <div className="text-xs font-bold text-red-900">{T("リセット選択")}</div>
         <p className="mt-1 text-[11px] leading-relaxed text-red-800">
-          {T("学生と申請者から、ログイン・パスワード・本人確認・氏名・学年・クラス・")}
-          名列番号が消えます。<b>{T("管理者（食堂・課外活動・教授・副管理者・管理者）は全員残ります。")}</b>
-          {T("消された人は申請の最初からやり直しです。元には戻せません。")}
+          {T("消したい身分に印を付けてください。印を付けたものは、まとめて消えます。")}
+          <br />
+          {T("その人たちから、ログイン・パスワード・本人確認・大学の情報がすべて消え、申請の最初からやり直しになります。元には戻せません。")}
+          <br />
+          <b>{T("副管理者（2.1・2.2）と管理者、そしてあなた自身は消えません。")}</b>
+          {T("この人たちを消すときは、先に権限を下げてください。")}
         </p>
-        <button
-          onClick={() => void resetAll()}
-          disabled={busy}
-          className="mt-2 w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
-        >
-          {busy
-            ? "処理中…"
-            : `学生・申請者（${listed.filter((r) => r.role === "pending" || r.role === "student").length} 名）をリセットする`}
-        </button>
-      </div>
 
-      {/*
-        こちらは管理者も含めて全部消す。上のものより強いので下に置き、
-        色もさらに濃くしてある。押すと自分もログアウトされる。
-      */}
-      <div className="mt-3 rounded-xl border-2 border-red-700 bg-red-100 p-3">
-        <div className="text-xs font-bold text-red-900">
-          {T("管理者も含めて、すべての席を消す")}
+        <div className="mt-2 flex flex-col gap-1.5">
+          {RESETTABLE.map((r) => {
+            const targets = listed.filter((x) => x.role === r);
+            const on = pickedRoles.includes(r);
+            return (
+              <button
+                key={r}
+                onClick={() =>
+                  setPickedRoles((prev) =>
+                    on ? prev.filter((x) => x !== r) : [...prev, r],
+                  )
+                }
+                disabled={busy || targets.length === 0}
+                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2.5 text-left text-xs font-bold transition active:scale-95 disabled:opacity-40 ${
+                  on ? "bg-red-600 text-white" : "bg-white text-slate-700 ring-1 ring-red-200"
+                }`}
+              >
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] ${
+                    on ? "bg-white text-red-600" : "bg-white text-transparent ring-1 ring-slate-300"
+                  }`}
+                >
+                  ✓
+                </span>
+                <span className="flex-1">{T(ROLE_LABEL[r])}</span>
+                <span className={on ? "text-red-100" : "text-slate-400"}>
+                  {targets.length} {T("名")}
+                </span>
+              </button>
+            );
+          })}
         </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-red-900">
-          申請の途中の人も、承認済みの人も、<b>{T("副管理者（2.1・2.2）も")}</b>消えます。
-          {T("パスワード・本人確認・大学の情報がすべて無くなり、ログインの最初から")}
-          {T("やり直しになります。")}
-          <br />
-          <b>{T("残るのは、いちばん上の権限の人だけです。")}</b>
-          {T("あなたがいちばん上でなければ、あなたも消えてログアウトされます。")}
-        </p>
-        <button
-          onClick={() => void resetEverything()}
-          disabled={busy}
-          className="mt-2 w-full rounded-lg bg-red-800 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-900 active:scale-95 disabled:bg-slate-300"
-        >
-          {busy
-            ? "処理中…"
-            : `いちばん上を除く全員（${rows.filter((r) => r.role !== "admin_l3").length} 名）を消す`}
-        </button>
-      </div>
 
-      {/*
-        身分ごとに消す。
-
-        身分は申請のときに本人が選んだもので、権限とは別物。
-        管理者が「教授」を選んでいることもあるので、
-        巻き込む人数はボタンの上に出し、確認のときにも名前を並べる。
-      */}
-      <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3">
-        <div className="text-xs font-bold text-red-900">{T("身分ごとに消す")}</div>
-        <p className="mt-1 text-[11px] leading-relaxed text-red-800">
-          申請のときに<b>{T("本人が選んだ身分")}</b>で選び出して消します。権限とは別のものなので、
-          {T("管理者が入っていることがあります。数はボタンに出しています。")}
-          <br />
-          {T("いちばん上の権限の人と、あなた自身は残ります。")}
-        </p>
         <input
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -922,25 +862,18 @@ export default function AdminPage() {
           autoComplete="current-password"
           className="mt-2 w-full rounded-xl bg-white px-4 py-2.5 text-sm outline-none ring-1 ring-red-200 focus:ring-2 focus:ring-blue-500"
         />
-        <div className="mt-2 flex flex-col gap-1.5">
-          {AFFILIATIONS.map((a) => {
-            const targets = rows.filter(
-              (r) => (r.affiliation ?? "student") === a.id && r.role !== "admin_l3",
-            );
-            const admins = targets.filter((r) => r.role.startsWith("admin_"));
-            return (
-              <button
-                key={a.id}
-                onClick={() => void resetAffiliation(a.id)}
-                disabled={busy || targets.length === 0}
-                className="w-full rounded-lg bg-red-600 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
-              >
-                {a.label}（{targets.length} 名
-                {admins.length > 0 ? `・うち管理者 ${admins.length} 名` : ""}）を消す
-              </button>
-            );
-          })}
-        </div>
+
+        <button
+          onClick={() => void resetRoles()}
+          disabled={busy || pickedRoles.length === 0}
+          className="mt-2 w-full rounded-lg bg-red-700 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-800 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+        >
+          {busy
+            ? T("処理中…")
+            : pickedRoles.length === 0
+              ? T("消す身分を選んでください")
+              : `${T("選んだ")} ${listed.filter((x) => pickedRoles.includes(x.role)).length} ${T("名を消す")}`}
+        </button>
       </div>
 
       {/*
