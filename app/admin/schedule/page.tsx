@@ -25,6 +25,7 @@ import {
   type Role,
 } from "@/lib/auth";
 import MultiDatePicker, { niceDate, todayYmd } from "@/components/MultiDatePicker";
+import { dayColor, holidayName } from "@/lib/holidays";
 
 type Kind = "class" | "event" | "activity";
 
@@ -1804,27 +1805,39 @@ function MiniCalendar({ dates }: { dates: string[] }) {
               {y}年 {m}月<span className="ml-1 font-normal text-slate-400">（{n}日）</span>
             </div>
             <div className="mt-0.5 grid grid-cols-7 gap-0.5">
-              {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
-                <div key={w} className="text-center text-[8px] font-bold text-slate-300">
+              {["日", "月", "火", "水", "木", "金", "土"].map((w, i) => (
+                <div
+                  key={w}
+                  className={`text-center text-[8px] font-bold ${
+                    i === 0 ? "text-red-300" : i === 6 ? "text-blue-300" : "text-slate-300"
+                  }`}
+                >
                   {w}
                 </div>
               ))}
-              {cells.map((d, i) =>
-                d === null ? (
-                  <div key={`x${i}`} />
-                ) : (
+              {cells.map((d, i) => {
+                if (d === null) return <div key={`x${i}`} />;
+                const key = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                /* 入る日は青。入らない日は、祝日と日曜だけ赤くする */
+                const tone = dayColor(key);
+                return (
                   <div
                     key={d}
+                    title={holidayName(key) ?? undefined}
                     className={`flex h-5 items-center justify-center rounded text-[9px] font-bold ${
-                      set.has(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`)
+                      set.has(key)
                         ? "bg-blue-600 text-white"
-                        : "text-slate-400"
+                        : tone === "holiday"
+                          ? "text-red-400"
+                          : tone === "sat"
+                            ? "text-blue-400"
+                            : "text-slate-400"
                     }`}
                   >
                     {d}
                   </div>
-                ),
-              )}
+                );
+              })}
             </div>
           </div>
         );

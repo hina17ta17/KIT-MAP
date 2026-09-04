@@ -29,6 +29,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { canViewPlans, type Role } from "@/lib/auth";
+import { dayColor, holidayName } from "@/lib/holidays";
 
 type Period = { id: number; label: string; starts_at: string; ends_at: string };
 
@@ -272,9 +273,14 @@ export default function PlanPage() {
         </button>
       </div>
 
-      <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400">
-        {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
-          <div key={w}>{T(w)}</div>
+      <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] font-bold">
+        {["日", "月", "火", "水", "木", "金", "土"].map((w, i) => (
+          <div
+            key={w}
+            className={i === 0 ? "text-red-400" : i === 6 ? "text-blue-400" : "text-slate-400"}
+          >
+            {T(w)}
+          </div>
         ))}
       </div>
 
@@ -284,16 +290,24 @@ export default function PlanPage() {
           const on = d === day;
           const n = marks.get(d) ?? 0;
           const isToday = d === todayYmd();
+          /* 日曜と祝日は赤、土曜は青（lib/holidays.ts） */
+          const tone = dayColor(d);
+          const hol = holidayName(d);
           return (
             <button
               key={d}
               onClick={() => setDay(d)}
+              title={hol ?? undefined}
               className={`relative flex h-11 flex-col items-center justify-center rounded-lg text-xs font-bold transition active:scale-95 ${
                 on
                   ? "bg-slate-900 text-white"
                   : isToday
                     ? "bg-blue-50 text-blue-900 ring-1 ring-blue-200"
-                    : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    : tone === "holiday"
+                      ? "bg-slate-50 text-red-500 hover:bg-slate-100"
+                      : tone === "sat"
+                        ? "bg-slate-50 text-blue-600 hover:bg-slate-100"
+                        : "bg-slate-50 text-slate-700 hover:bg-slate-100"
               }`}
             >
               {Number(d.slice(8))}
@@ -310,7 +324,18 @@ export default function PlanPage() {
       {/* 押した日の中身 */}
       <div className="mt-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-bold text-slate-900">{niceDate(day)}</h2>
+          <h2
+            className={`text-sm font-bold ${
+              dayColor(day) === "holiday" ? "text-red-600" : "text-slate-900"
+            }`}
+          >
+            {niceDate(day)}
+            {holidayName(day) && (
+              <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">
+                {holidayName(day)}
+              </span>
+            )}
+          </h2>
           <span className="text-[11px] font-bold text-slate-500">
             {busy ? T("読み込み中…") : `${plans.length} ${T("件")}`}
           </span>

@@ -16,6 +16,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { ROLE_LABEL, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
+import { dayColor, holidayName } from "@/lib/holidays";
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -528,21 +529,28 @@ function Cal({ onPick }: { onPick: (d: Date) => void }) {
         {cells.map((d, i) => {
           if (!d) return <div key={`e${i}`} />;
           const isToday = sameDay(d, today);
+          /* 日曜と祝日は赤、土曜は青（lib/holidays.ts）。食堂の休みと重なる日 */
+          const tone = dayColor(ymd(d));
+          const hol = holidayName(ymd(d));
           return (
             <button
               key={ymd(d)}
               onClick={() => onPick(d)}
-              className={`aspect-square rounded-lg text-sm font-bold transition active:scale-90 ${
+              title={hol ?? undefined}
+              className={`relative aspect-square rounded-lg text-sm font-bold transition active:scale-90 ${
                 isToday
                   ? "bg-amber-100 text-amber-900 ring-2 ring-amber-400"
-                  : d.getDay() === 0
+                  : tone === "holiday"
                     ? "text-red-500 hover:bg-slate-100"
-                    : d.getDay() === 6
+                    : tone === "sat"
                       ? "text-blue-500 hover:bg-slate-100"
                       : "text-slate-700 hover:bg-slate-100"
               }`}
             >
               {d.getDate()}
+              {hol && (
+                <span className="absolute inset-x-0 top-0.5 mx-auto block h-1 w-1 rounded-full bg-red-400" />
+              )}
             </button>
           );
         })}

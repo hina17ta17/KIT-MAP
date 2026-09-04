@@ -21,6 +21,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { dayColor, holidayName } from "@/lib/holidays";
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -174,26 +175,37 @@ export default function MultiDatePicker({ value, onChange, max = 60 }: Props) {
           if (!day) return <div key={`x${i}`} />;
           const on = chosen.has(day);
           const isToday = day === today;
-          const dow = i % 7;
+          /*
+           * 日曜と祝日は赤、土曜は青。
+           * 祝日は曜日では分からないので、暦から出す（lib/holidays.ts）。
+           * 授業の無い日を、選ぶ前に見分けられるようにするため。
+           */
+          const tone = dayColor(day);
+          const hol = holidayName(day);
           return (
             <button
               key={day}
               onClick={() => toggle(day)}
               // 上限に達していても、選んである日は外せる
               disabled={full && !on}
+              title={hol ?? undefined}
               className={`relative h-9 rounded-lg text-xs font-bold transition active:scale-90 ${
                 on
                   ? "bg-blue-600 text-white"
                   : full
                     ? "bg-slate-50 text-slate-300"
-                    : dow === 0
+                    : tone === "holiday"
                       ? "bg-slate-100 text-red-500 hover:bg-slate-200"
-                      : dow === 6
+                      : tone === "sat"
                         ? "bg-slate-100 text-blue-600 hover:bg-slate-200"
                         : "bg-slate-100 text-slate-700 hover:bg-slate-200"
               }`}
             >
               {Number(day.slice(8))}
+              {/* 祝日は、名前のかわりに小さな点で示す。升目が狭いので */}
+              {hol && !on && (
+                <span className="absolute inset-x-0 top-0.5 mx-auto block h-1 w-1 rounded-full bg-red-400" />
+              )}
               {isToday && (
                 <span
                   className={`absolute inset-x-0 bottom-1 mx-auto block h-1 w-1 rounded-full ${

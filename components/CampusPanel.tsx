@@ -28,6 +28,7 @@ import {
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
 import { t, type Lang } from "@/lib/i18n";
+import { dayColor, holidayName } from "@/lib/holidays";
 
 type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free";
 
@@ -318,23 +319,35 @@ function Calendar({ date, onPick }: { date: Date; onPick: (d: Date) => void }) {
               if (!d) return <div key={`e${i}`} />;
               const isToday = sameDay(d, today);
               const isPicked = sameDay(d, date);
+              /*
+               * 日曜と祝日は赤、土曜は青。
+               * 祝日は曜日では分からないので、暦から出す（lib/holidays.ts）。
+               * 授業のある日を探すときに、休みの日がひと目で分かる。
+               */
+              const tone = dayColor(ymd(d));
+              const hol = holidayName(ymd(d));
               return (
                 <button
                   key={ymd(d)}
                   onClick={() => onPick(d)}
+                  title={hol ?? undefined}
                   className={`relative aspect-square rounded-lg text-xs font-bold transition active:scale-90 ${
                     isPicked
                       ? "bg-slate-900 text-white"
                       : isToday
                         ? "bg-amber-100 text-amber-900 ring-2 ring-amber-400"
-                        : d.getDay() === 0
+                        : tone === "holiday"
                           ? "text-red-500 hover:bg-slate-100"
-                          : d.getDay() === 6
+                          : tone === "sat"
                             ? "text-blue-500 hover:bg-slate-100"
                             : "text-slate-700 hover:bg-slate-100"
                   }`}
                 >
                   {d.getDate()}
+                  {/* 祝日は、上に小さな点を置く。名前は入らないので */}
+                  {hol && !isPicked && (
+                    <span className="absolute inset-x-0 top-0.5 mx-auto block h-1 w-1 rounded-full bg-red-400" />
+                  )}
                   {/* 今日はひと目で分かるように、下に点を置く */}
                   {isToday && !isPicked && (
                     <span className="absolute inset-x-0 bottom-1 mx-auto block h-1 w-1 rounded-full bg-amber-500" />
