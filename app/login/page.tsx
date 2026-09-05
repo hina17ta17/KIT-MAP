@@ -1323,6 +1323,8 @@ function Wizard(props: {
   const { t: T, step, me, mfa, code, setCode, enroll, verifyMfa, busy } = props;
   /* 申請の途中の人には段の番号を出す。すでに権限のある人には意味が無い */
   const applying = me.role === "pending";
+  /** コードを写したか。押したことが分かるようにするためだけ */
+  const [copied, setCopied] = useState(false);
 
   if (step === "mfa") {
     return (
@@ -1333,12 +1335,11 @@ function Wizard(props: {
           <Head text={T("認証アプリで本人確認")} />
         )}
         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-          {T("Microsoft Authenticator でQRを読み取り、出てきた6桁を入れてください。")}
+          {T("Microsoft Authenticator に、下のコードを手で入れて登録します。")}
           <br />
           {applying
             ? T("これができたら、大学の情報を入れて申請します。")
             : T("この端末を、次から確かめるのに使います。")}
-          <br />
         </p>
 
         {!mfa ? (
@@ -1351,18 +1352,58 @@ function Wizard(props: {
           </button>
         ) : (
           <>
-            <div className="mt-3 flex justify-center rounded-xl bg-white p-3 ring-1 ring-slate-200">
-              {/* Supabase が返す QR は画像そのもの */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={mfa.qr} alt={T("認証アプリで読み取るQR")} className="h-44 w-44" />
-            </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-              {T("読み取れない場合は、この文字列を手で入れてください")}
-              <br />
-              <code className="mt-1 block break-all rounded bg-slate-100 p-2 font-mono text-[10px]">
+            {/*
+              QR は出さない。
+
+              画面と認証アプリが同じ端末にあると、QR は読み取れない
+              （自分の画面を自分のカメラで写せない）。ほとんどの人が
+              携帯一台で申請するので、読めないほうがふつうだった。
+              コードを手で入れる道だけを、順番どおりに書く。
+            */}
+            <ol className="mt-3 space-y-1.5 rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700">
+              <li>
+                <b>1.</b> {T("Microsoft Authenticator を開きます")}
+              </li>
+              <li>
+                <b>2.</b> {T("右上の「＋」を押します")}
+              </li>
+              <li>
+                <b>3.</b> {T("「その他（Google、Facebook など）」を選びます")}
+              </li>
+              <li>
+                <b>4.</b> {T("「コードを手動で入力」を押します")}
+              </li>
+              <li>
+                <b>5.</b> {T("下のコードを貼り付けて、アカウントを作ります")}
+              </li>
+              <li>
+                <b>6.</b> {T("出てきた6桁の数字を、いちばん下の欄に入れます")}
+              </li>
+            </ol>
+
+            <div className="mt-2">
+              <div className="mb-1 text-[10px] font-bold text-slate-500">
+                {T("入れるコード")}
+              </div>
+              <code className="block break-all rounded-xl bg-slate-100 p-3 font-mono text-xs tracking-wider text-slate-900">
                 {mfa.secret}
               </code>
-            </p>
+              <button
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(mfa.secret)
+                    .then(() => setCopied(true))
+                    .catch(() => setCopied(false));
+                }}
+                className="mt-1.5 w-full rounded-xl bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
+              >
+                {copied ? T("写しました") : T("このコードを写す")}
+              </button>
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                {T("アカウントの名前は何でも構いません（KIT map など）。")}
+                {T("6桁は30秒ごとに変わります。変わったら、そのときの数字を入れてください。")}
+              </p>
+            </div>
             <input
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}

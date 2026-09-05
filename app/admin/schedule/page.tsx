@@ -417,19 +417,42 @@ export default function SchedulePage() {
   /** 代表の学科。科目を読むときと、クラス記号を出すときに使う */
   const deptId = deptIds[0] ?? null;
 
-  /* 学科を選んだら、その学科の科目を読む */
+  /*
+   * 学科を選んだら、その学科の科目を読む。
+   *
+   * 選んだ学科ぜんぶが対象。一つ目だけだと、二つ目からの学科で
+   * すでに入れてある科目もクラスも出てこない。
+   */
+  const deptKey = deptIds.join(",");
   useEffect(() => {
-    if (deptId === null) {
+    const ids = deptKey ? deptKey.split(",").map(Number) : [];
+    if (ids.length === 0) {
       setCourses([]);
       return;
     }
-    void createClient()
-      .from("courses")
-      .select("id, name, class_name, teacher")
-      .eq("department_id", deptId)
-      .order("name")
-      .then(({ data }) => setCourses((data as Course[]) ?? []));
-  }, [deptId]);
+    void (async () => {
+      const supabase = createClient();
+      /*
+       * 学科は並びで持っている（department_ids）。
+       * その列がまだ無い版のときは、代表の一つで訊き直す。
+       */
+      const got = await supabase
+        .from("courses")
+        .select("id, name, class_name, teacher")
+        .overlaps("department_ids", ids)
+        .order("name");
+      if (!got.error) {
+        setCourses((got.data as Course[]) ?? []);
+        return;
+      }
+      const again = await supabase
+        .from("courses")
+        .select("id, name, class_name, teacher")
+        .in("department_id", ids)
+        .order("name");
+      setCourses((again.data as Course[]) ?? []);
+    })();
+  }, [deptKey]);
 
   /**
    * 号館の並び。1号館から昇順。
@@ -578,10 +601,23 @@ export default function SchedulePage() {
     [acts, catId],
   );
   /** 選んだ学科のクラス記号。クラス欄の書き方を示すのに使う */
-  const deptCode = useMemo(
-    () => depts.find((d) => d.id === deptId)?.code ?? "",
-    [depts, deptId],
+  /**
+   * 選んだ学科の記号。いくつ選んでも、そのぶん全部。
+   *
+   * ★一つ目だけを見ていた
+   *   前は代表の一つ（deptIds[0]）の記号しか見ていなかったので、
+   *   学科を二つ以上選んでも、二つ目からのクラス（CC1 など）が
+   *   選択肢に出てこなかった。選んだぶんは全部並べる。
+   */
+  const deptCodes = useMemo(
+    () =>
+      deptIds
+        .map((id) => depts.find((d) => d.id === id)?.code ?? "")
+        .filter((c) => c !== ""),
+    [depts, deptIds],
   );
+  /** 打ち込む欄の例に出す、代表の一つ */
+  const deptCode = deptCodes[0] ?? "";
 
   /**
    * クラスの選択肢。
@@ -601,9 +637,10 @@ export default function SchedulePage() {
         if (v) used.add(v);
       }
     }
-    if (deptCode) for (let i = 1; i <= 4; i++) used.add(`${deptCode}${i}`);
+    // 選んだ学科ぜんぶ、それぞれ 1〜4 を並べる
+    for (const code of deptCodes) for (let i = 1; i <= 4; i++) used.add(`${code}${i}`);
     return [...used].sort((a, b) => a.localeCompare(b, "ja", { numeric: true }));
-  }, [courses, deptCode]);
+  }, [courses, deptCodes]);
 
   /**
    * いま入れようとしている時間帯。時限をいくつも選べるので並びで持つ。
@@ -1614,8 +1651,10 @@ export default function SchedulePage() {
               {courseId === null && (
                 <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                   {T("クラスは、同じ科目を分けて受ける組のこと。")}
-                  {deptCode
-                    ? `この学科の記号は ${deptCode} なので、${deptCode}1・${deptCode}2 のように並びます。`
+                  {deptCodes.length > 0
+                    ? `選んだ学科の記号は ${deptCodes.join("・")} なので、${deptCodes
+                        .map((c) => `${c}1`)
+                        .join("・")} のように並びます。`
                     : "KM1・CC2 のように、学科の記号と組の番号で書きます。"}
                   <br />
                   何も選ばなければ<b>{T("すべて")}</b>（分かれていない）になります。

@@ -12,7 +12,14 @@
  */
 
 import Link from "next/link";
-import { canManage, canManageAll, canManageCafeteria, canReadFeedback, type Role } from "@/lib/auth";
+import {
+  canManage,
+  canManageAll,
+  canManageCafeteria,
+  canReadFeedback,
+  canReadRoster,
+  type Role,
+} from "@/lib/auth";
 import { useAdminLang, useAdminT } from "@/lib/adminLang";
 
 export type AdminPageId =
@@ -21,6 +28,7 @@ export type AdminPageId =
   | "rooms"
   | "schedule"
   | "cafeteria"
+  | "campus"
   | "plan"
   | "feedback"
   | "edit";
@@ -48,16 +56,21 @@ const ENTRIES: Entry[] = [
     href: "/admin/roster",
     icon: "📒",
     label: "名簿",
-    sub: "xlsx から学生・教授の名簿を取り込む",
-    // 学籍番号と氏名が並ぶので、副管理者（2.1・2.2）と管理者だけ
-    allowed: canManageAll,
+    sub: "入れてある名簿を、一人ずつ見る",
+    /*
+     * 見るだけの画面。入れる・消す・ドメインを変えるは
+     * 「大学の情報登録」へ移した。
+     * 教授（レベル2）は学生の名簿だけ見られるので、ここは
+     * canReadRoster にしてある。
+     */
+    allowed: canReadRoster,
   },
   {
-    id: "rooms",
-    href: "/admin/rooms",
+    id: "campus",
+    href: "/admin/campus",
     icon: "🏫",
-    label: "教室の登録",
-    sub: "何号館の何階に、どの教室があるか",
+    label: "大学の情報登録",
+    sub: "教室・学科・ドメイン・登録者",
     allowed: canManageAll,
   },
   {

@@ -2139,14 +2139,30 @@ export default function Guide() {
         </div>
       )}
 
-      {/* 左上に縦に積む。重なりが起きないよう1つの列にまとめる */}
-      <div className="absolute left-4 top-4 z-10 flex w-fit max-w-[16rem] flex-col items-start gap-2">
+      {/*
+        左上に縦に積む。重なりが起きないよう1つの列にまとめる。
+
+        ★指は素通りさせる（pointer-events-none）
+          ここに出るのは、ほとんどが読むためのもの
+          （現在地の状態、出発地の帯、位置情報の知らせ）。
+          触れるようにしておくと、そこへ指を置いたぶんが
+          地図に届かない。とくに二本指でつまむとき、片方が
+          ここに乗ると地図は「一本しか触れていない」と受け取り、
+          拡大縮小がまったく効かなくなる。
+
+          出発地を選ぶと帯が出るので、そのあとだけ
+          「つまめる場所が狭い（支点の幅が決まってしまう）」
+          ように感じていたのは、これが理由。
+
+          押すもの（ボタンや行き先）だけ、下で auto に戻す。
+      */}
+      <div className="pointer-events-none absolute left-4 top-4 z-10 flex w-fit max-w-[16rem] flex-col items-start gap-2">
         {/* 現在地と、その状態を横に並べる。
             状態を下の段に置くと、地図が見える面積を余計に削るため */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={startWatch}
-            className="flex shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white active:scale-95"
+            className="pointer-events-auto flex shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white active:scale-95"
           >
             <span
               className={`inline-block h-2.5 w-2.5 rounded-full ${
@@ -2262,7 +2278,7 @@ export default function Guide() {
             </span>
             <button
               onClick={() => setPickedFrom(null)}
-              className="ml-auto shrink-0 rounded-full bg-blue-500 px-2 py-1 text-[10px] font-bold"
+              className="pointer-events-auto ml-auto shrink-0 rounded-full bg-blue-500 px-2 py-1 text-[10px] font-bold"
             >
               {T("やめる")}
             </button>
@@ -2299,14 +2315,14 @@ export default function Guide() {
                   {geoState !== "insecure" && geoState !== "unavailable" && (
                     <button
                       onClick={startWatch}
-                      className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white active:scale-95"
+                      className="pointer-events-auto rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white active:scale-95"
                     >
                       {geoState === "denied" ? T("許可し直したら押す") : T("もう一度試す")}
                     </button>
                   )}
                   <button
                     onClick={toggleGeoHelp}
-                    className="text-[10px] text-slate-400 underline active:scale-95"
+                    className="pointer-events-auto text-[10px] text-slate-400 underline active:scale-95"
                   >
                     {geoHelp && geoState !== "denied" ? T("閉じる") : T("直し方")}
                   </button>
@@ -2319,7 +2335,7 @@ export default function Guide() {
                 onClick={muteGeo}
                 aria-label="現在地を使わない"
                 title="現在地を使わない"
-                className="-mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[13px] font-bold leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                className="pointer-events-auto -mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[13px] font-bold leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
               >
                 ×
               </button>
@@ -2425,7 +2441,7 @@ export default function Guide() {
             </p>
             <a
               href="/login"
-              className="mt-3 block w-full rounded-xl bg-blue-600 px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-blue-700"
+              className="pointer-events-auto mt-3 block w-full rounded-xl bg-blue-600 px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-blue-700"
             >
               ログイン画面へ
             </a>

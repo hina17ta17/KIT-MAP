@@ -195,7 +195,15 @@ export default function RoomsPage() {
   return (
     <Shell wide>
       <AdminHeader title={T("教室の登録")} />
-      <AdminMenu current="rooms" role={role} />
+      <AdminMenu current="campus" role={role} />
+
+      {/* ここは「大学の情報登録」の中の一つ。戻る道を出しておく */}
+      <Link
+        href="/admin/campus"
+        className="mb-3 inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:underline"
+      >
+        ← {T("大学の情報登録へ戻る")}
+      </Link>
 
       {msg && <p className="mb-3 rounded-xl bg-red-50 p-3 text-xs text-red-800">{msg}</p>}
 
