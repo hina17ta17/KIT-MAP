@@ -239,6 +239,15 @@ export default function SchedulePage() {
   const [deptIds, setDeptIds] = useState<number[]>([]);
   /** 何年生の授業か。0 は「学年を問わない」 */
   const [grade, setGrade] = useState(0);
+  /**
+   * 教職の授業か。
+   *
+   * true にすると、その授業は教職として通っている人の時間割にだけ出る。
+   * 既定は false（市内＝ふつうの授業）なので、いままでの入れ方は変わらない。
+   */
+  const [teaching, setTeaching] = useState(false);
+  /** 自分が教職として通っているか。この欄を出すかどうかに使う */
+  const [meTeaching, setMeTeaching] = useState(false);
   const [courseId, setCourseId] = useState<number | null>(null);
   const [courseName, setCourseName] = useState("");
   /**
@@ -317,6 +326,11 @@ export default function SchedulePage() {
         .single();
       const myRole = (me?.role as Role) ?? null;
       setRole(myRole);
+      /*
+       * 教職として通っているか。
+       * 列を並べずに取ってあるので、18 を流す前でも落ちない。
+       */
+      setMeTeaching((me as Record<string, unknown> | null)?.teaching === true);
 
       /*
        * 登録者の欄には、氏名を入れる。
@@ -770,11 +784,12 @@ export default function SchedulePage() {
             department_id: deptIds[0],
             department_ids: deptIds,
             grade,
+            teaching,
           };
           let made = await supabase.from("courses").insert(row).select("id").single();
-          if (made.error && /department_ids|grade/i.test(made.error.message)) {
+          if (made.error && /department_ids|grade|teaching/i.test(made.error.message)) {
             // 列がまだ無い版。そのぶんを外して入れ直す
-            const { department_ids: _a, grade: _b, ...rest } = row;
+            const { department_ids: _a, grade: _b, teaching: _c, ...rest } = row;
             made = await supabase.from("courses").insert(rest).select("id").single();
           }
           const { data, error } = made;
@@ -909,7 +924,7 @@ export default function SchedulePage() {
         setBusy(false);
       }
     },
-    [kind, chosen, dates, periodIds, periods, courseId, courseName, classes, teacher, deptIds, grade, activityId, title, startAt, endAt],
+    [kind, chosen, dates, periodIds, periods, courseId, courseName, classes, teacher, deptIds, grade, teaching, activityId, title, startAt, endAt],
   );
 
   /* ---------------- その日の予定を消す ---------------- */
@@ -1648,6 +1663,53 @@ export default function SchedulePage() {
                   </div>
                 </div>
               )}
+              {/*
+                教職の授業か、市内（ふつう）の授業か。
+
+                ■ 誰に出すか
+                  教職として通っている教授と、副管理者・管理者だけ。
+                  ほかの人には出さない。押せてしまうと、
+                  ふつうの授業をうっかり教職にできてしまう。
+
+                ■ 何が変わるか
+                  教職にすると、その授業は「教職として通っている人」の
+                  時間割にだけ出る。ほかの人には出ない。
+                  市内（既定）なら、いままでどおり全員に出る。
+              */}
+              {courseId === null && (meTeaching || canManageAll(role)) && (
+                <div className="mt-2">
+                  <div className="text-[10px] font-bold text-slate-500">
+                    {T("教職の授業か")}
+                  </div>
+                  <div className="mt-1 grid grid-cols-2 gap-1.5">
+                    {([false, true] as const).map((v) => (
+                      <button
+                        key={String(v)}
+                        onClick={() => setTeaching(v)}
+                        className={`rounded-xl px-2 py-2.5 text-[11px] font-bold transition active:scale-95 ${
+                          teaching === v
+                            ? v
+                              ? "bg-violet-600 text-white"
+                              : "bg-slate-900 text-white"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        {v ? T("教職の授業") : T("市内（ふつうの授業）")}
+                        <span className="mt-0.5 block text-[9px] font-normal opacity-80">
+                          {v ? T("教職の人だけに出る") : T("全員に出る")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {teaching && (
+                    <p className="mt-1 rounded-lg bg-violet-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-violet-900">
+                      {T("この授業は、教職として通っている人の時間割にだけ出ます。")}
+                      {T("学年を選んでいれば、その学年の教職の人だけに出ます。")}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {courseId === null && (
                 <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                   {T("クラスは、同じ科目を分けて受ける組のこと。")}

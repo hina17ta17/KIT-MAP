@@ -80,6 +80,31 @@ type Row = {
   affiliation: Affiliation | null;
 };
 
+/**
+ * 席（ログインの入れ物そのもの）。
+ *
+ * profiles とは別。席はあるのに profiles が無い、ということが起きる
+ * （profiles の行だけを手で消したとき）。そうなると本人はログイン
+ * できるのに画面はどこにも進めず、承認の一覧にも出てこない。
+ * ここは席そのものを並べるので、その取りこぼしが見える。
+ */
+type Seat = {
+  id: string;
+  email: string;
+  created_at: string;
+  has_profile: boolean;
+  role: string;
+  full_name: string;
+  affiliation: string;
+  grade: number | null;
+  class_code: string;
+  class_no: number | null;
+  seat_no: number | null;
+  verified: boolean;
+  last_sign_in: string | null;
+  state: string;
+};
+
 /** 確かめの文で使う改行 */
 const BR = String.fromCharCode(10);
 
@@ -137,7 +162,17 @@ export default function AdminPage() {
    * いまは申請してきた人をひとまとめに出し、
    * まだ手続きの途中の人には印を付けて見分ける。
    */
-  const [tab, setTab] = useState<"new" | "existing">("new");
+  const [tab, setTab] = useState<"new" | "seats" | "existing">("new");
+
+  /* 席（ログインの入れ物そのもの）の欄 */
+  const [seats, setSeats] = useState<Seat[]>([]);
+  const [seatQ, setSeatQ] = useState("");
+  const [seatBusy, setSeatBusy] = useState(false);
+  /** 席の欄の絞り込み。身分・学年・学科・クラス */
+  const [sAff, setSAff] = useState<Affiliation | null>(null);
+  const [sGrade, setSGrade] = useState<number | null>(null);
+  const [sClass, setSClass] = useState<string | null>(null);
+  const [sClassNo, setSClassNo] = useState<number | null>(null);
   /**
    * リセットの一式を開いているか。
    *
@@ -195,6 +230,7 @@ export default function AdminPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
 
   /*
    * 以前ここにあった三つの消し方（学生と申請者／管理者も含めて全部／
@@ -325,6 +361,149 @@ export default function AdminPage() {
             ? e.message + "（base/06_admin.sql をまだ入れ直していない場合は、先に入れてください）"
             : String(e),
       });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 席を読み直す。
+   *
+   * profiles ではなく auth.users を見るので、
+   * 「席はあるのに情報が無い」人もここには出る。
+   */
+  const loadSeats = useCallback(async (word: string) => {
+    setSeatBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("list_seats", {
+        p_q: word,
+        p_limit: 500,
+        p_offset: 0,
+      });
+      if (error) throw error;
+      setSeats((data as Seat[]) ?? []);
+    } catch (e) {
+      setSeats([]);
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/17_seats.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setSeatBusy(false);
+    }
+  }, []);
+
+  /*
+   * 席の欄を開いたときだけ読む。
+   * 承認の画面を開くたびに席まで読むと、そのぶん往復が増える。
+   */
+  useEffect(() => {
+    if (tab !== "seats") return;
+    const id = window.setTimeout(() => void loadSeats(seatQ.trim()), 250);
+    return () => window.clearTimeout(id);
+  }, [tab, seatQ, loadSeats]);
+
+  /**
+   * 席を消す。一つでも、まとめてでも。
+   *
+   * 席を消すと、その人の情報も一緒に消える（cascade）。
+   * 申請の最初からやり直しになる。
+   */
+  const removeSeats = async (ids: string[], all: boolean, label: string) => {
+    setMsg(null);
+    if (!all && ids.length === 0) return;
+
+    if (
+      !window.confirm(
+        [
+          `${label}を消します。`,
+          "",
+          "消えるもの",
+          "  ・ログインの席そのもの",
+          "  ・パスワード・本人確認（認証アプリ）",
+          "  ・氏名・学年・学科・クラス・名列番号",
+          "  ・承認した権限",
+          "",
+          "申請の最初からやり直しになります。元には戻せません。",
+          "副管理者（2.1・2.2）と管理者、あなた自身は消えません。",
+          "",
+          "続けますか？",
+        ].join(BR),
+      )
+    )
+      return;
+    if (!window.confirm(`本当に消しますか？（${label}）${BR}${BR}これが最後の確認です。`)) return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("reset_seats", {
+        p_ids: all ? null : ids,
+        p_all: all,
+        p_password: password || null,
+      });
+      if (error) throw error;
+      setMsg({ kind: "ok", text: `${data ?? 0} 席を消しました。` });
+      await load();
+      await loadSeats(seatQ.trim());
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/17_seats.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 申請してきた人を、まとめて消す。
+   *
+   * 中身は印を付けて消すのと同じ（reset_users）。
+   * 取り込みをやり直したあとなど、申請ぜんぶを流したいことがある。
+   * いま画面に出ている「申請してきた人」だけが対象で、
+   * すでに権限の付いている人には触れない。
+   */
+  const resetAllPending = async () => {
+    setMsg(null);
+    const ids = news.map((r) => r.id);
+    if (ids.length === 0) return;
+
+    if (
+      !window.confirm(
+        [
+          `申請してきた人 ${ids.length} 名を、まとめて消します。`,
+          "",
+          "この人たちは、申請の最初からやり直しになります。",
+          "すでに権限の付いている人には触れません。",
+          "元には戻せません。",
+          "",
+          "続けますか？",
+        ].join(BR),
+      )
+    )
+      return;
+    if (!window.confirm(`本当に ${ids.length} 名を消しますか？${BR}${BR}これが最後の確認です。`))
+      return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("reset_users", {
+        p_ids: ids,
+        p_password: password || null,
+      });
+      if (error) throw error;
+      setPicked([]);
+      setOpen(null);
+      await load();
+      setMsg({ kind: "ok", text: `${data ?? 0} 名を消しました。` });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -501,6 +680,30 @@ export default function AdminPage() {
   const waiting = useMemo(() => news.filter((r) => !isApplied(r)), [news]);
   const existing = useMemo(() => listed.filter((r) => r.role !== "pending"), [listed]);
 
+  /**
+   * 席の欄に出すもの。探す言葉と、身分・学年・学科・クラスで絞る。
+   *
+   * 情報の無い席は、どの絞り込みでも落とさない。
+   * いちばん気づいてほしいのがそこなので、隠れると困る。
+   */
+  const shownSeats = useMemo(() => {
+    const q = seatQ.trim().toLowerCase();
+    return seats.filter((st) => {
+      if (!st.has_profile) return q === "" || st.email.toLowerCase().includes(q);
+      if (q && !(`${st.email} ${st.full_name} ${st.class_code}`.toLowerCase().includes(q)))
+        return false;
+      const aff = st.affiliation || "student";
+      if (sAff !== null && aff !== sAff) return false;
+      if (sClass !== null && st.class_code !== sClass) return false;
+      if (sGrade !== null && st.grade !== sGrade) return false;
+      if (sClassNo !== null && st.class_no !== sClassNo) return false;
+      return true;
+    });
+  }, [seats, seatQ, sAff, sGrade, sClass, sClassNo]);
+
+  /** 情報の無い席の数。ここが 0 でないうちは片づいていない */
+  const ghostSeats = useMemo(() => seats.filter((s2) => !s2.has_profile).length, [seats]);
+
   const shown = useMemo(() => {
     if (tab === "new") return news;
     return existing.filter(
@@ -586,6 +789,7 @@ export default function AdminPage() {
       <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1">
         {([
           ["new", `${T("申請してきた人")}（${news.length}）`],
+          ["seats", `${T("席")}（${seats.length}）`],
           ["existing", `${T("既存")}（${existing.length}）`],
         ] as const).map(([id, label]) => (
           <button
@@ -604,6 +808,51 @@ export default function AdminPage() {
         ))}
       </div>
 
+      {/*
+        申請してきた人を、まとめてリセットする。
+
+        一人ずつは、名前を押して開く欄からできる。
+        取り込みをやり直したあとなど、申請ぜんぶを流したいことがあるので、
+        まとめて消す道もここに出す。
+      */}
+      {tab === "new" && news.length > 0 && (
+        <div className="mb-3 rounded-xl border border-red-300 bg-red-50 p-2.5">
+          <div className="text-[11px] font-bold text-red-900">
+            {T("申請してきた人をリセットする")}
+          </div>
+          <p className="mt-1 text-[10px] leading-relaxed text-red-800">
+            {T("名前を押して開く欄からは、一人ずつリセットできます。")}
+            {T("ここは、申請してきた人をまとめて消すためのものです。")}
+          </p>
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="password"
+            placeholder={T("あなたのログインパスワード")}
+            autoComplete="current-password"
+            className="mt-2 w-full rounded-xl bg-white px-4 py-2 text-sm outline-none ring-1 ring-red-200 focus:ring-2 focus:ring-blue-500"
+          />
+          <div className="mt-2 flex gap-1.5">
+            {picked.length > 0 && (
+              <button
+                onClick={() => void resetPicked()}
+                disabled={busy}
+                className="flex-1 rounded-lg bg-red-600 px-2 py-2 text-[11px] font-bold text-white transition hover:bg-red-700 disabled:bg-slate-300"
+              >
+                {T("印を付けた")} {picked.length} {T("名を消す")}
+              </button>
+            )}
+            <button
+              onClick={() => void resetAllPending()}
+              disabled={busy}
+              className="flex-1 rounded-lg bg-red-700 px-2 py-2 text-[11px] font-bold text-white transition hover:bg-red-800 disabled:bg-slate-300"
+            >
+              {busy ? T("処理中…") : `${T("申請してきた人")} ${news.length} ${T("名をすべて消す")}`}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* まだ手続きの途中の人がいるときだけ、なぜ承認できないかを書く */}
       {tab === "new" && waiting.length > 0 && (
         <div className="mb-3 rounded-xl bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
@@ -616,6 +865,204 @@ export default function AdminPage() {
           <br />
           {T("本人だと確かめられていないので、その人には権限を付けられません。")}
           {T("本人が Microsoft Authenticator で本人確認を済ませ、所属を入れると承認できるようになります。")}
+        </div>
+      )}
+
+      {/*
+        席の欄。
+
+        ここに出るのは auth.users ——ログインの入れ物そのもの。
+        承認の一覧（profiles）には出てこない取りこぼしも、ここには出る。
+        「情報なし」と書かれている席がそれ。
+
+        誰がいて、その人がどういう状況か（情報なし／承認待ち／使用中）を
+        一つの並びで見られるようにしてある。
+      */}
+      {tab === "seats" && (
+        <div className="mb-3">
+          <div className="rounded-xl bg-slate-50 p-2.5">
+            <input
+              value={seatQ}
+              onChange={(e) => setSeatQ(e.target.value)}
+              placeholder={T("アドレス・氏名・学科で探す")}
+              autoComplete="off"
+              className="w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-500"
+            />
+            <Filter
+              label="身分"
+              value={sAff}
+              onPick={(v) => {
+                setSAff(v);
+                if (v === "other") {
+                  setSGrade(null);
+                  setSClass(null);
+                  setSClassNo(null);
+                } else if (v === "teacher") {
+                  setSGrade(null);
+                  setSClassNo(null);
+                }
+              }}
+              options={AFFILIATIONS.map((a) => [a.id, a.label])}
+            />
+            {sAff !== "other" && sAff !== "teacher" && (
+              <Filter
+                label="学年"
+                value={sGrade}
+                onPick={setSGrade}
+                options={GRADES.map((g) => [g, g + "年"])}
+              />
+            )}
+            {sAff !== "other" && (
+              <Filter
+                label="学科"
+                value={sClass}
+                onPick={setSClass}
+                options={CLASS_CODES.map((c) => [c.code, c.code])}
+              />
+            )}
+            {sAff !== "other" && sAff !== "teacher" && (
+              <Filter
+                label="クラス"
+                value={sClassNo}
+                onPick={setSClassNo}
+                options={CLASS_NOS.map((n) => [n, String(n)])}
+              />
+            )}
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-600">
+              {seatBusy ? T("読み込み中…") : shownSeats.length + " " + T("席")}
+            </span>
+            {ghostSeats > 0 && (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                {T("情報なし")} {ghostSeats}
+              </span>
+            )}
+            {picked.length > 0 && (
+              <button
+                onClick={() => void removeSeats(picked, false, "印を付けた " + picked.length + " 席")}
+                disabled={busy}
+                className="ml-auto rounded-lg bg-red-600 px-2.5 py-1.5 text-[10px] font-bold text-white transition hover:bg-red-700 disabled:bg-slate-300"
+              >
+                {T("印を付けた")} {picked.length} {T("席を消す")}
+              </button>
+            )}
+          </div>
+
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="password"
+            placeholder={T("あなたのログインパスワード（消すときに要ります）")}
+            autoComplete="current-password"
+            className="mt-2 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
+          />
+
+          <ul className="mt-2 space-y-1.5">
+            {shownSeats.map((st) => {
+              const on = picked.includes(st.id);
+              return (
+                <li
+                  key={st.id}
+                  className={`flex items-start gap-2 rounded-xl p-2.5 ring-1 ${
+                    !st.has_profile
+                      ? "bg-red-50 ring-red-200"
+                      : st.role === "pending"
+                        ? "bg-amber-50 ring-amber-200"
+                        : "bg-white ring-slate-200"
+                  }`}
+                >
+                  <button
+                    onClick={() =>
+                      setPicked((p) => (on ? p.filter((x) => x !== st.id) : [...p, st.id]))
+                    }
+                    aria-label={on ? T("印を外す") : T("印を付ける")}
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold transition ${
+                      on ? "bg-red-600 text-white" : "bg-white text-transparent ring-1 ring-slate-300"
+                    }`}
+                  >
+                    ✓
+                  </button>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="truncate text-sm font-semibold text-slate-900">
+                        {st.full_name || "（氏名未記入）"}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                          !st.has_profile
+                            ? "bg-red-200 text-red-900"
+                            : st.role === "pending"
+                              ? "bg-amber-200 text-amber-900"
+                              : "bg-slate-200 text-slate-700"
+                        }`}
+                      >
+                        {st.state}
+                      </span>
+                    </div>
+                    <div className="truncate font-mono text-[11px] text-slate-500">{st.email}</div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-slate-500">
+                      {st.affiliation && st.affiliation !== "student" && (
+                        <span>{AFFILIATION_LABEL[st.affiliation as Affiliation]}</span>
+                      )}
+                      {st.grade ? <span>{st.grade}年</span> : null}
+                      {st.class_code && <span>{st.class_code}</span>}
+                      {st.class_no ? <span>クラス{st.class_no}</span> : null}
+                      {st.seat_no ? <span>{st.seat_no}番</span> : null}
+                      {st.has_profile && (
+                        <span className="font-bold text-slate-600">
+                          {ROLE_LABEL[st.role as Role] ?? st.role}
+                        </span>
+                      )}
+                      {!st.verified && st.has_profile && (
+                        <span className="text-red-600">{T("本人確認まだ")}</span>
+                      )}
+                    </div>
+                    {!st.has_profile && (
+                      <p className="mt-1 rounded-lg bg-white px-2 py-1 text-[10px] leading-relaxed text-red-800">
+                        {T("この席には情報がありません。本人はログインできますが、承認の一覧には出てきません。")}
+                        {T("90_tools.sql の ⑦ を実行すると、承認待ちとして戻せます。")}
+                      </p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      void removeSeats([st.id], false, (st.full_name || st.email) + " の席")
+                    }
+                    disabled={busy}
+                    className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                  >
+                    {T("リセット")}
+                  </button>
+                </li>
+              );
+            })}
+            {!seatBusy && shownSeats.length === 0 && (
+              <li className="rounded-xl bg-slate-50 p-6 text-center text-xs text-slate-500">
+                {T("該当する席がありません")}
+              </li>
+            )}
+          </ul>
+
+          {/* 席をぜんぶ消す。いちばん強いので、いちばん下に置く */}
+          <div className="mt-3 rounded-xl border-2 border-red-300 bg-red-50 p-3">
+            <div className="text-xs font-bold text-red-900">{T("席をすべて消す")}</div>
+            <p className="mt-1 text-[11px] leading-relaxed text-red-800">
+              {T("いま在る席をぜんぶ消します。全員が申請の最初からやり直しになります。")}
+              <br />
+              <b>{T("副管理者（2.1・2.2）と管理者、そしてあなた自身は残ります。")}</b>
+            </p>
+            <button
+              onClick={() => void removeSeats([], true, "すべての席（" + seats.length + " 席）")}
+              disabled={busy}
+              className="mt-2 w-full rounded-lg bg-red-700 px-2 py-2.5 text-xs font-bold text-white transition hover:bg-red-800 active:scale-95 disabled:bg-slate-300"
+            >
+              {busy ? T("処理中…") : T("すべての席を消す") + "（" + seats.length + "）"}
+            </button>
+          </div>
         </div>
       )}
 

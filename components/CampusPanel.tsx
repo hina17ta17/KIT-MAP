@@ -30,7 +30,7 @@ import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
 import { t, type Lang } from "@/lib/i18n";
 import { dayColor, holidayName } from "@/lib/holidays";
 
-type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free";
+type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "teaching";
 
 /** いまの言葉。上から配って、部品の中で取り出す */
 const LangCtx = createContext<Lang>("ja");
@@ -201,12 +201,21 @@ function Panel({
               label={T("時間割")} sub={T("授業と課外活動")} />
             <Big onClick={() => setStep("free")} icon="🚪"
               label={T("空き教室")} sub={T("号館と時限から探す")} />
+            {/*
+              教職課程。いちばん下に置く。
+
+              使う人は限られているので、上に置くと
+              毎日使う三つを押しにくくする。
+            */}
+            <Big onClick={() => setStep("teaching")} icon="🎓"
+              label={T("教職")} sub={T("教職課程の申請と、その様子")} />
           </div>
         )}
 
         {step === "cafeteria" && <Cafeteria date={date} />}
         {step === "timetable" && <Timetable date={date} periods={periods} />}
         {step === "free" && <FreeRooms date={date} periods={periods} />}
+        {step === "teaching" && <Teaching />}
       </div>
     </div>
   );
@@ -564,6 +573,13 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
   /** 学年で絞っているか。「全学年を見る」で外せる */
   const [byGrade, setByGrade] = useState(true);
   /**
+   * 自分が教職として通っているか。
+   *
+   * 通っていれば、教職の授業も時間割に出る。
+   * 通っていなければ、教職の授業ははじめから並べない。
+   */
+  const [myTeaching, setMyTeaching] = useState(false);
+  /**
    * 自分の学科を、もう当てはめたか。
    *
    * 当てはめるのは一度だけ。これが無いと「選び直す」で戻った瞬間に
@@ -583,14 +599,20 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       setFacs((f.data as Faculty[]) ?? []);
       setDepts(list);
 
-      if (applied.current || !u.data.user) return;
+      if (!u.data.user) return;
+      /*
+       * 列を並べずに取る。teaching の列を足す SQL を流す前でも
+       * 落ちないようにするため（並べると、無い列一つで全部が失敗する）。
+       */
       const { data: me } = await supabase
         .from("profiles")
-        .select("class_code, grade")
+        .select("*")
         .eq("id", u.data.user.id)
         .single();
 
-      const p = me as { class_code?: string; grade?: number } | null;
+      const p = me as { class_code?: string; grade?: number; teaching?: boolean } | null;
+      setMyTeaching(p?.teaching === true);
+      if (applied.current) return;
       if (p?.grade) setGrade(p.grade);
 
       /*
@@ -623,7 +645,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       let q = createClient()
         .from("timetable")
         .select(
-          "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id, department_ids, grade)",
+          "id, starts_at, ends_at, teacher, changed, change_note, rooms(building_code, code, name), courses!inner(name, class_name, teacher, department_id, department_ids, grade, teaching)",
         )
         .eq("on_date", ymd(date))
         .eq("period_id", periodId)
@@ -643,6 +665,14 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
        * 学年を持たない人（教職員など）や「全学年を見る」にしたときは絞らない。
        */
       if (byGrade && grade) q = q.in("courses.grade", [0, grade]);
+
+      /*
+       * 教職の授業は、教職として通っている人にだけ出す。
+       *
+       * 通っていない人には、そもそも並べない。
+       * 「出ているのに開けない」より、初めから見えないほうがよい。
+       */
+      if (!myTeaching) q = q.eq("courses.teaching", false);
 
       const { data, error } = await q;
       if (error) {
@@ -666,7 +696,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
       }
       setRows((data as unknown as ClassRow[]) ?? []);
     })();
-  }, [dept, date, periodId, byGrade, grade]);
+  }, [dept, date, periodId, byGrade, grade, myTeaching]);
 
   if (dept) {
     return (
@@ -902,6 +932,196 @@ function ByActivity({ date }: { date: Date }) {
         ))}
         {cats.length === 0 && <Note>{T("課外活動がまだ登録されていません。")}</Note>}
       </div>
+    </div>
+  );
+}
+
+/* ================= 教職課程 ================= */
+
+/**
+ * 教職課程の申請。
+ *
+ * ■ 順番
+ *   ① 本人確認（認証アプリ）が済んでいること
+ *   ② ここで申請を出す
+ *   ③ その場で名簿と突き合わせて、通すか断るかまで決まる
+ *
+ *   人を待たせない。名簿に印があれば、押したその場で通る。
+ *
+ * ■ 断られても、ふつうのログインは残る
+ *   教職は「もう一段」であって、権限そのものではない。
+ *   落ちても学生は学生のまま、今までどおり使える。
+ *   跡を消したいときは「取り消す」で、ただのログインに戻せる。
+ */
+function Teaching() {
+  const T = useT();
+  const [me, setMe] = useState<{
+    verified: boolean;
+    role: string;
+    teaching: boolean;
+    teaching_applied: boolean;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    if (!supabaseReady) return;
+    const supabase = createClient();
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) {
+      setMe(null);
+      return;
+    }
+    /*
+     * 列を並べずに取る。teaching の列を足す SQL を流す前でも
+     * 落ちないようにするため。並べて書くと、無い列を一つ指した
+     * だけで問い合わせ全部が失敗する。
+     */
+    const { data } = await supabase.from("profiles").select("*").eq("id", u.user.id).single();
+    const p = (data ?? {}) as Record<string, unknown>;
+    setMe({
+      verified: p.verified === true,
+      role: typeof p.role === "string" ? p.role : "",
+      teaching: p.teaching === true,
+      teaching_applied: p.teaching_applied === true,
+    });
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const apply = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { data, error } = await createClient().rpc("apply_teaching");
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg({
+        ok: v.ok,
+        text: v.ok ? `教職として通りました（${v.reason}）` : `申請できませんでした：${v.reason}`,
+      });
+      await load();
+    } catch (e) {
+      setMsg({
+        ok: false,
+        text:
+          e instanceof Error
+            ? `${e.message}（base/18_teaching.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    if (!window.confirm("教職の申請を取り消して、ふつうのログインに戻します。よろしいですか？"))
+      return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await createClient().rpc("clear_teaching");
+      if (error) throw error;
+      setMsg({ ok: true, text: "取り消しました。ふつうのログインに戻っています。" });
+      await load();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!me) return <Note>{T("読み込み中…")}</Note>;
+
+  return (
+    <div>
+      <p className="rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600">
+        {T("教職課程を履修している人だけが使える欄です。")}
+        <br />
+        {T("申請すると、名簿の教職の欄と突き合わせて、その場で決まります。")}
+      </p>
+
+      {/* いまの様子 */}
+      <div className="mt-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+        <div className="text-[10px] font-bold text-slate-500">{T("いまの様子")}</div>
+        <div className="mt-1 flex items-center gap-2">
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+              me.teaching
+                ? "bg-emerald-100 text-emerald-900"
+                : me.teaching_applied
+                  ? "bg-amber-100 text-amber-900"
+                  : "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {me.teaching
+              ? T("教職として通っています")
+              : me.teaching_applied
+                ? T("申請しましたが、通っていません")
+                : T("まだ申請していません")}
+          </span>
+        </div>
+      </div>
+
+      {msg && (
+        <p
+          className={`mt-3 rounded-xl p-3 text-xs leading-relaxed ${
+            msg.ok ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-800"
+          }`}
+        >
+          {msg.text}
+        </p>
+      )}
+
+      {/* ① 本人確認 */}
+      {!me.verified ? (
+        <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+          <b>{T("先に本人確認をしてください")}</b>
+          <br />
+          {T("認証アプリの登録が済んでいないと、教職の申請はできません。")}
+          <br />
+          <a href="/login" className="mt-2 inline-block font-bold text-blue-700 underline">
+            {T("ログインの画面へ")}
+          </a>
+        </div>
+      ) : me.role === "pending" ? (
+        <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+          {T("まだ利用の承認を待っています。承認されたら、ここから申請できます。")}
+        </div>
+      ) : (
+        <>
+          <button
+            onClick={() => void apply()}
+            disabled={busy}
+            className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
+          >
+            {busy
+              ? T("確認中…")
+              : me.teaching
+                ? T("もう一度たしかめる")
+                : T("教職課程を申請する")}
+          </button>
+
+          {me.teaching_applied && (
+            <button
+              onClick={() => void clear()}
+              disabled={busy}
+              className="mt-1.5 w-full rounded-xl px-4 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-100"
+            >
+              {T("教職の申請を取り消す")}
+            </button>
+          )}
+        </>
+      )}
+
+      <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
+        {T("名簿の教職の欄に印が無いと、申請は通りません。")}
+        {T("履修しているのに通らないときは、管理者にお知らせください。")}
+        <br />
+        {T("教職として通っても、いままでの使い方は何も変わりません。")}
+      </p>
     </div>
   );
 }

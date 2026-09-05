@@ -166,6 +166,18 @@ const ROSTER_KINDS: { id: RosterKind; label: string }[] = [
   { id: "other", label: "その他" },
 ];
 
+/** 教職課程を履修している学生の一行 */
+type TeachingRow = {
+  student_no: string;
+  email: string;
+  full_name: string;
+  grade: number;
+  class_code: string;
+  class_no: number | null;
+  seat_no: number | null;
+  total: number;
+};
+
 /** 名簿にいる学生の一行 */
 type RosterStudent = {
   student_no: string;
@@ -266,6 +278,17 @@ export default function RosterPage() {
   const [rDept, setRDept] = useState<string | null>(null);
   /** クラス（1〜10）で絞る */
   const [rClassNo, setRClassNo] = useState<number | null>(null);
+
+  /* 教職の名簿 */
+  const [tOpen, setTOpen] = useState(false);
+  const [tCan, setTCan] = useState(false);
+  const [tRows, setTRows] = useState<TeachingRow[]>([]);
+  const [tTotal, setTTotal] = useState(0);
+  const [tBusy, setTBusy] = useState(false);
+  const [tq, setTq] = useState("");
+  const [tGrade, setTGrade] = useState<number | null>(null);
+  const [tDept, setTDept] = useState<string | null>(null);
+  const [tClassNo, setTClassNo] = useState<number | null>(null);
   /**
    * まとめて消すために印を付けた人。
    *
@@ -401,6 +424,66 @@ export default function RosterPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* ---------------- 教職の名簿 ---------------- */
+
+  /**
+   * 教職課程を履修している学生を読む。
+   *
+   * 見られるのは、教職として通っている教授と、副管理者・管理者だけ
+   * （データベース側の can_see_teaching が決める）。
+   * 学年・学科・クラスの三つで絞れる。
+   */
+  const loadTeaching = useCallback(async () => {
+    if (!supabaseReady) return;
+    setTBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("teaching_list", {
+        p_q: tq.trim(),
+        p_grade: tGrade ?? 0,
+        p_class_code: tDept ?? "",
+        p_class_no: tClassNo ?? 0,
+        p_limit: 500,
+        p_offset: 0,
+      });
+      if (error) throw error;
+      const rows = (data as TeachingRow[]) ?? [];
+      setTRows(rows);
+      setTTotal(rows.length > 0 ? Number(rows[0].total) : 0);
+    } catch (e) {
+      setTRows([]);
+      setTTotal(0);
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/18_teaching.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setTBusy(false);
+    }
+  }, [tq, tGrade, tDept, tClassNo]);
+
+  useEffect(() => {
+    if (!tOpen) return;
+    const id = window.setTimeout(() => void loadTeaching(), 250);
+    return () => window.clearTimeout(id);
+  }, [tOpen, loadTeaching]);
+
+  /*
+   * 教職の名簿を見られるか、データベースに訊く。
+   *
+   * 権限だけでは決まらない（教職として通っている教授かどうか）ので、
+   * 画面で数えずに、決める側に訊く。
+   */
+  useEffect(() => {
+    if (!supabaseReady) return;
+    void (async () => {
+      const { data } = await createClient().rpc("can_see_teaching");
+      setTCan(data === true);
+    })();
+  }, []);
 
   /* ---------------- 名簿の中を、一人ずつ見る ---------------- */
 
@@ -1499,6 +1582,124 @@ export default function RosterPage() {
           </div>
         )}
       </section>
+
+      {/*
+        教職の名簿。
+
+        見られるのは、教職として通っている教授と、副管理者・管理者だけ。
+        誰に見せるかはデータベース側（can_see_teaching）が決めるので、
+        画面では訊いた答えをそのまま使う。
+
+        学年・学科・クラスの三つで絞れる。
+        名簿の教職の欄（xlsx の P列）に印がある人だけが並ぶ。
+      */}
+      {tCan && (
+        <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-bold text-violet-900">{T("教職の名簿")}</div>
+            <button
+              onClick={() => setTOpen((v) => !v)}
+              className="rounded-lg bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-800 transition hover:bg-violet-200 active:scale-95"
+            >
+              {tOpen ? T("閉じる") : T("教職の名簿を開く")}
+            </button>
+          </div>
+
+          {tOpen && (
+            <div className="mt-2">
+              <div className="grid grid-cols-3 gap-1.5">
+                <select
+                  value={tGrade ?? ""}
+                  onChange={(e) => setTGrade(e.target.value ? Number(e.target.value) : null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("学年（すべて）")}</option>
+                  {GRADES.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                      {T("年")}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={tDept ?? ""}
+                  onChange={(e) => setTDept(e.target.value || null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("学科（すべて）")}</option>
+                  {CLASS_CODES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code}　{T(c.name)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={tClassNo ?? ""}
+                  onChange={(e) => setTClassNo(e.target.value ? Number(e.target.value) : null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("クラス（すべて）")}</option>
+                  {CLASS_NOS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <input
+                value={tq}
+                onChange={(e) => setTq(e.target.value)}
+                autoComplete="off"
+                placeholder="名前・学籍番号・アドレスで探す"
+                className="mt-2 w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-violet-200 focus:ring-2 focus:ring-violet-500"
+              />
+
+              <div className="mt-2 text-[10px] font-bold text-violet-800">
+                {tBusy ? T("探しています…") : tTotal + " " + T("人")}
+              </div>
+
+              <ul className="mt-1.5 max-h-96 divide-y divide-violet-100 overflow-y-auto rounded-lg bg-white">
+                {tRows.map((r) => (
+                  <li key={r.student_no} className="px-2.5 py-2">
+                    <div className="flex items-baseline gap-1.5">
+                      {r.seat_no !== null && (
+                        <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-violet-800">
+                          {r.seat_no}
+                        </span>
+                      )}
+                      <span className="truncate text-xs font-bold text-slate-800">
+                        {r.full_name || "（名前なし）"}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-slate-500">
+                      {r.grade > 0 && <span>{r.grade}年</span>}
+                      {r.class_code && <span>{r.class_code}</span>}
+                      {!!r.class_no && (
+                        <span>
+                          {T("クラス")}
+                          {r.class_no}
+                        </span>
+                      )}
+                      <span className="font-mono">学籍番号 {r.student_no}</span>
+                    </div>
+                    <div className="truncate font-mono text-[10px] text-slate-400">{r.email}</div>
+                  </li>
+                ))}
+                {!tBusy && tRows.length === 0 && (
+                  <li className="px-2.5 py-6 text-center text-[11px] text-slate-500">
+                    {T("教職を履修している人が見つかりませんでした。")}
+                  </li>
+                )}
+              </ul>
+
+              <p className="mt-1.5 text-[10px] leading-relaxed text-violet-700">
+                {T("ここに並ぶのは、名簿の教職の欄（xlsx の P列）に T と書いてある人です。")}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
 
       {/*
         入れる・消す・ドメインを変えるは、この画面から外した。
