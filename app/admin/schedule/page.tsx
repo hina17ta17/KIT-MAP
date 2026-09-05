@@ -483,6 +483,55 @@ export default function SchedulePage() {
     [allBuildings, roomCount],
   );
 
+  /**
+   * 場所を選ぶ／外す。
+   *
+   * ★教室が一つも無い場所（グラウンド・テニスコートなど）
+   *   そこは細かく分ける意味がないので、「全体」を一つ作って
+   *   それを使う（ensure_place_room）。押した人が教室を
+   *   入れられる権限でなくても、この道なら通る。
+   *
+   *   前は押せないようにしていたが、それだと
+   *   グラウンドで催しを開くのに、先に管理者へ
+   *   「教室を作ってください」と頼むことになっていた。
+   */
+  const pickPlace = async (b: { id: string; code: string; label: string }, on: boolean) => {
+    if (on) {
+      setBuildingCodes((prev) => prev.filter((x) => x !== b.id));
+      return;
+    }
+    if ((roomCount.get(b.id) ?? 0) > 0) {
+      setBuildingCodes((prev) => [...prev, b.id]);
+      return;
+    }
+
+    setBusy(true);
+    setMsg(null);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("ensure_place_room", {
+        p_building_id: b.id,
+        p_building_code: b.code,
+        p_name: b.label,
+      });
+      if (error) throw error;
+      const again = await readAllRooms(supabase);
+      setRooms(again.data);
+      setBuildingCodes((prev) => [...prev, b.id]);
+      setMsg({ kind: "ok", text: `${b.label} を「全体」として使えるようにしました。` });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/03_timetable.sql を入れ直していない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /** 建物の目印から、見せる名前へ */
   const placeLabel = useMemo(() => {
     const m = new Map<string, string>();
@@ -1067,18 +1116,17 @@ export default function SchedulePage() {
               return (
                 <button
                   key={b.id}
-                  disabled={n === 0}
-                  title={n === 0 ? `${b.label}には教室が登録されていません` : `${b.label} ${n} 室`}
-                  onClick={() =>
-                    setBuildingCodes((prev) =>
-                      on ? prev.filter((x) => x !== b.id) : [...prev, b.id],
-                    )
-                  }
-                  className={`flex flex-col items-center justify-center rounded-lg px-1 py-2.5 transition active:scale-95 ${
+                  title={
                     n === 0
-                      ? "cursor-not-allowed bg-slate-100 text-slate-300"
-                      : on
-                        ? "bg-blue-600 text-white"
+                      ? `${b.label}：押すと「全体」を作って、そこに予定を入れられます`
+                      : `${b.label} ${n} 室`
+                  }
+                  onClick={() => void pickPlace(b, on)}
+                  className={`flex flex-col items-center justify-center rounded-lg px-1 py-2.5 transition active:scale-95 ${
+                    on
+                      ? "bg-blue-600 text-white"
+                      : n === 0
+                        ? "bg-white text-slate-500 shadow-sm hover:bg-slate-100"
                         : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"
                   }`}
                 >
@@ -1095,7 +1143,7 @@ export default function SchedulePage() {
                       n === 0 ? "text-slate-300" : on ? "text-blue-100" : "text-slate-400"
                     }`}
                   >
-                    {n === 0 ? T("教室なし") : `${n}室`}
+                    {n === 0 ? T("全体で使う") : `${n}室`}
                   </span>
                 </button>
               );
@@ -1106,6 +1154,10 @@ export default function SchedulePage() {
               </span>
             )}
           </div>
+
+          <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+            {T("「全体で使う」と出ている場所（グラウンドなど）は、押すとその場所ぜんぶを一つとして予定に入れられます。")}
+          </p>
 
           {/*
             部屋の種類でしぼる。

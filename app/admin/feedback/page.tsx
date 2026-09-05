@@ -11,14 +11,14 @@
  *   どこまで見たか分からなくなる。押して既読へ移す形にすると、
  *   「新規が空になったら見終わり」という分かりやすい終わりができる。
  *
- * ■ 名前は、ふだんは出ない
+ * ■ 名前は出ない
  *   並んでいるのは本文と星と日付だけ。誰が書いたかは、
- *   別の場所（feedback_author）にしまってあり、画面の鍵では読めない。
- *   出るのは「良くないコメント」を押した一件だけで、
- *   押したことも、押した人も、記録に残る。
+ *   この画面のどこからも出せない。
  *
- *   ログインせずに送られたものは、はじめから何も残っていないので、
- *   押しても誰かは分からない。
+ *   前は「良くないコメント」を押すと書いた人を出せるようにしていたが、
+ *   その道はやめた。名前が出せると分かっていると、書くほうは
+ *   本当のことを書きにくくなる。困る中身は、出どころを調べるより
+ *   消すほうで片づける。
  *
  * ■ 読めるのは
  *   教授（レベル2）・副管理者（2.1・2.2）・いちばん上だけ。
@@ -41,13 +41,7 @@ type Row = {
   lang: string;
   created_at: string;
   handled: boolean;
-  reported: boolean;
 };
-
-/** 「良くないコメント」を押して返ってきたもの */
-type Who =
-  | { known: true; email: string; name: string; user_id: string | null }
-  | { known: false; why: string };
 
 /** 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
@@ -74,8 +68,6 @@ export default function FeedbackPage() {
   /** まとめて消すために選んだもの。既読の欄でだけ使う */
   const [picked, setPicked] = useState<Set<number>>(new Set());
 
-  /** 「良くないコメント」で出した人。押した一件ぶんだけ持つ */
-  const [who, setWho] = useState<Record<number, Who>>({});
 
   const load = useCallback(async () => {
     if (!supabaseReady) return;
@@ -96,36 +88,23 @@ export default function FeedbackPage() {
 
     if (canReadFeedback(r)) {
       /*
-       * reported の列は 05_feedback.sql で足したもの。
+       * 並べる列は、どの版のデータベースにもあるものだけにする。
        *
-       * ★列を一つ並べただけで、届いた感想が全部消える
+       * 前は reported という列も並べていた。それは 05_feedback.sql で
+       * 足すもので、入っていない間は——PostgREST は知らない列が
+       * 一つでもあると問い合わせ全部を断るので——感想が一件も
+       * 出てこなかった（届いていたのに、画面には空と出ていた）。
        *
-       *   PostgREST は、知らない列が一つでもあると問い合わせ全部を断る。
-       *   画面は data が空になり、感想は届いているのに
-       *   「一件もありません」と出る。実際にそうなっていた
-       *   （データベースには5件あったのに、画面には出ていなかった）。
-       *
-       *   感想が読めることのほうが大事なので、断られたら
-       *   足したぶんの列を外して、もう一度訊く。
+       * その列を使う機能（誰が書いたかを出す）はやめたので、
+       * もう並べない。どの版でも読める形になった。
        */
-      const base = "id, body, rating, lang, created_at, handled";
-      const read = async (cols: string) =>
-        supabase
-          .from("feedback")
-          .select(cols)
-          .order("created_at", { ascending: false })
-          .limit(500);
-
-      let got = await read(`${base}, reported`);
-      if (got.error) {
-        got = await read(base);
-        if (got.error) setMsg(got.error.message);
-        else
-          setMsg(
-            "「良くないコメント」の欄はまだ使えません（base/05_feedback.sql を入れると使えます）。感想はそのまま読めます。",
-          );
-      }
-      setRows((got.data as unknown as Row[]) ?? []);
+      const { data, error } = await supabase
+        .from("feedback")
+        .select("id, body, rating, lang, created_at, handled")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) setMsg(error.message);
+      setRows((data as unknown as Row[]) ?? []);
     }
     setLoading(false);
   }, []);
@@ -259,40 +238,6 @@ export default function FeedbackPage() {
     setMsg(`${data as number} 件を消しました。`);
   };
 
-  /* ---------------- 良くないコメント ---------------- */
-
-  /**
-   * 書いた人を出す。
-   *
-   * ふだんは名前を出さない作りなので、これは例外にあたる操作。
-   * 押す前に、何が起きるかをはっきり書いて一度たずねる。
-   * 押したことも、押した人も、データベースに残る。
-   */
-  const reveal = async (id: number) => {
-    if (
-      !window.confirm(
-        [
-          "この感想を「良くないコメント」として、書いた人を出します。",
-          "",
-          "・出せるのは、ログインしてこの画面を開いている人だけです",
-          "・押したことと、押したのが誰かは記録に残ります",
-          "・ログインせずに送られたものは、誰かは分かりません",
-          "",
-          "続けますか？",
-        ].join(BR),
-      )
-    )
-      return;
-
-    const { data, error } = await createClient().rpc("report_feedback", { p_id: id });
-    if (error) {
-      setMsg(`${error.message}（base/05_feedback.sql をまだ入れていない場合は、先に入れてください）`);
-      return;
-    }
-    setWho((w) => ({ ...w, [id]: data as Who }));
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, reported: true } : r)));
-  };
-
   /* ---------------- 表示 ---------------- */
 
   if (loading) return <Shell>{T("読み込み中…")}</Shell>;
@@ -364,7 +309,7 @@ export default function FeedbackPage() {
 
         <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
           誰が書いたかは、ふだんは<b>{T("出しません")}</b>。
-          {T("目にあまるものだけ、既読の欄の「良くないコメント」から確かめられます。")}
+          {T("誰が書いたかは、この画面のどこからも出せません。")}
           {T("押したことと、押したのが誰かは記録に残ります。")}
         </p>
       </div>
@@ -440,7 +385,6 @@ export default function FeedbackPage() {
 
       <ul className="mt-3 flex flex-col gap-2">
         {shown.map((r) => {
-          const found = who[r.id];
           const chosen = picked.has(r.id);
           return (
             <li
@@ -490,11 +434,6 @@ export default function FeedbackPage() {
                     EN
                   </span>
                 )}
-                {r.reported && (
-                  <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700">
-                    {T("良くないコメント")}
-                  </span>
-                )}
                 {tab === "new" && (
                   <span className="ml-auto shrink-0 text-[10px] font-bold text-blue-700">
                     {T("押すと既読 →")}
@@ -507,23 +446,6 @@ export default function FeedbackPage() {
                 {r.body}
               </p>
 
-              {/* 出した名前。押した一件ぶんだけ、この場に出す */}
-              {found && (
-                <div className="mt-2 rounded-lg bg-slate-900 p-2.5 text-[11px] leading-relaxed text-white">
-                  {found.known ? (
-                    <>
-                      <div className="text-[9px] font-bold text-slate-400">{T("これを書いた人")}</div>
-                      <div className="mt-0.5 font-bold">{found.name || "（名前なし）"}</div>
-                      <div className="break-all font-mono text-[10px] text-slate-300">
-                        {found.email}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-slate-300">{found.why}</div>
-                  )}
-                </div>
-              )}
-
               {tab === "read" && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <button
@@ -531,12 +453,6 @@ export default function FeedbackPage() {
                     className="rounded-lg bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
                   >
                     {T("新規に戻す")}
-                  </button>
-                  <button
-                    onClick={() => void reveal(r.id)}
-                    className="rounded-lg bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 transition hover:bg-amber-100 active:scale-95"
-                  >
-                    {found ? "もう一度たしかめる" : "良くないコメント"}
                   </button>
                   {canDelete && (
                     <button

@@ -647,10 +647,9 @@ export default function CafeteriaAdminPage() {
                       setBulkOpen((v) => !v);
                       if (!bulkOpen && date) setBulkDates([ymd(date)]);
                     }}
-                    disabled={busy || !name.trim()}
-                    className="mt-1.5 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200 disabled:text-slate-300"
+                    className="mt-1.5 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200"
                   >
-                    {bulkOpen ? T("まとめて入れるのをやめる") : T("何日ぶんかまとめて入れる")}
+                    {bulkOpen ? T("カレンダーを閉じる") : T("カレンダーから何日ぶんかまとめて入れる")}
                   </button>
 
                   {bulkOpen && (
@@ -659,6 +658,12 @@ export default function CafeteriaAdminPage() {
                         {target.name} に「{name.trim() || "（品名を入れてください）"}
                         {price.trim() ? ` ${price}円` : ""}」を入れる日
                       </div>
+                      {/*
+                        予定の登録と同じカレンダー。
+                        日をいくつでも押せて、「毎週くり返す」で
+                        何週ぶんかをまとめて足せる。
+                        同じ献立を何週も出すことがあるので、そこが要る。
+                      */}
                       <MultiDatePicker value={bulkDates} onChange={setBulkDates} />
                       <button
                         onClick={() => void saveMany()}
@@ -667,7 +672,9 @@ export default function CafeteriaAdminPage() {
                       >
                         {busy
                           ? "保存中…"
-                          : `${bulkDates.length} 日ぶんに入れる`}
+                          : !name.trim()
+                            ? "品名を入れてください"
+                            : `${bulkDates.length} 日ぶんに入れる`}
                       </button>
                     </div>
                   )}

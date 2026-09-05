@@ -622,25 +622,64 @@ export default function AdminPage() {
       {/* 既存の絞り込み */}
       {tab === "existing" && (
         <div className="mb-3 rounded-xl bg-slate-50 p-2.5">
+          {/*
+            身分で、出す絞り込みを変える。
+
+            その人が持っていないもので絞れると、押しても誰も出てこない。
+            「絞り込みが壊れている」ように見えるので、はじめから出さない。
+
+              学生   学年・学科・クラス（ぜんぶ持っている）
+              教授   学科だけ（担当している学科。学年もクラスも無い）
+              その他 何も無い
+          */}
           <Filter
             label="身分"
             value={fAff}
-            onPick={setFAff}
+            onPick={(v) => {
+              setFAff(v);
+              // 身分を変えたら、その身分に無い絞り込みは外す。
+              // 残っていると「誰も出てこない」の理由が分からなくなる
+              if (v === "other") {
+                setFGrade(null);
+                setFClass(null);
+                setFClassNo(null);
+              } else if (v === "teacher") {
+                setFGrade(null);
+                setFClassNo(null);
+              }
+            }}
             options={AFFILIATIONS.map((a) => [a.id, a.label])}
           />
-          <Filter label="学年" value={fGrade} onPick={setFGrade} options={GRADES.map((g) => [g, `${g}年`])} />
-          <Filter
-            label="学科"
-            value={fClass}
-            onPick={setFClass}
-            options={CLASS_CODES.map((c) => [c.code, c.code])}
-          />
-          <Filter
-            label="クラス"
-            value={fClassNo}
-            onPick={setFClassNo}
-            options={CLASS_NOS.map((n) => [n, String(n)])}
-          />
+
+          {fAff !== "other" && fAff !== "teacher" && (
+            <Filter
+              label="学年"
+              value={fGrade}
+              onPick={setFGrade}
+              options={GRADES.map((g) => [g, `${g}年`])}
+            />
+          )}
+          {fAff !== "other" && (
+            <Filter
+              label={fAff === "teacher" ? "担当学科" : "学科"}
+              value={fClass}
+              onPick={setFClass}
+              options={CLASS_CODES.map((c) => [c.code, c.code])}
+            />
+          )}
+          {fAff !== "other" && fAff !== "teacher" && (
+            <Filter
+              label="クラス"
+              value={fClassNo}
+              onPick={setFClassNo}
+              options={CLASS_NOS.map((n) => [n, String(n)])}
+            />
+          )}
+          {fAff === "other" && (
+            <p className="px-1 py-1 text-[10px] text-slate-500">
+              {T("その他の人は、学年・学科・クラスを持っていません。")}
+            </p>
+          )}
           {/* 名列番号は200通りあるので、並べて絞り込む形にはしない。
               身分・学年・学科・クラスで絞ったうえで、一覧から探す */}
         </div>
