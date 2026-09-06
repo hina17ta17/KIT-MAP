@@ -25,7 +25,14 @@ import {
   type AppData,
   type SearchHit,
 } from "@/lib/appdata";
-import { ROLE_LABEL, ROLE_SHORT, canReadFeedback, canViewCampusInfo, type Role } from "@/lib/auth";
+import {
+  ROLE_LABEL,
+  ROLE_SHORT,
+  canManageAll,
+  canReadFeedback,
+  canViewCampusInfo,
+  type Role,
+} from "@/lib/auth";
 import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, findBestPath, nearestNode } from "@/lib/route";
 import CampusPanel from "./CampusPanel";
@@ -2136,6 +2143,29 @@ export default function Guide() {
               <span className="ml-auto shrink-0 text-slate-400">›</span>
             </a>
           )}
+
+          {/*
+            履歴への入口。感想のすぐ下に置く。
+
+            見られるのはレベル2.1・2.2・管理者だけ。
+            誰が何を変えたか・消したかが並ぶので、
+            人の操作が見える種類の情報にあたる。
+          */}
+          {canManageAll(role) && (
+            <a
+              href="/admin/history"
+              className="mt-1.5 flex shrink-0 items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5 transition hover:bg-slate-200 active:scale-95"
+            >
+              <span className="text-base">🕘</span>
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-slate-800">{T("履歴")}</span>
+                <span className="block text-[10px] text-slate-500">
+                  {T("いつ・誰が・何を変えたか。消したものは戻せます")}
+                </span>
+              </span>
+              <span className="ml-auto shrink-0 text-slate-400">›</span>
+            </a>
+          )}
         </div>
       )}
 
@@ -2156,13 +2186,13 @@ export default function Guide() {
 
           押すもの（ボタンや行き先）だけ、下で auto に戻す。
       */}
-      <div className="pointer-events-none absolute left-4 top-4 z-10 flex w-fit max-w-[16rem] flex-col items-start gap-2">
+      <div className="absolute left-4 top-4 z-10 flex w-fit max-w-[16rem] flex-col items-start gap-2">
         {/* 現在地と、その状態を横に並べる。
             状態を下の段に置くと、地図が見える面積を余計に削るため */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={startWatch}
-            className="pointer-events-auto flex shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white active:scale-95"
+            className="flex shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white active:scale-95"
           >
             <span
               className={`inline-block h-2.5 w-2.5 rounded-full ${
@@ -2269,7 +2299,20 @@ export default function Guide() {
 
         {/* 出発地を押した直後。次に何をすればよいかを出す */}
         {pickedFrom && (
-          <div className="flex max-w-[16rem] items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-[11px] font-bold text-white shadow-md">
+          /*
+            ★文字の部分は指を素通しさせる（pointer-events-none）
+
+              ここは読むための帯。出発地を選ぶと出るので、
+              そのあとだけ地図の触れる面積が狭くなっていた。
+              二本指の片方がこの上に乗ると、地図は「一本しか
+              触れていない」と受け取り、拡大縮小が効かない。
+
+              「やめる」だけは押せるように、そこで戻してある。
+              列ぜんぶを素通しにすると、こんどは左側のボタンが
+              一つも押せなくなる（実際にそうしてしまった）。
+              素通しにするのは、この帯の文字だけでよい。
+          */
+          <div className="pointer-events-none flex max-w-[16rem] items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-[11px] font-bold text-white shadow-md">
             <span className="min-w-0">
               <span className="block truncate">出発：{pickedFrom.title}</span>
               <span className="block font-normal text-blue-100">
@@ -2315,14 +2358,14 @@ export default function Guide() {
                   {geoState !== "insecure" && geoState !== "unavailable" && (
                     <button
                       onClick={startWatch}
-                      className="pointer-events-auto rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white active:scale-95"
+                      className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white active:scale-95"
                     >
                       {geoState === "denied" ? T("許可し直したら押す") : T("もう一度試す")}
                     </button>
                   )}
                   <button
                     onClick={toggleGeoHelp}
-                    className="pointer-events-auto text-[10px] text-slate-400 underline active:scale-95"
+                    className="text-[10px] text-slate-400 underline active:scale-95"
                   >
                     {geoHelp && geoState !== "denied" ? T("閉じる") : T("直し方")}
                   </button>
@@ -2335,7 +2378,7 @@ export default function Guide() {
                 onClick={muteGeo}
                 aria-label="現在地を使わない"
                 title="現在地を使わない"
-                className="pointer-events-auto -mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[13px] font-bold leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                className="-mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[13px] font-bold leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-90"
               >
                 ×
               </button>
@@ -2441,7 +2484,7 @@ export default function Guide() {
             </p>
             <a
               href="/login"
-              className="pointer-events-auto mt-3 block w-full rounded-xl bg-blue-600 px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-blue-700"
+              className="mt-3 block w-full rounded-xl bg-blue-600 px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-blue-700"
             >
               ログイン画面へ
             </a>

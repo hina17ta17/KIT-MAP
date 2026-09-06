@@ -1170,9 +1170,16 @@ export default function AdminPage() {
                         : "bg-white ring-slate-200"
                 }`}
               >
-                {/* 印。まとめて変えたいときだけ使う。名前を押すのとは別の的にする。
-                    手続きの途中の人は承認の対象にしないので出さない */}
-                {ready && (
+                {/*
+                  印。名前を押すのとは別の的にする。
+
+                  ★手続きの途中の人にも出す
+                    前は、本人確認の済んだ人にしか出していなかった。
+                    承認の対象にはならないので要らない、と考えたためだが、
+                    途中でやめた人こそリセットしたい相手だった。
+                    それができないと、承認の画面からは手が出せなかった。
+                    印は「選ぶ」ためのものなので、誰にでも出す。
+                */}
                 <button
                   onClick={() => setPicked((p) => (on ? p.filter((x) => x !== r.id) : [...p, r.id]))}
                   aria-label={on ? "印を外す" : "印を付ける"}
@@ -1182,11 +1189,16 @@ export default function AdminPage() {
                 >
                   ✓
                 </button>
-                )}
 
                 {/* 名前を押すと、その人の権限の欄が開く */}
+                {/*
+                  名前を押すと、その人の欄が開く。
+
+                  手続きの途中の人でも開く。権限は変えられないが、
+                  リセットはできる（開いた欄の下に置いてある）。
+                */}
                 <button
-                  onClick={() => ready && setOpen(here ? null : r.id)}
+                  onClick={() => setOpen(here ? null : r.id)}
                   className="min-w-0 flex-1 text-left"
                 >
                   <span className="block truncate text-sm font-semibold text-slate-900">
@@ -1237,18 +1249,30 @@ export default function AdminPage() {
                   </span>
                 </button>
 
-                {ready && (
-                  <span
-                    className={`mt-1 shrink-0 text-slate-400 transition ${here ? "rotate-90" : ""}`}
-                  >
-                    ›
-                  </span>
-                )}
+                <span
+                  className={`mt-1 shrink-0 text-slate-400 transition ${here ? "rotate-90" : ""}`}
+                >
+                  ›
+                </span>
               </div>
 
-              {/* その人の権限を変える欄。本人確認が済んでいない人には出さない */}
-              {here && ready && (
+              {/*
+                その人の欄。誰にでも開く。
+
+                権限の並びは、本人確認と所属が済んだ人にだけ出す
+                （確かめられていない相手に権限は付けられない）。
+                リセットはその下にあり、こちらは誰にでも出す。
+              */}
+              {here && (
                 <div className="mt-1 rounded-xl bg-slate-900 p-2.5">
+                  {!ready && (
+                    <p className="mb-2 rounded-lg bg-slate-800 px-2.5 py-2 text-[10px] leading-relaxed text-amber-200">
+                      {T("この人はまだ本人確認か所属の記入が済んでいません。")}
+                      {T("権限は付けられませんが、下からリセットはできます。")}
+                    </p>
+                  )}
+                  {ready && (
+                  <>
                   <div className="mb-1.5 text-[10px] font-bold text-slate-400">
                     {T("権限を変える")}
                     <span className="ml-1.5 font-normal text-slate-500">
@@ -1327,6 +1351,8 @@ export default function AdminPage() {
                       })}
                     </div>
                   </div>
+                  </>
+                  )}
 
                   {/*
                     この人だけをリセットする。

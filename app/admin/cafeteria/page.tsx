@@ -57,8 +57,19 @@ export default function CafeteriaAdminPage() {
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
 
-  /** 日を選ぶところから始める */
-  const [date, setDate] = useState<Date | null>(null);
+  /**
+   * 見ている日。
+   *
+   * ★カレンダーから始めない
+   *   前は「まず日を選んでください」でカレンダーだけを出していた。
+   *   毎日いちばん多いのは「今日のぶんを入れる」なので、
+   *   そのたびに今日を押させていたことになる。
+   *   予定の登録と同じで、はじめから中身の欄を出し、
+   *   日は上のカレンダーで選び直す形にする。
+   */
+  const [date, setDate] = useState<Date | null>(() => new Date());
+  /** カレンダーを開いているか。日を選び直すときだけ出す */
+  const [calOpen, setCalOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   /** いま設定している項目 */
   const [target, setTarget] = useState<Item | null>(null);
@@ -125,6 +136,8 @@ export default function CafeteriaAdminPage() {
         .order("sort_order")
         .order("name");
       setPresets((pr.data as Preset[]) ?? []);
+      // はじめから今日を出しているので、その日のぶんも一緒に読む
+      await loadDay(new Date());
       setLoading(false);
     })();
   }, []);
@@ -182,6 +195,32 @@ export default function CafeteriaAdminPage() {
       setMsg({ kind: "err", text: T("名称を入れてください") });
       return;
     }
+
+    /*
+     * 入れる前に一度たずねる。
+     *
+     * その日にもう入っているものは、黙って置き換わる。
+     * 何日ぶんもまとめて入れたあとだと、どこを上書きするのか
+     * 分からなくなるので、日と枠と中身をそのまま出して確かめる。
+     */
+    const before = menus.get(target.id);
+    if (
+      !window.confirm(
+        [
+          `${ymd(date)}（${WEEK[date.getDay()]}）の ${target.name} に入れます。`,
+          "",
+          `  ${name.trim()}${price.trim() ? `  ${price}円` : ""}`,
+          "",
+          before
+            ? `いまは「${before.name}${before.price != null ? ` ${before.price}円` : ""}」が入っています。置き換わります。`
+            : "この枠は、まだ何も入っていません。",
+          "",
+          "よろしいですか？",
+        ].join(BR),
+      )
+    )
+      return;
+
     setBusy(true);
     setMsg(null);
     const { error } = await createClient().from("menu_days").upsert(
@@ -422,42 +461,46 @@ export default function CafeteriaAdminPage() {
         </button>
       )}
 
-      {/* ---- 1. 日を選ぶ ---- */}
-      {!date && (
-        <>
-          <p className="mb-2 text-[11px] font-bold text-slate-500">{T("まず日を選んでください")}</p>
-          <Cal
-            onPick={(d) => {
-              setDate(d);
-              setTarget(null);
-              void loadDay(d);
-            }}
-          />
-        </>
-      )}
-
       {date && (
         <>
-          <div className="mb-3 flex items-center gap-2">
+          {/*
+            日。押すとカレンダーが開く。
+
+            予定の登録と同じ形にしてある。はじめから今日が入っていて、
+            別の日にしたいときだけカレンダーを開く。
+          */}
+          <div className="mb-2 flex items-center gap-2">
+            {target && (
+              <button
+                onClick={() => setTarget(null)}
+                className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200"
+              >
+                ← {T("項目を選び直す")}
+              </button>
+            )}
             <button
-              onClick={() => {
-                if (target) setTarget(null);
-                else setDate(null);
-              }}
-              className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200"
+              onClick={() => setCalOpen((v) => !v)}
+              className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-800 transition hover:bg-slate-200"
             >
-              ← {target ? "項目を選び直す" : "日を選び直す"}
-            </button>
-            <button
-              onClick={() => {
-                setDate(null);
-                setTarget(null);
-              }}
-              className="text-xs font-bold text-slate-800 underline decoration-slate-300 underline-offset-2"
-            >
-              {date.getFullYear()}年{date.getMonth() + 1}月{date.getDate()}日（{WEEK[date.getDay()]}）
+              📅 {date.getFullYear()}年{date.getMonth() + 1}月{date.getDate()}日（
+              {WEEK[date.getDay()]}）
+              <span className="ml-1 text-[10px] font-normal text-slate-500">
+                {calOpen ? T("閉じる") : T("日を選ぶ")}
+              </span>
             </button>
           </div>
+
+          {calOpen && (
+            <div className="mb-3 rounded-xl bg-slate-50 p-2">
+              <Cal
+                onPick={(d) => {
+                  setDate(d);
+                  setCalOpen(false);
+                  void loadDay(d);
+                }}
+              />
+            </div>
+          )}
 
           {/* ---- 2. 項目を選ぶ ---- */}
           {!target && (
@@ -561,11 +604,29 @@ export default function CafeteriaAdminPage() {
                     出てくるものはだいたい決まっているのに、来るたびに
                     品名と値段を打ち直していた。押せば両方が入る。
                   */}
-                  {presets.filter((pr) => pr.cafeteria_id === target.cafeteria_id).length > 0 && (
+                  {/*
+                    よく出す品の控え。
+
+                    ★いつでも出す
+                      控えが一つも無いうちは、この欄ごと隠していた。
+                      隠れていると「そんな仕組みがある」と気づけないので、
+                      空でも枠は出して、入れ方を書いておく。
+
+                      使えるのは食堂を預かる人（レベル0）と、
+                      副管理者（2.1・2.2）・管理者。
+                      この画面に入れる人と同じなので、ここでは分けない。
+                  */}
+                  {canManageCafeteria(role) && (
                     <div className="mb-2 rounded-xl bg-slate-50 p-2">
                       <div className="text-[10px] font-bold text-slate-500">
                         {T("よく出す品（押すと入ります）")}
                       </div>
+                      {presets.filter((pr) => pr.cafeteria_id === target.cafeteria_id).length ===
+                        0 && (
+                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                          {T("まだ控えがありません。品名と値段を入れて、下の「この品を控えに入れる」を押すと、次から押すだけで入ります。")}
+                        </p>
+                      )}
                       <div className="mt-1 flex flex-wrap gap-1">
                         {presets
                           .filter((pr) => pr.cafeteria_id === target.cafeteria_id)

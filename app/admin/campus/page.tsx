@@ -893,6 +893,135 @@ export default function CampusPage() {
     }
   };
 
+  /**
+   * 学科ごとの科目の数。
+   *
+   * 消すときの確認に出す。「この学科の科目 12 件が学科なしになります」
+   * と数で言えないと、押していいのか判断できない。
+   */
+  const [courseCount, setCourseCount] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    if (!supabaseReady || !deptOpen) return;
+    void (async () => {
+      const { data } = await createClient().from("courses").select("department_id").limit(5000);
+      const m: Record<number, number> = {};
+      for (const c of (data as { department_id: number | null }[]) ?? [])
+        if (c.department_id != null) m[c.department_id] = (m[c.department_id] ?? 0) + 1;
+      setCourseCount(m);
+    })();
+  }, [deptOpen]);
+
+  /**
+   * 学科を消す。
+   *
+   * ■ 何が道連れになるか
+   *   学科は、科目（courses.department_id）から指されている。
+   *   消すと、その科目の学科は「無し」になる（on delete set null）。
+   *   科目そのものと、入れてある予定は残る。
+   *
+   *   申請してきた人の学科（profiles.class_code）は記号で持っていて、
+   *   この表とは繋がっていない。だから学科を消しても、
+   *   その人の申請が消えることはない。ただし記号が合わなくなるので、
+   *   自動の割り振りは通らなくなる。そこは確認の文に書く。
+   */
+  const removeDept = async () => {
+    if (deptPick === "new") return;
+    const d = depts.find((x) => String(x.id) === deptPick);
+    if (!d) return;
+
+    const used = courseCount[d.id] ?? 0;
+    if (
+      !window.confirm(
+        [
+          `学科「${d.name}${d.code ? `（${d.code}）` : ""}」を消します。`,
+          "",
+          used > 0 ? `  この学科の科目 ${used} 件は、学科が「無し」になります` : "  この学科の科目はありません",
+          "  科目そのものと、入れてある予定は残ります",
+          "",
+          d.code
+            ? `記号「${d.code}」の人の申請は、これ以降その学科として通らなくなります。`
+            : "",
+          "元には戻せません。よろしいですか？",
+        ]
+          .filter((x) => x !== "")
+          .join(BR),
+      )
+    )
+      return;
+    if (!window.confirm(`本当に「${d.name}」を消しますか？${BR}${BR}これが最後の確認です。`)) return;
+
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await createClient().from("departments").delete().eq("id", d.id);
+      if (error) throw error;
+      setMsg({ kind: "ok", text: `学科「${d.name}」を消しました。` });
+      setDeptPick("new");
+      setCodeNew("");
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 学部を消す。
+   *
+   * ★中の学科も一緒に消える（on delete cascade）。
+   *   いちばん強い操作なので、中に何があるかを数えて見せてから訊く。
+   */
+  const removeFaculty = async () => {
+    if (facPick === "new") return;
+    const f = facs.find((x) => String(x.id) === facPick);
+    if (!f) return;
+    const inside = depts.filter((d) => d.faculty_id === f.id);
+
+    if (
+      !window.confirm(
+        [
+          `学部「${f.name}」を消します。`,
+          "",
+          inside.length > 0
+            ? `★この学部の学科 ${inside.length} 件も、一緒に消えます`
+            : "  この学部に学科はありません",
+          ...inside.slice(0, 8).map((d) => `    ・${d.name}${d.code ? `（${d.code}）` : ""}`),
+          inside.length > 8 ? `    ほか ${inside.length - 8} 件` : "",
+          "",
+          "消えた学科の科目は、学科が「無し」になります。",
+          "元には戻せません。よろしいですか？",
+        ]
+          .filter((x) => x !== "")
+          .join(BR),
+      )
+    )
+      return;
+    if (
+      !window.confirm(
+        `本当に「${f.name}」と、その中の ${inside.length} 学科を消しますか？${BR}${BR}これが最後の確認です。`,
+      )
+    )
+      return;
+
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await createClient().from("faculties").delete().eq("id", f.id);
+      if (error) throw error;
+      setMsg({ kind: "ok", text: `学部「${f.name}」を消しました。` });
+      setFacPick("new");
+      setDeptPick("new");
+      setCodeNew("");
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /* ---------------- ファイルを読む ---------------- */
 
   const pick = async (file: File | null) => {
@@ -1615,6 +1744,48 @@ export default function CampusPage() {
                 >
                   {busy ? T("登録中…") : T("この内容で登録する")}
                 </button>
+
+                {/*
+                  消す道。
+
+                  記号だけを消したいこともある（学科は残す）ので、
+                  「記号を空にする」も別に置いてある。
+                  学部を消すと、中の学科も一緒に消える。いちばん強いので下に。
+                */}
+                <div className="mt-3 border-t border-slate-200 pt-2">
+                  <div className="text-[10px] font-bold text-slate-500">{T("消す")}</div>
+                  <div className="mt-1 grid gap-1.5">
+                    {deptPick !== "new" && codeNew.trim() !== "" && (
+                      <button
+                        onClick={() => setCodeNew("")}
+                        disabled={busy}
+                        className="rounded-lg bg-slate-100 px-2 py-2 text-[11px] font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
+                      >
+                        {T("記号を空にする（上の「この内容で登録する」で決まります）")}
+                      </button>
+                    )}
+                    {deptPick !== "new" && (
+                      <button
+                        onClick={() => void removeDept()}
+                        disabled={busy}
+                        className="rounded-lg bg-white px-2 py-2 text-[11px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                      >
+                        {T("この学科を消す")}
+                      </button>
+                    )}
+                    {facPick !== "new" && (
+                      <button
+                        onClick={() => void removeFaculty()}
+                        disabled={busy}
+                        className="rounded-lg bg-red-600 px-2 py-2 text-[11px] font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
+                      >
+                        {T("この学部を消す")}（
+                        {depts.filter((d) => String(d.faculty_id) === facPick).length}
+                        {T("学科ごと")}）
+                      </button>
+                    )}
+                  </div>
+                </div>
               </>
             )}
           </div>
