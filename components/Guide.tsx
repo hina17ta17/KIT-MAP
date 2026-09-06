@@ -2711,8 +2711,15 @@ export default function Guide() {
         </div>
       )}
 
-      {/* 出典表示。地理院タイルの利用条件で必須。一覧に隠れない位置に置く */}
-      <span className="absolute bottom-0.5 right-1.5 z-30 rounded bg-white/70 px-1 text-[9px] text-slate-600">
+      {/*
+        出典表示。地理院タイルの利用条件で必須。一覧に隠れない位置に置く。
+
+        指は素通しにする（pointer-events-none）。
+        読むための札で、押す先が無い。z-30 で右下に居るので、
+        素通しにしないと建物一覧のいちばん下の行の「案内」を
+        この札が受け止めてしまう。字は今までどおり出たまま。
+      */}
+      <span className="pointer-events-none absolute bottom-0.5 right-1.5 z-30 rounded bg-white/70 px-1 text-[9px] text-slate-600">
         地理院タイル
       </span>
 

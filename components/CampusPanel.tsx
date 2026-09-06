@@ -30,7 +30,7 @@ import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
 import { t, type Lang } from "@/lib/i18n";
 import { dayColor, holidayName } from "@/lib/holidays";
 
-type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "teaching";
+type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "apply";
 
 /** いまの言葉。上から配って、部品の中で取り出す */
 const LangCtx = createContext<Lang>("ja");
@@ -202,20 +202,23 @@ function Panel({
             <Big onClick={() => setStep("free")} icon="🚪"
               label={T("空き教室")} sub={T("号館と時限から探す")} />
             {/*
-              教職課程。いちばん下に置く。
+              申請。いちばん下に置く。
 
               使う人は限られているので、上に置くと
               毎日使う三つを押しにくくする。
+
+              中に二つある（教職課程・課外活動リーダー）。
+              どちらも同じ「もう一段の申請」なので、一つにまとめてある。
             */}
-            <Big onClick={() => setStep("teaching")} icon="🎓"
-              label={T("教職")} sub={T("教職課程の申請と、その様子")} />
+            <Big onClick={() => setStep("apply")} icon="📝"
+              label={T("申請")} sub={T("教職課程・課外活動リーダー")} />
           </div>
         )}
 
         {step === "cafeteria" && <Cafeteria date={date} />}
         {step === "timetable" && <Timetable date={date} periods={periods} />}
         {step === "free" && <FreeRooms date={date} periods={periods} />}
-        {step === "teaching" && <Teaching />}
+        {step === "apply" && <Apply />}
       </div>
     </div>
   );
@@ -936,7 +939,341 @@ function ByActivity({ date }: { date: Date }) {
   );
 }
 
-/* ================= 教職課程 ================= */
+/* ================= 申請 ================= */
+
+/**
+ * 申請の入口。
+ *
+ * 中に二つある。
+ *   教職課程            名簿の教職の欄（xlsx の P列）と照らす
+ *   課外活動リーダー    8桁の番号と団体を、リーダーの名簿と照らす
+ *
+ * どちらも「もう一段」であって、権限（role）そのものではない。
+ * 断られても、いままでの使い方は何も変わらない。
+ * 跡を消したいときは「取り消す」で、ただのログインに戻せる。
+ *
+ * ■ 見ているのは kit-agent
+ *   申請を自動で見る仕組みにつけた名前。実体は Python ではなく、
+ *   データベースの中の関数（teaching_match / leader_match）。
+ *   Python を常に走らせておく場所が無いので、判断はぜんぶ
+ *   データベース側に置いてある。誰も何も動かしていなくても、
+ *   押したその場で答が出る。
+ */
+
+type AgentStep = { label: string; ok: boolean; detail: string };
+
+type AgentAnswer = {
+  ok: boolean;
+  /** ok … 通る／no … 通らない／wait … こちらの落ち度で決められない */
+  kind?: string;
+  reason: string;
+  activity?: string;
+  steps?: AgentStep[];
+};
+
+type Mine = {
+  email: string;
+  verified: boolean;
+  role: string;
+  teaching: boolean;
+  teaching_applied: boolean;
+  leader: boolean;
+  leader_applied: boolean;
+  leader_no: string;
+  leader_activity_id: number | null;
+  leader_reason: string;
+};
+
+/**
+ * いまの自分の様子。
+ *
+ * 列を並べずに取る。teaching や leader の列を足す SQL を流す前でも
+ * 落ちないようにするため。並べて書くと、無い列を一つ指しただけで
+ * 問い合わせ全部が失敗する（それで一度、感想が届かなくなった）。
+ */
+function useMe(): { me: Mine | null | undefined; reload: () => Promise<void> } {
+  /*
+   * 三つある。
+   *   undefined … まだ読んでいる
+   *   null      … 席が見つからない（ログインが切れている）
+   *   中身      … 読めた
+   *
+   * 「読んでいる」と「無い」を分けておかないと、席が切れたときに
+   * 「読み込み中…」が出たまま止まって見える。何が起きているのか
+   * 画面から分からなくなる。
+   */
+  const [me, setMe] = useState<Mine | null | undefined>(undefined);
+
+  const reload = useCallback(async () => {
+    if (!supabaseReady) {
+      setMe(null);
+      return;
+    }
+    const supabase = createClient();
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) {
+      setMe(null);
+      return;
+    }
+    const { data } = await supabase.from("profiles").select("*").eq("id", u.user.id).single();
+    const p = (data ?? {}) as Record<string, unknown>;
+    setMe({
+      email: typeof p.email === "string" ? p.email : (u.user.email ?? ""),
+      verified: p.verified === true,
+      role: typeof p.role === "string" ? p.role : "",
+      teaching: p.teaching === true,
+      teaching_applied: p.teaching_applied === true,
+      leader: p.leader === true,
+      leader_applied: p.leader_applied === true,
+      leader_no: typeof p.leader_no === "string" ? p.leader_no : "",
+      leader_activity_id: typeof p.leader_activity_id === "number" ? p.leader_activity_id : null,
+      leader_reason: typeof p.leader_reason === "string" ? p.leader_reason : "",
+    });
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return { me, reload };
+}
+
+/**
+ * kit-agent が見ているあいだと、見終わったあと。
+ *
+ * ■ 段（steps）は本物
+ *   データベースが実際に見た順と、その結果をそのまま返している。
+ *   こちらで組み立てた飾りではない。
+ *
+ * ■ 順に出しているのは、読めるようにするため
+ *   答は一度に返ってくる。六行がいっぺんに現れると
+ *   どこで引っかかったのか目で追えない。少しずつ出す。
+ *   出す速さを変えているだけで、答そのものは触っていない。
+ *
+ * ■ 「確認しています」を、少しのあいだは出しておく
+ *   答が速く返ると、押した人には何も起きなかったように見える。
+ *   読めるだけの間（0.9秒）は出したままにする。
+ */
+function useAgent() {
+  const [phase, setPhase] = useState<"idle" | "run" | "done">("idle");
+  const [answer, setAnswer] = useState<AgentAnswer | null>(null);
+  /** いま何段まで出したか */
+  const [shown, setShown] = useState(0);
+  const timers = useRef<number[]>([]);
+
+  const stop = useCallback(() => {
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [];
+  }, []);
+
+  // 画面を離れたら、待ち合わせをぜんぶ止める
+  useEffect(() => stop, [stop]);
+
+  const run = useCallback(
+    async (call: () => Promise<AgentAnswer>) => {
+      stop();
+      setPhase("run");
+      setAnswer(null);
+      setShown(0);
+
+      const began = Date.now();
+      let v: AgentAnswer;
+      try {
+        v = await call();
+      } catch (e) {
+        v = { ok: false, kind: "wait", reason: e instanceof Error ? e.message : String(e) };
+      }
+
+      const rest = Math.max(0, 900 - (Date.now() - began));
+      timers.current.push(
+        window.setTimeout(() => {
+          setAnswer(v);
+          const steps = v.steps ?? [];
+          steps.forEach((_, k) => {
+            timers.current.push(window.setTimeout(() => setShown(k + 1), k * 240));
+          });
+          timers.current.push(
+            window.setTimeout(() => setPhase("done"), Math.max(0, steps.length - 1) * 240 + 120),
+          );
+        }, rest),
+      );
+    },
+    [stop],
+  );
+
+  const reset = useCallback(() => {
+    stop();
+    setPhase("idle");
+    setAnswer(null);
+    setShown(0);
+  }, [stop]);
+
+  return { phase, answer, shown, run, reset };
+}
+
+function AgentView({
+  phase,
+  answer,
+  shown,
+}: {
+  phase: "idle" | "run" | "done";
+  answer: AgentAnswer | null;
+  shown: number;
+}) {
+  const T = useT();
+  if (phase === "idle") return null;
+
+  const done = phase === "done";
+  const ok = answer?.ok === true;
+  const steps = (answer?.steps ?? []).slice(0, shown);
+
+  return (
+    <div
+      className={`mt-3 rounded-xl border p-3 ${
+        done
+          ? ok
+            ? "border-emerald-200 bg-emerald-50/70"
+            : "border-red-200 bg-red-50/70"
+          : "border-blue-200 bg-blue-50/70"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="relative flex h-2.5 w-2.5 shrink-0">
+          {!done && (
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+          )}
+          <span
+            className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+              done ? (ok ? "bg-emerald-500" : "bg-red-500") : "bg-blue-500"
+            }`}
+          />
+        </span>
+        <span
+          className={`text-xs font-bold ${
+            done ? (ok ? "text-emerald-900" : "text-red-800") : "text-blue-900"
+          }`}
+        >
+          {!done
+            ? T("kit-agent が確認しています…")
+            : ok
+              ? T("できました")
+              : T("できませんでした")}
+        </span>
+      </div>
+
+      {steps.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {steps.map((st, k) => (
+            <li key={k} className="flex items-baseline gap-1.5 text-[11px]">
+              <span
+                className={`shrink-0 font-bold ${st.ok ? "text-emerald-600" : "text-red-600"}`}
+              >
+                {st.ok ? "✓" : "✕"}
+              </span>
+              <span className="shrink-0 font-bold text-slate-700">{T(st.label)}</span>
+              <span className="min-w-0 truncate text-slate-500">{st.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {done && answer && (
+        <p
+          className={`mt-2 border-t pt-2 text-[11px] leading-relaxed ${
+            ok ? "border-emerald-200 text-emerald-900" : "border-red-200 text-red-800"
+          }`}
+        >
+          {answer.reason}
+          {!ok && answer.kind === "wait" && (
+            <>
+              <br />
+              {T("こちらで直すことです。しばらく待つか、管理する人にお知らせください。")}
+            </>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 申請の入口。二つのうちどちらかを選ぶ */
+function Apply() {
+  const T = useT();
+  const [which, setWhich] = useState<"" | "teaching" | "leader">("");
+  const { me, reload } = useMe();
+
+  if (me === undefined) return <Note>{T("読み込み中…")}</Note>;
+  if (me === null)
+    return (
+      <div>
+        <Note>{T("ログインの様子が読み取れませんでした。入り直してからお試しください。")}</Note>
+        <a
+          href="/login"
+          className="mt-2 block rounded-xl bg-slate-900 px-3 py-2.5 text-center text-xs font-bold text-white transition hover:bg-slate-800"
+        >
+          {T("ログインの画面へ")}
+        </a>
+      </div>
+    );
+
+  if (which !== "") {
+    return (
+      <div>
+        <button
+          onClick={() => {
+            setWhich("");
+            void reload();
+          }}
+          className="mb-2 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200"
+        >
+          {T("← 申請にもどる")}
+        </button>
+        {which === "teaching" ? (
+          <TeachingApply me={me} onDone={reload} />
+        ) : (
+          <LeaderApply me={me} onDone={reload} />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600">
+        {T("申請すると、kit-agent が名簿と照らして、その場で決めます。")}
+        <br />
+        {T("通らなくても、いままでの使い方は何も変わりません。")}
+      </p>
+
+      <div className="mt-3 flex flex-col gap-2">
+        <Big
+          onClick={() => setWhich("teaching")}
+          icon="🎓"
+          label={T("教職の申請")}
+          sub={
+            me.teaching
+              ? T("通っています")
+              : me.teaching_applied
+                ? T("申請しましたが、通っていません")
+                : T("教職課程を履修している人")
+          }
+        />
+        <Big
+          onClick={() => setWhich("leader")}
+          icon="🏳"
+          label={T("課外活動リーダー申請")}
+          sub={
+            me.leader
+              ? T("通っています")
+              : me.leader_applied
+                ? T("申請しましたが、通っていません")
+                : T("部やプロジェクトの長をしている人")
+          }
+        />
+      </div>
+    </div>
+  );
+}
 
 /**
  * 教職課程の申請。
@@ -944,96 +1281,41 @@ function ByActivity({ date }: { date: Date }) {
  * ■ 順番
  *   ① 本人確認（認証アプリ）が済んでいること
  *   ② ここで申請を出す
- *   ③ その場で名簿と突き合わせて、通すか断るかまで決まる
+ *   ③ kit-agent が名簿と照らして、通すか断るかまで決まる
  *
  *   人を待たせない。名簿に印があれば、押したその場で通る。
- *
- * ■ 断られても、ふつうのログインは残る
- *   教職は「もう一段」であって、権限そのものではない。
- *   落ちても学生は学生のまま、今までどおり使える。
- *   跡を消したいときは「取り消す」で、ただのログインに戻せる。
  */
-function Teaching() {
+function TeachingApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) {
   const T = useT();
-  const [me, setMe] = useState<{
-    verified: boolean;
-    role: string;
-    teaching: boolean;
-    teaching_applied: boolean;
-  } | null>(null);
+  const { phase, answer, shown, run, reset } = useAgent();
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const load = useCallback(async () => {
-    if (!supabaseReady) return;
-    const supabase = createClient();
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) {
-      setMe(null);
-      return;
-    }
-    /*
-     * 列を並べずに取る。teaching の列を足す SQL を流す前でも
-     * 落ちないようにするため。並べて書くと、無い列を一つ指した
-     * だけで問い合わせ全部が失敗する。
-     */
-    const { data } = await supabase.from("profiles").select("*").eq("id", u.user.id).single();
-    const p = (data ?? {}) as Record<string, unknown>;
-    setMe({
-      verified: p.verified === true,
-      role: typeof p.role === "string" ? p.role : "",
-      teaching: p.teaching === true,
-      teaching_applied: p.teaching_applied === true,
-    });
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const apply = async () => {
     setBusy(true);
-    setMsg(null);
-    try {
+    await run(async () => {
       const { data, error } = await createClient().rpc("apply_teaching");
-      if (error) throw error;
-      const v = data as { ok: boolean; reason: string };
-      setMsg({
-        ok: v.ok,
-        text: v.ok ? `教職として通りました（${v.reason}）` : `申請できませんでした：${v.reason}`,
-      });
-      await load();
-    } catch (e) {
-      setMsg({
-        ok: false,
-        text:
-          e instanceof Error
-            ? `${e.message}（base/18_teaching.sql をまだ入れていない場合は、先に入れてください）`
-            : String(e),
-      });
-    } finally {
-      setBusy(false);
-    }
+      if (error) throw new Error(`${error.message}（base/18_teaching.sql をまだ入れていない場合は、先に入れてください）`);
+      return data as AgentAnswer;
+    });
+    await onDone();
+    setBusy(false);
   };
 
   const clear = async () => {
     if (!window.confirm("教職の申請を取り消して、ふつうのログインに戻します。よろしいですか？"))
       return;
     setBusy(true);
-    setMsg(null);
+    reset();
     try {
       const { error } = await createClient().rpc("clear_teaching");
       if (error) throw error;
-      setMsg({ ok: true, text: "取り消しました。ふつうのログインに戻っています。" });
-      await load();
+      await onDone();
     } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      window.alert(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
-
-  if (!me) return <Note>{T("読み込み中…")}</Note>;
 
   return (
     <div>
@@ -1043,62 +1325,29 @@ function Teaching() {
         {T("申請すると、名簿の教職の欄と突き合わせて、その場で決まります。")}
       </p>
 
-      {/* いまの様子 */}
-      <div className="mt-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-        <div className="text-[10px] font-bold text-slate-500">{T("いまの様子")}</div>
-        <div className="mt-1 flex items-center gap-2">
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-              me.teaching
-                ? "bg-emerald-100 text-emerald-900"
-                : me.teaching_applied
-                  ? "bg-amber-100 text-amber-900"
-                  : "bg-slate-100 text-slate-600"
-            }`}
-          >
-            {me.teaching
-              ? T("教職として通っています")
-              : me.teaching_applied
-                ? T("申請しましたが、通っていません")
-                : T("まだ申請していません")}
-          </span>
-        </div>
-      </div>
+      <Status
+        ok={me.teaching}
+        applied={me.teaching_applied}
+        okText={T("教職として通っています")}
+      />
 
-      {msg && (
-        <p
-          className={`mt-3 rounded-xl p-3 text-xs leading-relaxed ${
-            msg.ok ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-800"
-          }`}
-        >
-          {msg.text}
-        </p>
-      )}
-
-      {/* ① 本人確認 */}
       {!me.verified ? (
-        <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
-          <b>{T("先に本人確認をしてください")}</b>
-          <br />
-          {T("認証アプリの登録が済んでいないと、教職の申請はできません。")}
-          <br />
-          <a href="/login" className="mt-2 inline-block font-bold text-blue-700 underline">
-            {T("ログインの画面へ")}
-          </a>
-        </div>
+        <NeedVerify what={T("教職")} />
       ) : me.role === "pending" ? (
         <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
           {T("まだ利用の承認を待っています。承認されたら、ここから申請できます。")}
         </div>
       ) : (
         <>
+          <AgentView phase={phase} answer={answer} shown={shown} />
+
           <button
             onClick={() => void apply()}
             disabled={busy}
             className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
           >
             {busy
-              ? T("確認中…")
+              ? T("kit-agent が確認しています…")
               : me.teaching
                 ? T("もう一度たしかめる")
                 : T("教職課程を申請する")}
@@ -1122,6 +1371,262 @@ function Teaching() {
         <br />
         {T("教職として通っても、いままでの使い方は何も変わりません。")}
       </p>
+    </div>
+  );
+}
+
+/**
+ * 課外活動リーダーの申請。
+ *
+ * ■ 順番
+ *   ① 本人確認（認証アプリ）が済んでいること
+ *   ② 8桁の番号を入れる（学生証・職員証の番号）
+ *   ③ どこの課外活動のリーダーかを選ぶ
+ *   ④ kit-agent が、リーダーの名簿と照らして決める
+ *
+ * ■ なぜ番号が要るのか
+ *   団体を選ぶだけで通ると、誰でもどこの長にでもなれてしまう。
+ *   番号は「その名簿の行が、いま押しているこの人のものか」を
+ *   確かめるための鍵。人のものを入れても通らない（データベース側で、
+ *   その番号がご本人のものかを先に見ている）。
+ *
+ * ■ 通ると、課外活動リーダーの権限が付く
+ *   この権限（admin_l1）は前からあって、今までは承認する人が
+ *   手で付けていた。付くと、自分の団体の予定を入れられる。
+ *   教授など、もっと上の権限の人は動かさない（下げない）。
+ */
+function LeaderApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) {
+  const T = useT();
+  const { phase, answer, shown, run, reset } = useAgent();
+  const [busy, setBusy] = useState(false);
+
+  const [cats, setCats] = useState<Cat[]>([]);
+  const [acts, setActs] = useState<Act[]>([]);
+  const [catId, setCatId] = useState<number | null>(null);
+  const [actId, setActId] = useState<number | null>(null);
+  const [no, setNo] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      const supabase = createClient();
+      const [c, a] = await Promise.all([
+        supabase.from("activity_categories").select("id, name").order("sort_order"),
+        supabase.from("club_activities").select("id, category_id, name").order("sort_order"),
+      ]);
+      setCats((c.data as Cat[]) ?? []);
+      setActs((a.data as Act[]) ?? []);
+    })();
+  }, []);
+
+  // 前に出した申請があれば、その番号と団体を入れておく（打ち直さなくて済む）
+  useEffect(() => {
+    if (me.leader_no) setNo(me.leader_no);
+    if (me.leader_activity_id !== null) setActId(me.leader_activity_id);
+  }, [me.leader_no, me.leader_activity_id]);
+
+  // 団体が決まっているなら、その分類を開いておく
+  useEffect(() => {
+    if (actId === null || catId !== null) return;
+    const a = acts.find((x) => x.id === actId);
+    if (a?.category_id != null) setCatId(a.category_id);
+  }, [actId, catId, acts]);
+
+  const list = catId === null ? [] : acts.filter((a) => a.category_id === catId);
+  const picked = acts.find((a) => a.id === actId) ?? null;
+  const trimmed = no.replace(/[\s\u3000]/g, "");
+
+  const apply = async () => {
+    setBusy(true);
+    await run(async () => {
+      const { data, error } = await createClient().rpc("apply_leader", {
+        p_no: trimmed,
+        p_activity_id: actId,
+      });
+      if (error)
+        throw new Error(`${error.message}（base/20_leader.sql をまだ入れていない場合は、先に入れてください）`);
+      return data as AgentAnswer;
+    });
+    await onDone();
+    setBusy(false);
+  };
+
+  const clear = async () => {
+    if (!window.confirm("リーダーの申請を取り消して、ふつうのログインに戻します。よろしいですか？"))
+      return;
+    setBusy(true);
+    reset();
+    try {
+      const { error } = await createClient().rpc("clear_leader");
+      if (error) throw error;
+      setNo("");
+      setActId(null);
+      await onDone();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <p className="rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600">
+        {T("部・サークル・プロジェクトの長をしている人だけが使える欄です。")}
+        <br />
+        {T("8桁の番号と団体を、kit-agent がリーダーの名簿と照らします。")}
+        <br />
+        {T("通ると、自分の団体の予定を入れられるようになります。")}
+      </p>
+
+      <Status
+        ok={me.leader}
+        applied={me.leader_applied}
+        okText={
+          picked && me.leader
+            ? `${picked.name}${T("のリーダーとして通っています")}`
+            : T("リーダーとして通っています")
+        }
+      />
+
+      {!me.verified ? (
+        <NeedVerify what={T("リーダー")} />
+      ) : me.role === "pending" ? (
+        <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+          {T("まだ利用の承認を待っています。承認されたら、ここから申請できます。")}
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+            <label className="block text-[10px] font-bold text-slate-500">
+              {T("8桁の番号")}
+            </label>
+            <input
+              value={no}
+              onChange={(e) => setNo(e.target.value)}
+              autoComplete="off"
+              inputMode="text"
+              maxLength={16}
+              placeholder={T("学生証の番号（例：c1234567）")}
+              className="mt-1 w-full rounded-lg bg-slate-50 px-3 py-2 font-mono text-sm outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-[10px] text-slate-400">
+              {trimmed === ""
+                ? T("学生証・職員証に書いてある番号を、そのまま入れてください。")
+                : trimmed.length === 8
+                  ? T("8桁になっています。")
+                  : T("いま {n}桁です。8桁で入れてください。").replace("{n}", String(trimmed.length))}
+            </p>
+
+            <label className="mt-3 block text-[10px] font-bold text-slate-500">
+              {T("何系の活動ですか")}
+            </label>
+            <select
+              value={catId ?? ""}
+              onChange={(e) => {
+                setCatId(e.target.value ? Number(e.target.value) : null);
+                setActId(null);
+              }}
+              className="mt-1 w-full rounded-lg bg-slate-50 px-3 py-2 text-xs outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">{T("選んでください")}</option>
+              {cats.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+
+            <label className="mt-2 block text-[10px] font-bold text-slate-500">
+              {T("どこのリーダーですか")}
+            </label>
+            <select
+              value={actId ?? ""}
+              onChange={(e) => setActId(e.target.value ? Number(e.target.value) : null)}
+              disabled={catId === null}
+              className="mt-1 w-full rounded-lg bg-slate-50 px-3 py-2 text-xs outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-500 disabled:text-slate-400"
+            >
+              <option value="">
+                {catId === null ? T("先に系統を選んでください") : T("選んでください")}
+              </option>
+              {list.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <AgentView phase={phase} answer={answer} shown={shown} />
+
+          <button
+            onClick={() => void apply()}
+            disabled={busy || trimmed === "" || actId === null}
+            className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
+          >
+            {busy
+              ? T("kit-agent が確認しています…")
+              : me.leader
+                ? T("もう一度たしかめる")
+                : T("リーダーとして申請する")}
+          </button>
+
+          {me.leader_applied && (
+            <button
+              onClick={() => void clear()}
+              disabled={busy}
+              className="mt-1.5 w-full rounded-xl px-4 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-100"
+            >
+              {T("リーダーの申請を取り消す")}
+            </button>
+          )}
+        </>
+      )}
+
+      <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
+        {T("リーダーの名簿に載っていないと、申請は通りません。")}
+        {T("長をしているのに通らないときは、管理者にお知らせください。")}
+        <br />
+        {T("人の番号を入れても通りません。番号がご本人のものかを先に見ています。")}
+      </p>
+    </div>
+  );
+}
+
+/** いまの様子の帯。教職とリーダーで同じ形にする */
+function Status({ ok, applied, okText }: { ok: boolean; applied: boolean; okText: string }) {
+  const T = useT();
+  return (
+    <div className="mt-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+      <div className="text-[10px] font-bold text-slate-500">{T("いまの様子")}</div>
+      <div className="mt-1 flex items-center gap-2">
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+            ok
+              ? "bg-emerald-100 text-emerald-900"
+              : applied
+                ? "bg-amber-100 text-amber-900"
+                : "bg-slate-100 text-slate-600"
+          }`}
+        >
+          {ok ? okText : applied ? T("申請しましたが、通っていません") : T("まだ申請していません")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** 本人確認がまだのとき */
+function NeedVerify({ what }: { what: string }) {
+  const T = useT();
+  return (
+    <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+      <b>{T("先に本人確認をしてください")}</b>
+      <br />
+      {T("認証アプリの登録が済んでいないと、{x}の申請はできません。").replace("{x}", what)}
+      <br />
+      <a href="/login" className="mt-2 inline-block font-bold text-blue-700 underline">
+        {T("ログインの画面へ")}
+      </a>
     </div>
   );
 }

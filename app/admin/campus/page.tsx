@@ -24,7 +24,7 @@
  *   送るのは、読み取った行の中身だけ。
  *
  * ■ 通す・弾くの判定はここに書かない
- *   同じ決まりを画面と Python のエージェントの二箇所に書くと、
+ *   同じ決まりを画面と kit-agent の二箇所に書くと、
  *   片方だけ直したときに食い違う。判定はデータベース側の
  *   import_roster に一本化してあり、ここは渡して結果を見せるだけ。
  */
@@ -142,6 +142,17 @@ type DomainOn = Record<DomainKind, boolean>;
  *   ここで出すのは、席があって権限が付いている人（profiles）。
  */
 type PeopleKind = "student" | "teacher" | "leader" | "cafeteria" | "other";
+
+/** 課外活動リーダーの名簿の一行 */
+type LeaderRow = {
+  id: number;
+  activity_id: number;
+  activity_name: string;
+  category_name: string;
+  number: string;
+  full_name: string;
+  note: string;
+};
 
 const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
   // byDept … 学部と学科を選んでから見る（学年・クラスを持っている人）
@@ -309,6 +320,28 @@ export default function CampusPage() {
   const [deptNew, setDeptNew] = useState("");
   /** 学科の記号（CC など） */
   const [codeNew, setCodeNew] = useState("");
+
+  /*
+   * 課外活動リーダーの名簿。
+   *
+   * ここに入れた人だけが、地図の「申請 → 課外活動リーダー申請」で通る。
+   * ここが空のあいだ、kit-agent は誰も通さない（「まだ入っていません」と
+   * 言って断る）。名簿の入れ忘れで、正しい人を追い返さないため。
+   */
+  const [leadOpen, setLeadOpen] = useState(false);
+  const [leadCats, setLeadCats] = useState<{ id: number; name: string }[]>([]);
+  const [leadActs, setLeadActs] = useState<{ id: number; category_id: number | null; name: string }[]>([]);
+  const [leadRows, setLeadRows] = useState<LeaderRow[]>([]);
+  const [leadTotal, setLeadTotal] = useState(0);
+  const [leadBusy, setLeadBusy] = useState(false);
+  const [leadQ, setLeadQ] = useState("");
+  /** 一覧を絞る団体。null なら絞らない */
+  const [leadPick, setLeadPick] = useState<number | null>(null);
+  /** 入れる欄。分類を選んでから団体を選ぶ */
+  const [leadCat, setLeadCat] = useState<number | null>(null);
+  const [leadAct, setLeadAct] = useState<number | null>(null);
+  const [leadNo, setLeadNo] = useState("");
+  const [leadName, setLeadName] = useState("");
 
   /** ドメイン名確認 */
   const [domainOpen, setDomainOpen] = useState(false);
@@ -912,6 +945,149 @@ export default function CampusPage() {
     })();
   }, [deptOpen]);
 
+  /* ---------------- 課外活動リーダーの名簿 ---------------- */
+
+  const loadLeaders = useCallback(async () => {
+    if (!supabaseReady) return;
+    setLeadBusy(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("leader_roster_list", {
+        p_q: leadQ.trim(),
+        p_activity_id: leadPick,
+        p_limit: 300,
+        p_offset: 0,
+      });
+      if (error) throw error;
+      const list = (data as (LeaderRow & { total: number })[]) ?? [];
+      setLeadRows(list);
+      setLeadTotal(list.length > 0 ? Number(list[0].total) : 0);
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          (e instanceof Error ? e.message : String(e)) +
+          "（base/20_leader.sql をまだ入れていない場合は、先に入れてください）",
+      });
+      setLeadRows([]);
+      setLeadTotal(0);
+    } finally {
+      setLeadBusy(false);
+    }
+  }, [leadQ, leadPick]);
+
+  // 開いたときに、団体の一覧を読む（分類 → 団体 と選ばせるため）
+  useEffect(() => {
+    if (!supabaseReady || !leadOpen || leadActs.length > 0) return;
+    void (async () => {
+      const supabase = createClient();
+      const [c, a] = await Promise.all([
+        supabase.from("activity_categories").select("id, name").order("sort_order"),
+        supabase.from("club_activities").select("id, category_id, name").order("sort_order"),
+      ]);
+      setLeadCats((c.data as { id: number; name: string }[]) ?? []);
+      setLeadActs((a.data as { id: number; category_id: number | null; name: string }[]) ?? []);
+    })();
+  }, [leadOpen, leadActs.length]);
+
+  useEffect(() => {
+    if (!leadOpen) return;
+    const t = window.setTimeout(() => void loadLeaders(), 200);
+    return () => window.clearTimeout(t);
+  }, [leadOpen, loadLeaders]);
+
+  /**
+   * リーダーを一人足す。
+   *
+   * 番号は 8桁。学生証・職員証に書いてあるものをそのまま入れる。
+   * ここで入れた番号と、申請する本人の番号が合わないと通らないので、
+   * 打ち間違いはそのまま「通らない」になって返ってくる。
+   */
+  const addLeader = async () => {
+    const no = leadNo.replace(/[\s\u3000]/g, "");
+    if (leadAct === null) {
+      setMsg({ kind: "err", text: "どこの団体かを選んでください。" });
+      return;
+    }
+    if (no.length !== 8) {
+      setMsg({ kind: "err", text: `番号は 8桁で入れてください（いま ${no.length}桁）。` });
+      return;
+    }
+    const act = leadActs.find((a) => a.id === leadAct);
+    if (
+      !window.confirm(
+        [
+          "課外活動リーダーの名簿に、一人足します。",
+          "",
+          `  団体  ${act?.name ?? ""}`,
+          `  番号  ${no}`,
+          leadName.trim() ? `  氏名  ${leadName.trim()}` : "",
+          "",
+          "この番号の人が申請すると、kit-agent が通します。",
+        ]
+          .filter((x) => x !== "")
+          .join(BR),
+      )
+    )
+      return;
+
+    setLeadBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await createClient()
+        .from("club_leaders")
+        .insert({ activity_id: leadAct, number: no, full_name: leadName.trim() });
+      if (error) throw error;
+      setMsg({ kind: "ok", text: `${act?.name ?? ""} に ${no} を足しました。` });
+      setLeadNo("");
+      setLeadName("");
+      await loadLeaders();
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      setMsg({
+        kind: "err",
+        text: /duplicate|club_leaders_one/.test(m)
+          ? "その団体には、その番号がもう入っています。"
+          : m,
+      });
+    } finally {
+      setLeadBusy(false);
+    }
+  };
+
+  const removeLeader = async (r: LeaderRow) => {
+    if (
+      !window.confirm(
+        [
+          "課外活動リーダーの名簿から、一人外します。",
+          "",
+          `  団体  ${r.activity_name}`,
+          `  番号  ${r.number}`,
+          r.full_name ? `  氏名  ${r.full_name}` : "",
+          "",
+          "外すと、その人は次に確かめたときにリーダーでなくなります。",
+          "（申請で付いた権限だけが学生に戻ります。手で付けた権限は残ります）",
+        ]
+          .filter((x) => x !== "")
+          .join(BR),
+      )
+    )
+      return;
+
+    setLeadBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await createClient().from("club_leaders").delete().eq("id", r.id);
+      if (error) throw error;
+      setMsg({ kind: "ok", text: `${r.activity_name} から ${r.number} を外しました。` });
+      await loadLeaders();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setLeadBusy(false);
+    }
+  };
+
   /**
    * 学科を消す。
    *
@@ -1348,6 +1524,7 @@ export default function CampusPage() {
         {[
           ["/admin/rooms", "教室の登録"],
           ["#depts", "学科登録"],
+          ["#leaders", "課外活動リーダーの名簿"],
           ["#domain", "ドメイン名確認"],
           ["#people", "登録している人を見る"],
           ["#xlsx", "xlsx から取り込む"],
@@ -1791,6 +1968,160 @@ export default function CampusPage() {
           </div>
         )}
       </section>
+
+      {/*
+        課外活動リーダーの名簿。
+
+        地図の「申請 → 課外活動リーダー申請」で、kit-agent が照らす先。
+        ここに載っている番号の人だけが通る。
+
+        ■ 番号は 8桁
+          学生証・職員証に書いてあるもの（c1234567 など）。
+          申請する人が入れた番号が本人のものかは、データベース側で
+          先に見ている。ここは「誰が長か」だけを持つ。
+
+        ■ 外すと、次に確かめたときに落ちる
+          落ちた人は、この申請で付いた権限だけが学生へ戻る。
+          承認する人が手で付けた権限は、そのまま残す。
+      */}
+      {canWrite && (
+      <section id="leaders" className="mt-4 scroll-mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-slate-900">{T("課外活動リーダーの名簿")}</div>
+          <button
+            onClick={() => setLeadOpen((v) => !v)}
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+          >
+            {leadOpen ? T("閉じる") : T("名簿を開く")}
+          </button>
+        </div>
+
+        {leadOpen && (
+          <div className="mt-2">
+            <p className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
+              {T("ここに載っている番号の人だけが、課外活動リーダーの申請で通ります。")}
+              {T("空のあいだは、kit-agent は誰も通しません。")}
+            </p>
+
+            {/* 入れる */}
+            <div className="mt-2 rounded-xl bg-slate-50 p-2.5">
+              <div className="text-[10px] font-bold text-slate-500">{T("一人足す")}</div>
+              <select
+                value={leadCat ?? ""}
+                onChange={(e) => {
+                  setLeadCat(e.target.value ? Number(e.target.value) : null);
+                  setLeadAct(null);
+                }}
+                className={`${rSelect} mt-1`}
+              >
+                <option value="">{T("何系の活動ですか")}</option>
+                {leadCats.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={leadAct ?? ""}
+                onChange={(e) => setLeadAct(e.target.value ? Number(e.target.value) : null)}
+                disabled={leadCat === null}
+                className={`${rSelect} mt-1`}
+              >
+                <option value="">
+                  {leadCat === null ? T("先に系統を選んでください") : T("どこの団体ですか")}
+                </option>
+                {leadActs
+                  .filter((a) => a.category_id === leadCat)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+              </select>
+              <div className="mt-1 grid grid-cols-2 gap-1">
+                <input
+                  value={leadNo}
+                  onChange={(e) => setLeadNo(e.target.value)}
+                  autoComplete="off"
+                  maxLength={16}
+                  placeholder={T("8桁の番号（例：c1234567）")}
+                  className={`${rSelect} font-mono`}
+                />
+                <input
+                  value={leadName}
+                  onChange={(e) => setLeadName(e.target.value)}
+                  autoComplete="off"
+                  placeholder={T("氏名（無くてもよい）")}
+                  className={rSelect}
+                />
+              </div>
+              <button
+                onClick={() => void addLeader()}
+                disabled={leadBusy}
+                className="mt-1.5 w-full rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {leadBusy ? T("入れています…") : T("この人を名簿に入れる")}
+              </button>
+            </div>
+
+            {/* 探す */}
+            <div className="mt-2 grid grid-cols-2 gap-1">
+              <input
+                value={leadQ}
+                onChange={(e) => setLeadQ(e.target.value)}
+                autoComplete="off"
+                placeholder={T("番号・氏名・団体で探す")}
+                className={rSelect}
+              />
+              <select
+                value={leadPick ?? ""}
+                onChange={(e) => setLeadPick(e.target.value ? Number(e.target.value) : null)}
+                className={rSelect}
+              >
+                <option value="">{T("団体（すべて）")}</option>
+                {leadActs.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-1.5 text-[10px] font-bold text-slate-500">
+              {leadBusy ? T("探しています…") : `${leadTotal} ${T("人")}`}
+            </div>
+
+            <ul className="mt-1 max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-white ring-1 ring-slate-200">
+              {leadRows.map((r) => (
+                <li key={r.id} className="flex items-center gap-2 px-2.5 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-bold text-slate-800">
+                      {r.activity_name}
+                    </div>
+                    <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-500">
+                      <span className="font-mono">{r.number}</span>
+                      {r.full_name && <span>{r.full_name}</span>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void removeLeader(r)}
+                    disabled={leadBusy}
+                    className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                  >
+                    {T("外す")}
+                  </button>
+                </li>
+              ))}
+              {!leadBusy && leadRows.length === 0 && (
+                <li className="px-2.5 py-6 text-center text-[11px] text-slate-500">
+                  {T("まだ一人も入っていません。")}
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </section>
+      )}
 
       {canWrite && (
       <section id="domain" className="mt-4 scroll-mt-4 rounded-xl border border-slate-200 p-3">

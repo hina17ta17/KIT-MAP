@@ -573,6 +573,108 @@ const EN: Record<string, string> = {
     "Scan the QR with Microsoft Authenticator and enter the 6-digit code.",
   "接続先が設定されていないため、ログインと申請を受け付けられません。":
     "The server is not configured, so log in and applications are unavailable.",
+
+  /* 申請（教職課程・課外活動リーダー）と、kit-agent の確認 */
+  申請: "Apply",
+  "教職課程・課外活動リーダー": "Teaching course / Club leader",
+  "← 申請にもどる": "← Back to Apply",
+  "申請すると、kit-agent が名簿と照らして、その場で決めます。":
+    "When you apply, kit-agent checks the roster and decides on the spot.",
+  "通らなくても、いままでの使い方は何も変わりません。":
+    "If it does not go through, nothing about your current use changes.",
+  "kit-agent が確認しています…": "kit-agent is checking…",
+  できました: "Done",
+  できませんでした: "Could not do it",
+  "こちらで直すことです。しばらく待つか、管理する人にお知らせください。":
+    "This is on our side. Please wait a little, or tell an administrator.",
+  いまの様子: "Where you stand",
+  まだ申請していません: "Not applied yet",
+  "申請しましたが、通っていません": "Applied, but not accepted",
+  通っています: "Accepted",
+  もう一度たしかめる: "Check again",
+  先に本人確認をしてください: "Please verify yourself first",
+  "認証アプリの登録が済んでいないと、{x}の申請はできません。":
+    "You cannot apply for {x} until the authenticator app is set up.",
+  ログインの画面へ: "Go to the login screen",
+  "まだ利用の承認を待っています。承認されたら、ここから申請できます。":
+    "Your account is still awaiting approval. Once approved, you can apply here.",
+  "ログインの様子が読み取れませんでした。入り直してからお試しください。":
+    "We could not read your login. Please sign in again and try once more.",
+
+  /* 教職課程 */
+  教職: "the teaching course",
+  教職の申請: "Teaching course",
+  "教職課程を履修している人": "For students taking the teaching course",
+  "教職課程を履修している人だけが使える欄です。":
+    "This is only for people taking the teaching course.",
+  "申請すると、名簿の教職の欄と突き合わせて、その場で決まります。":
+    "Your application is matched against the teaching column of the roster, right away.",
+  教職として通っています: "Accepted for the teaching course",
+  教職課程を申請する: "Apply for the teaching course",
+  教職の申請を取り消す: "Cancel the teaching application",
+  "名簿の教職の欄に印が無いと、申請は通りません。":
+    "Without a mark in the teaching column of the roster, the application will not pass.",
+  "履修しているのに通らないときは、管理者にお知らせください。":
+    "If you are taking it but it does not pass, please tell an administrator.",
+  "教職として通っても、いままでの使い方は何も変わりません。":
+    "Being accepted changes nothing about how you already use the app.",
+
+  /* 課外活動リーダー */
+  リーダー: "club leader",
+  課外活動リーダー申請: "Club leader",
+  "部やプロジェクトの長をしている人": "For people who lead a club or project",
+  "部・サークル・プロジェクトの長をしている人だけが使える欄です。":
+    "This is only for people who lead a club, circle or project.",
+  "8桁の番号と団体を、kit-agent がリーダーの名簿と照らします。":
+    "kit-agent checks your 8-character number and club against the leader roster.",
+  "通ると、自分の団体の予定を入れられるようになります。":
+    "Once accepted, you can add your club's plans.",
+  リーダーとして通っています: "Accepted as a leader",
+  "のリーダーとして通っています": " — accepted as its leader",
+  // 「8桁の番号」は上（申請の欄）にもう入っている
+  "学生証の番号（例：c1234567）": "Number on your ID card (e.g. c1234567)",
+  "学生証・職員証に書いてある番号を、そのまま入れてください。":
+    "Enter the number printed on your student or staff ID card.",
+  "8桁になっています。": "That is 8 characters.",
+  "いま {n}桁です。8桁で入れてください。":
+    "That is {n} characters. Please enter 8.",
+  選んでください: "Please choose",
+  先に系統を選んでください: "Choose a category first",
+  どこのリーダーですか: "Which club do you lead?",
+  リーダーとして申請する: "Apply as a leader",
+  リーダーの申請を取り消す: "Cancel the leader application",
+  "リーダーの名簿に載っていないと、申請は通りません。":
+    "Without a row in the leader roster, the application will not pass.",
+  "長をしているのに通らないときは、管理者にお知らせください。":
+    "If you do lead one but it does not pass, please tell an administrator.",
+  "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
+    "Someone else's number will not work — we check the number is yours first.",
+
+  /* 管理画面の、課外活動リーダーの名簿 */
+  課外活動リーダーの名簿: "Club leader roster",
+  "ここに載っている番号の人だけが、課外活動リーダーの申請で通ります。":
+    "Only the numbers listed here pass the club leader application.",
+  "空のあいだは、kit-agent は誰も通しません。":
+    "While it is empty, kit-agent lets nobody through.",
+  一人足す: "Add one person",
+  どこの団体ですか: "Which club?",
+  "8桁の番号（例：c1234567）": "8-character number (e.g. c1234567)",
+  "氏名（無くてもよい）": "Name (optional)",
+  "入れています…": "Adding…",
+  この人を名簿に入れる: "Add this person to the roster",
+  "番号・氏名・団体で探す": "Search by number, name or club",
+  "団体（すべて）": "Club (all)",
+  外す: "Remove",
+  "まだ一人も入っていません。": "Nobody has been added yet.",
+
+  /* kit-agent が返す段の見出し */
+  ログインの席: "Your login seat",
+  本人確認: "Identity check",
+  番号はご本人のものか: "Is the number yours",
+  リーダーの名簿: "Leader roster",
+  学生の名簿: "Student roster",
+  教職員の名簿: "Staff roster",
+  教職の欄: "Teaching column",
 };
 
 /** 建物の名前のうち、号館ではないもの */
