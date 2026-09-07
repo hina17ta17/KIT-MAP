@@ -1766,7 +1766,7 @@ export default function RosterPage() {
                 value={tq}
                 onChange={(e) => setTq(e.target.value)}
                 autoComplete="off"
-                placeholder="名前・学籍番号・アドレスで探す"
+                placeholder={T("名前・学籍番号・アドレスで探す")}
                 className="mt-2 w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-violet-200 focus:ring-2 focus:ring-violet-500"
               />
 
@@ -1846,7 +1846,7 @@ export default function RosterPage() {
                   value={lq}
                   onChange={(e) => setLq(e.target.value)}
                   autoComplete="off"
-                  placeholder="課外活動の名前で探す（例：吹奏楽、ロボット）"
+                  placeholder={T("課外活動の名前で探す（例：吹奏楽、ロボット）")}
                   className="w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-amber-200 focus:ring-2 focus:ring-amber-500"
                 />
                 {lHits.length > 0 && (
@@ -1995,7 +1995,7 @@ export default function RosterPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               autoComplete="off"
-              placeholder="名前・アドレス・学籍番号で探す"
+              placeholder={T("名前・アドレス・学籍番号で探す")}
               className="mt-2 w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-sky-200 focus:ring-2 focus:ring-sky-500"
             />
 

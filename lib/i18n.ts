@@ -667,6 +667,32 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* 申請の様子と、やり直し */
+  "席をつくった": "Account created",
+  "情報を入れた": "Details entered",
+  "申請が出そろった": "Application complete",
+  "kit-agent が確認しました": "kit-agent has checked this",
+  "kit-agent が確認しています": "kit-agent is checking",
+  "kit-agent はまだ見ていません": "kit-agent has not looked yet",
+  リセット: "Start over",
+  "消しています…": "Clearing…",
+  "データを一度最初からにする？": "Clear what you entered and start over?",
+  "入れ間違えたときは、ここから入れ直せます。":
+    "If you entered something wrong, you can start again here.",
+  "消えるのは自分で入れた中身だけで、ログインと本人確認は残ります。":
+    "Only what you entered is cleared — your login and verification stay.",
+
+  /* ドメインの設定の、身分ごとの説明 */
+  "教職員・職員": "Faculty / staff",
+  "このドメインの人だけを学生として扱います。アドレスに入っている7桁の数字が学籍番号になり、名簿の学籍番号と合っているかを見ます。":
+    "Only people on this domain are treated as students. The 7 digits in the address become the student number, and it is checked against the roster.",
+  "このドメインの人だけを教授として扱います。空のあいだは、教授の行を取り込まず、教授の申請は人に回します（追い返しません）。":
+    "Only people on this domain are treated as professors. While it is empty, professor rows are not imported and professor applications are passed to a person (they are not turned away).",
+  "職員・関係者。空にしておくとドメインを見ません（外部のアドレスの人がいるため）。入れると、そのドメインだけを通します。":
+    "Staff and others. Left empty, the domain is not checked (some have outside addresses). Filled in, only that domain is accepted.",
+  "いまは「なし」です。ドメインが合っていなくても通ります。":
+    "Currently set to “none”. People get through even if the domain does not match.",
+
   /* 学内の情報の、課外活動を探す欄 */
   "名前で探して、どこでやっているかを見る": "Search by name and see where it meets",
   "課外活動の名前で探すと、いつ・どこでやっているかが出ます。":

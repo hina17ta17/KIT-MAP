@@ -78,6 +78,12 @@ type Row = {
    * 016 を流す前の人は空で返るので、そのときは学生として扱う。
    */
   affiliation: Affiliation | null;
+  /** kit-agent が見終わった日時。空なら、まだ一度も見ていない */
+  auto_done_at?: string | null;
+  /** kit-agent がいま見ている最中の日時 */
+  auto_claimed_at?: string | null;
+  /** 見た kit-agent の名前 */
+  auto_worker?: string | null;
 };
 
 /**
@@ -145,6 +151,58 @@ const PROTECTED: Role[] = ["admin_l21", "admin_l22", "admin_l3"];
 const RESETTABLE: Role[] = ["pending", "student", "admin_l0", "admin_l1", "admin_l2"];
 
 const SHORT = ROLE_SHORT;
+
+/**
+ * その人が、申請のどこまで行ったか。
+ *
+ * ■ なぜ要るか
+ *   一覧に出ていても、「情報を入れずに止まっている人」と
+ *   「出しきって待っている人」の区別が付かなかった。
+ *   どちらも同じ見た目なので、承認する側は一人ずつ開いて
+ *   確かめるしかなかった。
+ *
+ * ■ 何で見分けるか
+ *   段を覚えておく列は、別に持たせていない。持たせると、画面の
+ *   進み方と食い違ったときに直しようがなくなる。
+ *   いま在るもの（席・本人確認・入れた情報）から組み立てる。
+ */
+function steps(r: Row): { label: string; done: boolean }[] {
+  const info =
+    r.full_name.trim() !== "" &&
+    (r.affiliation !== "student" || (r.grade > 0 && r.class_code.trim() !== ""));
+  return [
+    { label: "席をつくった", done: true },
+    { label: "本人確認", done: r.verified },
+    { label: "情報を入れた", done: info },
+    { label: "申請が出そろった", done: r.verified && info },
+  ];
+}
+
+/**
+ * kit-agent がこの人を見たか。
+ *
+ *   done … 見終わっている（見たうえで、人に回ってきた）
+ *   now  … いま見ている最中
+ *   no   … まだ一度も見ていない
+ *
+ * 「まだ見ていない」のか「見たうえで回ってきた」のかで、
+ * 次にすることが変わる。見終わっているのに権限が付いていない人は、
+ * 名簿に載っていなかったか、身分が食い違ったということ。
+ */
+function seenByAgent(r: Row): "done" | "now" | "no" {
+  if (r.auto_done_at) return "done";
+  if (r.auto_claimed_at) return "now";
+  return "no";
+}
+
+/** 2026-09-08T… → 9月8日 10:23 */
+function whenShort(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(
+    d.getMinutes(),
+  ).padStart(2, "0")}`;
+}
+
 
 export default function AdminPage() {
   const T = useAdminT();
@@ -1247,6 +1305,57 @@ export default function AdminPage() {
                       {SHORT[r.role]}
                     </span>
                   </span>
+
+                  {/*
+                    どこまで行ったか。
+
+                    一覧に出ていても、「情報を入れずに止まっている人」と
+                    「出しきって待っている人」の区別が付かなかった。
+                    どちらも同じ見た目なので、一人ずつ開いて確かめるしかない。
+                    済んだところを塗って、ひと目で分かるようにする。
+                  */}
+                  {r.role === "pending" && (
+                    <span className="mt-1 flex flex-wrap items-center gap-1">
+                      {steps(r).map((st, i) => (
+                        <span
+                          key={st.label}
+                          className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                            st.done
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-slate-100 text-slate-400"
+                          }`}
+                        >
+                          {i + 1}. {T(st.label)}
+                        </span>
+                      ))}
+
+                      {/*
+                        kit-agent が見たかどうか。
+
+                        見たのに権限が付いていない、という人がいる。
+                        名簿に載っていなかった、身分が食い違った——
+                        そういうときは人が決めることになる。
+                        「まだ見ていない」のか「見たうえで回ってきた」のかで、
+                        次にすることが変わるので、そこを分ける。
+                      */}
+                      {seenByAgent(r) === "done" && (
+                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-800">
+                          {T("kit-agent が確認しました")}
+                          {r.auto_done_at ? `（${whenShort(r.auto_done_at)}）` : ""}
+                        </span>
+                      )}
+                      {seenByAgent(r) === "now" && (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-900">
+                          {T("kit-agent が確認しています")}
+                        </span>
+                      )}
+                      {seenByAgent(r) === "no" && (
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-400">
+                          {T("kit-agent はまだ見ていません")}
+                        </span>
+                      )}
+                    </span>
+                  )}
                 </button>
 
                 <span

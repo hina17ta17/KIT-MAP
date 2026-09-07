@@ -1724,7 +1724,7 @@ export default function CampusPage() {
                         : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
-                    {k.label}
+                    {T(k.label)}
                     <span className="mt-0.5 block text-[9px] font-normal opacity-70">
                       {peopleCounts?.[k.id] ?? 0} 人
                     </span>
@@ -2261,7 +2261,7 @@ export default function CampusPage() {
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
-                  {k.label}
+                  {T(k.label)}
                 </button>
               ))}
             </div>
@@ -2276,7 +2276,7 @@ export default function CampusPage() {
               return (
                 <>
                   <p className="mt-2 rounded-lg bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600">
-                    <b>{kind.label}</b>：{kind.note}
+                    <b>{T(kind.label)}</b>：{T(kind.note)}
                   </p>
 
                   {/*
@@ -2316,7 +2316,7 @@ export default function CampusPage() {
                   </div>
                   {domainOn?.[domainKind] === false && (
                     <p className="mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-amber-900">
-                      いまは<b>{T("「なし」")}</b>です。{kind.label}は、ドメインが合っていなくても通ります。
+                      {T("いまは「なし」です。ドメインが合っていなくても通ります。")}
                       <br />
                       {T("一つでも「なし」があると、席を作るところでもドメインを見ません")}
                       {T("（その時点では、まだ身分が分からないため）。")}
@@ -2328,11 +2328,11 @@ export default function CampusPage() {
                   </label>
                   {domainOn?.[domainKind] === false ? (
                     <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
-                      （見ていません）
+                      {T("（見ていません）")}
                     </p>
                   ) : saved.length === 0 ? (
                     <p className="mt-0.5 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
-                      （決めていません）
+                      {T("（決めていません）")}
                     </p>
                   ) : (
                     <ul className="mt-0.5 flex flex-wrap gap-1">

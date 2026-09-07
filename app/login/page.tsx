@@ -1561,6 +1561,73 @@ function Wizard(props: {
       >
         {busy ? T("送信中…") : applying ? T("申請する") : T("決める")}
       </button>
+
+      {/*
+        入れ直したい人のための道。申請のときだけ出す。
+
+        ■ なぜ要るか
+          学年を打ち間違えた、身分を選び違えた——ここまで来てから
+          気づくことがある。いままでは直す道が無く、管理者に頼んで
+          席ごと消してもらうしかなかった。頼むほうも頼まれるほうも重い。
+
+        ■ 何が消えるか
+          自分で入れた中身だけ。席（ログイン）と本人確認は残るので、
+          認証アプリの登録からやり直しにはならない。
+      */}
+      {applying && <ResetMine t={T} />}
+    </div>
+  );
+}
+
+/**
+ * 申請の中身を、まっさらに戻す。
+ *
+ * 押し間違いで消えないよう、一度たずねる。
+ * 消えるのは自分が入れたものだけなので、二度は訊かない。
+ */
+function ResetMine({ t: T }: { t: (ja: string) => string }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const reset = async () => {
+    if (!window.confirm(T("データを一度最初からにする？"))) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { data, error } = await createClient().rpc("reset_my_application");
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      if (!v.ok) {
+        setMsg(v.reason);
+        return;
+      }
+      // 入れ直しは最初の欄から。画面ごと出し直すのがいちばん確か
+      location.reload();
+    } catch (e) {
+      setMsg(
+        e instanceof Error
+          ? `${e.message}（base/25_reset_mine.sql をまだ入れていない場合は、管理者にお知らせください）`
+          : String(e),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-slate-200 pt-3">
+      <button
+        onClick={() => void reset()}
+        disabled={busy}
+        className="w-full rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95 disabled:text-slate-300"
+      >
+        {busy ? T("消しています…") : T("リセット")}
+      </button>
+      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+        {T("入れ間違えたときは、ここから入れ直せます。")}
+        {T("消えるのは自分で入れた中身だけで、ログインと本人確認は残ります。")}
+      </p>
+      {msg && <p className="mt-1 text-[10px] font-bold text-red-600">{msg}</p>}
     </div>
   );
 }
