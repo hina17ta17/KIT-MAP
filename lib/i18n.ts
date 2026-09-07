@@ -330,7 +330,7 @@ const EN: Record<string, string> = {
   "選んだ人だけを消す": "Delete only the people you ticked",
   "いま入っている名簿": "Roster on file",
   "学生の名簿だけ": "the student roster only",
-  "登録している人を見る": "See who is registered",
+  "ログインしている人を見る": "See who is logged in",
   "学生だけ": "students only",
   "学部（すべて）": "Faculty (all)",
   "ドメイン名確認": "Domain settings",
@@ -649,6 +649,30 @@ const EN: Record<string, string> = {
     "If you do lead one but it does not pass, please tell an administrator.",
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
+
+  /* 名簿の、課外活動リーダーとログインしている人 */
+  "リーダーを見る": "See the leaders",
+  "その名前の課外活動は見つかりませんでした。": "No club by that name was found.",
+  "この団体だけ": "This club only",
+  "すべての団体": "All clubs",
+  "リーダーが登録されていません。": "No leaders have been entered.",
+  "並びは、分類 → 団体 → 番号の順です。": "Sorted by category, then club, then number.",
+  "入れる・消すは「大学の情報登録」から。":
+    "Adding and removing is done in “University information”.",
+  "ログインしている人": "People logged in",
+  "教授（レベル2）が見られるのは学生だけです。": "Professors (level 2) can only see students.",
+  "ここに出るのは、席があって権限が付いている人です。名簿に居ても、まだ使っていない人は出ません。":
+    "These are people who have a login and a role. Someone in the roster who has not signed up yet will not appear.",
+  "xlsx に保存するのは「大学の情報登録」から。":
+    "Saving to xlsx is done in “University information”.",
+
+  /* xlsx に書き出す */
+  "集めています…": "Collecting…",
+  "xlsx に保存する（kit(people).xlsx）": "Save as xlsx (kit(people).xlsx)",
+  "身分ごとにシートを分けて出します。1行目が見出しで、そこから1行に1人です。":
+    "One sheet per kind of person. Row 1 is the header, then one row per person.",
+  "取り込むときと同じ形なので、直してそのまま入れ直せます。":
+    "It is the same shape the importer reads, so you can edit it and load it straight back.",
 
   /* 履歴 */
   履歴: "History",

@@ -173,6 +173,30 @@ export function matchesQuery(text: string, query: string): boolean {
 }
 
 /**
+ * 入れた語が、その名前にどれくらい当たるか。
+ *
+ *   0  完全に同じ
+ *   1  前のほうが同じ
+ *   2  どこかに入っている
+ *  -1  当たらない
+ *
+ * 案内の検索と同じ当たり方を、ほかの画面でも使えるようにしてある。
+ * 別々に書くと、同じ言葉で探しているのに片方だけ出る、という
+ * 食い違いが起きる。表記ゆれ（全角・記号・大文字小文字）は
+ * normalize が吸収するので、どこで使っても手ごたえが同じになる。
+ */
+export function rankOf(text: string, query: string): number {
+  const q = normalize(query);
+  if (!q) return -1;
+  const t = normalize(text);
+  if (!t) return -1;
+  if (t === q) return 0;
+  if (t.startsWith(q)) return 1;
+  if (t.includes(q)) return 2;
+  return -1;
+}
+
+/**
  * 建物名・号館番号・部屋番号から目的地を探す。
  *
  * 完全一致 → 前方一致 → 部分一致 の順に並べる。
@@ -183,6 +207,7 @@ export function search(data: AppData, query: string, limit = 8): SearchHit[] {
   if (!q) return [];
 
   const hits: SearchHit[] = [];
+  /* 当たり方は rankOf と同じ。ここでは正規化済みの語と比べる */
   const rank = (target: string) => {
     if (!target) return -1;
     if (target === q) return 0;

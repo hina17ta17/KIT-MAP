@@ -71,7 +71,7 @@ const ENTRIES: Entry[] = [
     href: "/admin/campus",
     icon: "🏫",
     label: "大学の情報登録",
-    sub: "教室・学科・ドメイン・登録者",
+    sub: "教室・学科・ドメイン・ログインしている人",
     allowed: canManageAll,
   },
   {

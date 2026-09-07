@@ -120,6 +120,87 @@ export function colName(n: number): string {
   return s;
 }
 
+/* ================= xlsx へ書き出す ================= */
+
+/**
+ * 書き出すときの見出し。
+ *
+ * ★読むときと同じ言葉にしてある
+ *   ここで書いたものを、そのまま読み込めるようにするため。
+ *   出したファイルを直して入れ直す、という使い方ができる。
+ *   言葉を変えるときは、上の HEAD_WORDS も一緒に見ること。
+ */
+export const EXPORT_HEAD: string[] = [
+  "身分",
+  "メールアドレス",
+  "氏名",
+  "学年",
+  "学科",
+  "クラス",
+  "名列番号",
+  "学籍番号",
+  "担当学科1",
+  "担当学科2",
+  "担当学科3",
+  "担当学科4",
+  "担当学科5",
+  "担当学科6",
+  "8桁の番号",
+  "教職",
+];
+
+/** 書き出す一人ぶん。list_people が返すものと同じ形 */
+export type PersonOut = {
+  email?: string | null;
+  full_name?: string | null;
+  affiliation?: string | null;
+  grade?: number | null;
+  class_code?: string | null;
+  class_no?: number | null;
+  seat_no?: number | null;
+  student_no?: string | null;
+  staff_no?: string | null;
+  dept_codes?: string[] | null;
+  teaching?: boolean | null;
+};
+
+/**
+ * 一人を、xlsx の一行にする。
+ *
+ * ■ A列（身分）は、その人が名乗った身分から
+ *   権限（課外活動リーダー・食堂の担当）ではなく、
+ *   学生／教授／その他 の三つに直す。読むほうがこの三つしか
+ *   受け取らないので、そうしないと入れ直せない。
+ *
+ * ■ 空の欄は空のまま
+ *   学生でない人に学年を書いたりしない。読むほうは、その身分で
+ *   使わない列に何が書いてあっても行を弾かないが、
+ *   人が見たときに紛らわしい。
+ */
+export function toRow(p: PersonOut): string[] {
+  const aff = String(p.affiliation ?? "student").toLowerCase();
+  const kind = aff === "teacher" ? "教授" : aff === "student" ? "学生" : "その他";
+  const isStudent = kind === "学生";
+  const isTeacher = kind === "教授";
+  const depts = Array.isArray(p.dept_codes) ? p.dept_codes : [];
+  const num = (v: number | null | undefined) => (v === null || v === undefined || v === 0 ? "" : String(v));
+
+  return [
+    kind,
+    p.email ?? "",
+    p.full_name ?? "",
+    isStudent ? num(p.grade) : "",
+    isStudent ? (p.class_code ?? "") : "",
+    isStudent ? num(p.class_no) : "",
+    isStudent ? num(p.seat_no) : "",
+    isStudent ? (p.student_no ?? "") : "",
+    ...Array.from({ length: 6 }, (_, i) => (isTeacher ? (depts[i] ?? "") : "")),
+    isStudent ? "" : (p.staff_no ?? ""),
+    // P列。読むほうは T だけを「履修している」と見る
+    p.teaching ? "T" : "",
+  ];
+}
+
 /** 画面に出すときの呼び名 */
 export const LABEL: Record<string, string> = {
   kind: "身分",
@@ -516,6 +597,23 @@ export function readHead(raw: Row[]): Head | null {
   return null;
 }
 
+/**
+ * その行が、見出しの行か。
+ *
+ * ★一枚目だけでなく、どこに出てきても見出しとして飛ばす
+ *
+ *   書き出した xlsx は、身分ごとにシートを分けてある。
+ *   読むときは全部のシートを上から順につなぐので、
+ *   二枚目・三枚目の見出しが真ん中に混ざる。
+ *   一つ目だけを飛ばしていると、それが人の行として送られ、
+ *   「A列が 学生/教授/その他 ではありません」で弾かれていた。
+ */
+function looksLikeHead(cells: Row): boolean {
+  let hit = 0;
+  for (const c of cells) if (headOf(c ?? "")) hit += 1;
+  return hit >= 3;
+}
+
 /** 見出しが無いときの当て方。A列から順に */
 function byOrder(): Head {
   const map = new Map<number, string>();
@@ -581,8 +679,8 @@ export function toSending(raw: Row[]): {
     return o;
   });
 
-  // 見出しの行そのものは送らない
-  const body = all.filter((_, i) => i !== head.at);
+  // 見出しの行は、どこに出てきても送らない（シートごとに付いているため）
+  const body = all.filter((_, i) => i !== head.at && !looksLikeHead(raw[i] ?? []));
   // まったくの空行も送らない
   const rows = body.filter(
     (s) => s.depts.length > 0 || COLS.some((c) => !isDeptCol(c) && s[c as PlainCol] !== ""),

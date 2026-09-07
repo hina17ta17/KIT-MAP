@@ -34,6 +34,7 @@ import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
+import { rankOf } from "@/lib/appdata";
 import {
   CLASS_CODES,
   CLASS_NOS,
@@ -134,7 +135,7 @@ type Domains = Record<DomainKind, string[]>;
 type DomainOn = Record<DomainKind, boolean>;
 
 /**
- * 登録している人を見る欄。身分で五つに分ける。
+ * ログインしている人を見る欄。身分で五つに分ける。
  *
  * ★名簿（roster_students / roster_staff）とは別のもの。
  *   名簿は「申請と突き合わせるために入れておいた表」で、
@@ -155,7 +156,7 @@ const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
 /**
  * 名簿（突き合わせ用の表）の中を見るときの身分。
  *
- * 上の PeopleKind（登録している人）とは別のもの。
+ * 上の PeopleKind（ログインしている人）とは別のもの。
  * 名簿は学生・教授・その他の三つしか持っていない。
  */
 type RosterKind = "student" | "teacher" | "other";
@@ -201,6 +202,21 @@ type RosterStaff = {
   updated_at: string;
   total: number;
 };
+
+/** 課外活動リーダーの名簿の一行 */
+type LeaderRow = {
+  id: number;
+  activity_id: number;
+  activity_name: string;
+  category_name: string;
+  number: string;
+  full_name: string;
+  note: string;
+  total: number;
+};
+
+/** 課外活動の団体 */
+type Activity = { id: number; name: string; category_id: number | null };
 
 type Person = {
   id: string;
@@ -259,7 +275,7 @@ export default function RosterPage() {
 
   const [counts, setCounts] = useState<Counts | null>(null);
 
-  /** 登録している人を見る欄 */
+  /** ログインしている人を見る欄 */
   const [listOpen, setListOpen] = useState(false);
   const [listKind, setListKind] = useState<PeopleKind>("student");
 
@@ -289,6 +305,18 @@ export default function RosterPage() {
   const [tGrade, setTGrade] = useState<number | null>(null);
   const [tDept, setTDept] = useState<string | null>(null);
   const [tClassNo, setTClassNo] = useState<number | null>(null);
+
+  /* 課外活動リーダーの名簿 */
+  const [lOpen, setLOpen] = useState(false);
+  const [lRows, setLRows] = useState<LeaderRow[]>([]);
+  const [lTotal, setLTotal] = useState(0);
+  const [lBusy, setLBusy] = useState(false);
+  /** 探している言葉。当たるのは課外活動の名前だけ */
+  const [lq, setLq] = useState("");
+  /** 選んだ団体。null なら全部 */
+  const [lPick, setLPick] = useState<Activity | null>(null);
+  /** 団体の一覧。探すときの候補に使う */
+  const [acts, setActs] = useState<Activity[]>([]);
   /**
    * まとめて消すために印を付けた人。
    *
@@ -491,7 +519,7 @@ export default function RosterPage() {
    * 名簿を読み直す。
    *
    * ★これは「入れておいた突き合わせ用の表」のほう。
-   *   下の「登録している人を見る」（list_people）とは別のもの。
+   *   下の「ログインしている人を見る」（list_people）とは別のもの。
    *   あちらは席がある人、こちらは名簿に入れた人。
    *   入れたはずの人が名簿にいるかを確かめるのは、こちら。
    *
@@ -587,13 +615,92 @@ export default function RosterPage() {
     return () => window.clearTimeout(id);
   }, [rOpen, rKind, loadRoster]);
 
-  /* ---------------- 登録している人を見る ---------------- */
+  /* ---------------- 課外活動リーダーの名簿 ---------------- */
+
+  /**
+   * 団体の一覧。探すときの候補に使う。
+   *
+   * 97 団体しかないので、はじめに全部もらっておく。
+   * 一文字打つたびに問い合わせると、そのぶん待たされる。
+   */
+  useEffect(() => {
+    if (!lOpen || !supabaseReady || acts.length > 0) return;
+    void createClient()
+      .from("club_activities")
+      .select("id, name, category_id")
+      .order("sort_order")
+      .then(({ data }) => setActs((data as Activity[]) ?? []));
+  }, [lOpen, acts.length]);
+
+  /**
+   * リーダーの名簿を読む。
+   *
+   * 団体を選んでいれば、その団体だけ。
+   * 選んでいなければ全部（分類 → 団体 → 番号の順）。
+   */
+  const loadLeaders = useCallback(async (actId: number | null) => {
+    if (!supabaseReady) return;
+    setLBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("leader_roster_list", {
+        p_q: "",
+        p_activity_id: actId,
+        p_limit: 500,
+        p_offset: 0,
+      });
+      if (error) throw error;
+      const rows = (data as LeaderRow[]) ?? [];
+      setLRows(rows);
+      setLTotal(rows.length > 0 ? Number(rows[0].total) : 0);
+    } catch (e) {
+      setLRows([]);
+      setLTotal(0);
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/20_leader.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setLBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!lOpen) return;
+    void loadLeaders(lPick?.id ?? null);
+  }, [lOpen, lPick, loadLeaders]);
+
+  /**
+   * 探している言葉に当たる団体。
+   *
+   * 当たり方は案内の検索と同じ（lib/appdata の rankOf）。
+   * 全角・記号・大文字小文字のゆれは、あちらが吸収する。
+   * 別に書くと、同じ言葉で探しているのに片方だけ出る、という
+   * 食い違いが起きる。
+   *
+   * ★探せるのは団体の名前だけ
+   *   人の名前や番号では探さない。ここは「どの団体のリーダーか」を
+   *   見る欄なので、団体で辿れれば足りる。
+   */
+  const lHits = useMemo(() => {
+    const word = lq.trim();
+    if (word === "") return [];
+    return acts
+      .map((a) => ({ a, r: rankOf(a.name, word) }))
+      .filter((x) => x.r >= 0)
+      .sort((x, y) => x.r - y.r || x.a.name.localeCompare(y.a.name, "ja"))
+      .slice(0, 8);
+  }, [acts, lq]);
+
+  /* ---------------- ログインしている人を見る ---------------- */
 
   /** いま見ている身分の決まり（学部・学科で絞るかどうか） */
   const kindDef = PEOPLE_KINDS.find((k) => k.id === listKind) ?? PEOPLE_KINDS[0];
 
   /**
-   * 登録している人を読み直す。
+   * ログインしている人を読み直す。
    *
    * profiles の表そのものは、自分の行しか読めない。
    * データベース側の関数（list_people）を通したときだけ、
@@ -1197,7 +1304,7 @@ export default function RosterPage() {
         名簿の中を、一人ずつ見る。
 
         ★こちらは「入れておいた突き合わせ用の表」。
-          下の「登録している人を見る」とは別のもの。
+          下の「ログインしている人を見る」とは別のもの。
           入れたはずの人が名簿にいるか、中身が合っているかを
           確かめるのは、こちら。
 
@@ -1702,10 +1809,276 @@ export default function RosterPage() {
       )}
 
       {/*
+        課外活動リーダーの名簿。教職の名簿のすぐ下。
+
+        ★探せるのは団体の名前だけ
+          ここは「どの団体のリーダーか」を見る欄なので、
+          団体で辿れれば足りる。人の名前や番号では探さない。
+
+        当たり方は案内の検索と同じにしてある。全角・記号・大文字小文字の
+        ゆれを同じように吸収するので、地図で慣れた手ごたえのまま使える。
+      */}
+      {canWrite && (
+        <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/40 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-bold text-amber-900">{T("課外活動リーダー")}</div>
+            <button
+              onClick={() => setLOpen((v) => !v)}
+              className="rounded-lg bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800 transition hover:bg-amber-200 active:scale-95"
+            >
+              {lOpen ? T("閉じる") : T("リーダーを見る")}
+            </button>
+          </div>
+
+          {lOpen && (
+            <div className="mt-2">
+              {/* 探す欄。打つと団体の候補が下に出る */}
+              <div className="relative">
+                <input
+                  value={lq}
+                  onChange={(e) => setLq(e.target.value)}
+                  autoComplete="off"
+                  placeholder="課外活動の名前で探す（例：吹奏楽、ロボット）"
+                  className="w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-amber-200 focus:ring-2 focus:ring-amber-500"
+                />
+                {lHits.length > 0 && (
+                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-slate-200">
+                    {lHits.map((h) => (
+                      <li key={h.a.id}>
+                        <button
+                          onClick={() => {
+                            setLPick(h.a);
+                            setLq("");
+                          }}
+                          className="block w-full px-3 py-2 text-left text-xs text-slate-800 transition hover:bg-amber-50"
+                        >
+                          {h.a.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {lq.trim() !== "" && lHits.length === 0 && (
+                  <p className="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg bg-white px-3 py-2 text-[11px] text-slate-500 shadow-lg ring-1 ring-slate-200">
+                    {T("その名前の課外活動は見つかりませんでした。")}
+                  </p>
+                )}
+              </div>
+
+              {/* いま選んでいる団体 */}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold text-amber-800">
+                  {lPick ? T("この団体だけ") : T("すべての団体")}
+                </span>
+                {lPick && (
+                  <button
+                    onClick={() => setLPick(null)}
+                    className="rounded-full bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-amber-700 active:scale-95"
+                  >
+                    {lPick.name} ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-2 text-[10px] font-bold text-amber-800">
+                {lBusy ? T("探しています…") : lTotal + " " + T("人")}
+              </div>
+
+              <ul className="mt-1.5 max-h-96 divide-y divide-amber-100 overflow-y-auto rounded-lg bg-white">
+                {lRows.map((r) => (
+                  <li key={r.id} className="px-2.5 py-2">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="truncate text-xs font-bold text-slate-800">
+                        {r.full_name || "（名前なし）"}
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] text-slate-500">
+                        {r.number}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-[10px] text-amber-800">
+                      {r.activity_name}
+                      {r.category_name ? `　${r.category_name}` : ""}
+                    </div>
+                    {r.note && (
+                      <div className="truncate text-[10px] text-slate-400">{r.note}</div>
+                    )}
+                  </li>
+                ))}
+                {!lBusy && lRows.length === 0 && (
+                  <li className="px-2.5 py-6 text-center text-[11px] text-slate-500">
+                    {T("リーダーが登録されていません。")}
+                  </li>
+                )}
+              </ul>
+
+              <p className="mt-1.5 text-[10px] leading-relaxed text-amber-700">
+                {T("並びは、分類 → 団体 → 番号の順です。")}
+                {T("入れる・消すは「大学の情報登録」から。")}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/*
+        ログインしている人。課外活動リーダーのすぐ下。
+
+        ★名簿（突き合わせ用の表）とは別のもの
+          上に並んでいるのは「名簿に入れてある人」。
+          ここに出るのは「席があって権限が付いている人」＝
+          いま実際に使える状態になっている人。
+          名簿に居ても使っていない人は、ここには出てこない。
+
+        表そのものは開かない。データベース側の関数（list_people）を
+        通したときだけ、その人に見せてよい分が返る。
+        教授（レベル2）には学生のぶんしか返らない。
+      */}
+      <section className="mt-4 rounded-xl border border-sky-200 bg-sky-50/40 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-sky-900">{T("ログインしている人")}</div>
+          <button
+            onClick={() => {
+              const next = !listOpen;
+              setListOpen(next);
+              if (next) {
+                setPage(0);
+                void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), 0);
+              }
+            }}
+            className="rounded-lg bg-sky-100 px-2.5 py-1 text-[11px] font-bold text-sky-800 transition hover:bg-sky-200 active:scale-95"
+          >
+            {listOpen ? T("閉じる") : T("ログインしている人を見る")}
+          </button>
+        </div>
+
+        {listOpen && (
+          <div className="mt-2">
+            {/* 身分。教授には学生のぶんしか無いので、切り替えを出さない */}
+            {canWrite ? (
+              <div className="grid grid-cols-3 gap-1.5">
+                {PEOPLE_KINDS.map((k) => (
+                  <button
+                    key={k.id}
+                    onClick={() => {
+                      setListKind(k.id);
+                      setPage(0);
+                      setDeptId(null);
+                    }}
+                    className={`rounded-lg px-2 py-2 text-[11px] font-bold leading-tight transition active:scale-95 ${
+                      listKind === k.id
+                        ? "bg-sky-900 text-white"
+                        : "bg-white text-slate-600 hover:bg-sky-100"
+                    }`}
+                  >
+                    {T(k.label)}
+                    <span className="mt-0.5 block text-[9px] font-normal opacity-70">
+                      {peopleCounts?.[k.id] ?? 0} {T("人")}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
+                {T("教授（レベル2）が見られるのは学生だけです。")}
+              </p>
+            )}
+
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              autoComplete="off"
+              placeholder="名前・アドレス・学籍番号で探す"
+              className="mt-2 w-full rounded-lg bg-white px-3 py-2 text-xs outline-none ring-1 ring-sky-200 focus:ring-2 focus:ring-sky-500"
+            />
+
+            <div className="mt-2 text-[10px] font-bold text-sky-800">
+              {listBusy ? T("探しています…") : total + " " + T("人")}
+            </div>
+
+            <ul className="mt-1.5 max-h-96 divide-y divide-sky-100 overflow-y-auto rounded-lg bg-white">
+              {people.map((r) => (
+                <li key={r.id} className="px-2.5 py-2">
+                  <div className="flex items-baseline gap-1.5">
+                    {r.seat_no !== null && r.seat_no !== 0 && (
+                      <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-800">
+                        {r.seat_no}
+                      </span>
+                    )}
+                    <span className="truncate text-xs font-bold text-slate-800">
+                      {r.full_name || "（名前なし）"}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-slate-500">
+                    {r.grade > 0 && <span>{r.grade}{T("年")}</span>}
+                    {r.class_code && <span>{r.class_code}</span>}
+                    {!!r.class_no && (
+                      <span>
+                        {T("クラス")}
+                        {r.class_no}
+                      </span>
+                    )}
+                    {r.student_no && <span className="font-mono">{r.student_no}</span>}
+                    {r.staff_no && <span className="font-mono">{r.staff_no}</span>}
+                    {r.dept_codes && r.dept_codes.length > 0 && (
+                      <span>
+                        {T("担当")} {r.dept_codes.join("・")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="truncate font-mono text-[10px] text-slate-400">{r.email}</div>
+                </li>
+              ))}
+              {!listBusy && people.length === 0 && (
+                <li className="px-2.5 py-6 text-center text-[11px] text-slate-500">
+                  {T("見つかりませんでした。")}
+                </li>
+              )}
+            </ul>
+
+            {total > PAGE && (
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => {
+                    const at = Math.max(0, page - 1);
+                    setPage(at);
+                    void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), at);
+                  }}
+                  disabled={page === 0}
+                  className="rounded-lg bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-sky-100 disabled:text-slate-300"
+                >
+                  {T("前")}
+                </button>
+                <span className="text-[10px] text-slate-500">
+                  {page * PAGE + 1}–{Math.min((page + 1) * PAGE, total)} / {total}
+                </span>
+                <button
+                  onClick={() => {
+                    const at = page + 1;
+                    setPage(at);
+                    void loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), at);
+                  }}
+                  disabled={(page + 1) * PAGE >= total}
+                  className="rounded-lg bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-sky-100 disabled:text-slate-300"
+                >
+                  {T("次")}
+                </button>
+              </div>
+            )}
+
+            <p className="mt-1.5 text-[10px] leading-relaxed text-sky-700">
+              {T("ここに出るのは、席があって権限が付いている人です。名簿に居ても、まだ使っていない人は出ません。")}
+              <br />
+              {T("xlsx に保存するのは「大学の情報登録」から。")}
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/*
         入れる・消す・ドメインを変えるは、この画面から外した。
 
         ここは「入れてある名簿を見る」ためだけの場所。
-        入れる（xlsx・一人ずつ）・ドメイン名確認・登録している人を見る は、
+        入れる（xlsx・一人ずつ）・ドメイン名確認・ログインしている人を見る は、
         「大学の情報登録」へまとめてある。
         見るための画面に、戻せない操作が並んでいると危ない。
       */}

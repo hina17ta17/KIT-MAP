@@ -48,15 +48,18 @@ import { noteError, noteEvent } from "@/lib/note";
 import {
   COLS,
   DEPT_COLS,
+  EXPORT_HEAD,
   LABEL,
   colName,
   isDeptCol,
   studentNoOf,
+  toRow,
   toSending,
   headNoteOf,
   type PlainCol,
   type Sending,
 } from "@/lib/roster";
+import { saveXlsx, type Sheet } from "@/lib/xlsxOut";
 
 /* 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
@@ -77,7 +80,7 @@ type Domains = Record<DomainKind, string[]>;
 type DomainOn = Record<DomainKind, boolean>;
 
 /**
- * 登録している人を見る欄。身分で五つに分ける。
+ * ログインしている人を見る欄。身分で五つに分ける。
  *
  * ★名簿（roster_students / roster_staff）とは別のもの。
  *   名簿は「申請と突き合わせるために入れておいた表」で、
@@ -109,7 +112,7 @@ const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
 /**
  * 名簿（突き合わせ用の表）の中を見るときの身分。
  *
- * 上の PeopleKind（登録している人）とは別のもの。
+ * 上の PeopleKind（ログインしている人）とは別のもの。
  * 名簿は学生・教授・その他の三つしか持っていない。
  */
 type RosterKind = "student" | "teacher" | "other";
@@ -160,6 +163,8 @@ type Person = {
   dept_codes: string[] | null;
   role: string;
   affiliation: string;
+  /** 教職課程として通っているか。xlsx の P列に出す */
+  teaching?: boolean;
   total: number;
 };
 
@@ -201,7 +206,7 @@ export default function CampusPage() {
 
   const [counts, setCounts] = useState<Counts | null>(null);
 
-  /** 登録している人を見る欄 */
+  /** ログインしている人を見る欄 */
   const [listOpen, setListOpen] = useState(false);
   const [listKind, setListKind] = useState<PeopleKind>("student");
 
@@ -399,7 +404,7 @@ export default function CampusPage() {
    * 名簿を読み直す。
    *
    * ★これは「入れておいた突き合わせ用の表」のほう。
-   *   下の「登録している人を見る」（list_people）とは別のもの。
+   *   下の「ログインしている人を見る」（list_people）とは別のもの。
    *   あちらは席がある人、こちらは名簿に入れた人。
    *   入れたはずの人が名簿にいるかを確かめるのは、こちら。
    *
@@ -495,13 +500,83 @@ export default function CampusPage() {
     return () => window.clearTimeout(id);
   }, [rOpen, rKind, loadRoster]);
 
-  /* ---------------- 登録している人を見る ---------------- */
+  /* ---------------- xlsx に書き出す ---------------- */
+
+  /** 書き出している途中か */
+  const [outBusy, setOutBusy] = useState(false);
+
+  /**
+   * いまログインしている人を、xlsx にまとめて保存する。
+   *
+   * ■ 身分ごとにシートを分ける
+   *   一枚にぜんぶ並べると、学生の欄と教授の欄が混ざる。
+   *   分けておけば、その身分で使う列だけを見ればよい。
+   *
+   * ■ 読むときと同じ形にする
+   *   一行目が見出し、そこから一行に一人。列の並びも、見出しの言葉も、
+   *   xlsx から取り込むときとまったく同じにしてある。
+   *   だから、出したものを直して入れ直せる。
+   *
+   * ■ 何人いても最後まで出す
+   *   データベース側は一度に 2000 人までしか返さない。
+   *   足りなければ続きを取りに行く。途中で切れたことに
+   *   気づけないほうが困る。
+   */
+  const saveAll = async () => {
+    if (!supabaseReady) return;
+    setOutBusy(true);
+    setMsg(null);
+    try {
+      const supabase = createClient();
+      const sheets: Sheet[] = [];
+      let n = 0;
+
+      for (const k of PEOPLE_KINDS) {
+        const rows: string[][] = [EXPORT_HEAD];
+        for (let at = 0; ; at += 2000) {
+          const { data, error } = await supabase.rpc("list_people", {
+            p_kind: k.id,
+            p_dept_id: null,
+            p_q: "",
+            p_limit: 2000,
+            p_offset: at,
+          });
+          if (error) throw error;
+          const got = (data as Person[]) ?? [];
+          for (const x of got) rows.push(toRow(x));
+          n += got.length;
+          if (got.length < 2000) break;
+        }
+        sheets.push({ name: k.label, rows });
+      }
+
+      saveXlsx(sheets, "kit(people).xlsx");
+      setMsg({ kind: "ok", text: `${n} 人ぶんを kit(people).xlsx に保存しました。` });
+      noteEvent("people", `ログインしている人を xlsx に書き出しました（${n} 人）`, {
+        人数: n,
+        シート: sheets.map((x) => `${x.name}:${x.rows.length - 1}`).join(" "),
+      });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/15_people.sql を入れ直していない場合は、先に入れてください）`
+            : String(e),
+      });
+      noteError("people", "ログインしている人を書き出せませんでした", e);
+    } finally {
+      setOutBusy(false);
+    }
+  };
+
+  /* ---------------- ログインしている人を見る ---------------- */
 
   /** いま見ている身分の決まり（学部・学科で絞るかどうか） */
   const kindDef = PEOPLE_KINDS.find((k) => k.id === listKind) ?? PEOPLE_KINDS[0];
 
   /**
-   * 登録している人を読み直す。
+   * ログインしている人を読み直す。
    *
    * profiles の表そのものは、自分の行しか読めない。
    * データベース側の関数（list_people）を通したときだけ、
@@ -1475,7 +1550,7 @@ export default function CampusPage() {
           ["#depts", "学科登録"],
           ["#leaders", "課外活動リーダーの名簿"],
           ["#domain", "ドメイン名確認"],
-          ["#people", "登録している人を見る"],
+          ["#people", "ログインしている人を見る"],
           ["#xlsx", "xlsx から取り込む"],
           ["#manual", "登録者を増やす"],
         ].map(([to, label]) => (
@@ -1510,7 +1585,7 @@ export default function CampusPage() {
       </div>
 
       {/*
-        登録している人を見る。
+        ログインしている人を見る。
 
         ★名簿（突き合わせ用の表）とは別のもの。
           ここに出るのは、席があって権限が付いている人。
@@ -1526,7 +1601,7 @@ export default function CampusPage() {
       */}
       <section id="people" className="mt-4 scroll-mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-bold text-slate-900">{T("登録している人を見る")}</div>
+          <div className="text-xs font-bold text-slate-900">{T("ログインしている人を見る")}</div>
           <button
             onClick={() => {
               const next = !listOpen;
@@ -1541,6 +1616,30 @@ export default function CampusPage() {
             {listOpen ? "閉じる" : "一覧を見る"}
           </button>
         </div>
+
+        {/*
+          xlsx に保存する。
+
+          身分ごとにシートを分け、一行目に見出し、そこから一行に一人。
+          取り込むときとまったく同じ形なので、出したものを直して
+          入れ直せる。絞り込みは掛けずに、いまいる人ぜんぶを出す。
+        */}
+        {canWrite && (
+          <div className="mt-2">
+            <button
+              onClick={() => void saveAll()}
+              disabled={outBusy || busy}
+              className="w-full rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              {outBusy ? T("集めています…") : T("xlsx に保存する（kit(people).xlsx）")}
+            </button>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+              {T("身分ごとにシートを分けて出します。1行目が見出しで、そこから1行に1人です。")}
+              <br />
+              {T("取り込むときと同じ形なので、直してそのまま入れ直せます。")}
+            </p>
+          </div>
+        )}
 
         {listOpen && (
           <div className="mt-2">
