@@ -53,6 +53,8 @@ export const COLS = [
   "dept6",
   "number",
   "teaching",
+  "leader",
+  "leader_activity",
 ] as const;
 
 /** そのうち担当学科の列（I〜N）。まとめて一つの並びにして送る */
@@ -147,6 +149,8 @@ export const EXPORT_HEAD: string[] = [
   "担当学科6",
   "8桁の番号",
   "教職",
+  "課外活動リーダー",
+  "課外活動名",
 ];
 
 /** 書き出す一人ぶん。list_people が返すものと同じ形 */
@@ -162,6 +166,8 @@ export type PersonOut = {
   staff_no?: string | null;
   dept_codes?: string[] | null;
   teaching?: boolean | null;
+  leader?: boolean | null;
+  leader_activity?: string | null;
 };
 
 /**
@@ -198,6 +204,9 @@ export function toRow(p: PersonOut): string[] {
     isStudent ? "" : (p.staff_no ?? ""),
     // P列。読むほうは T だけを「履修している」と見る
     p.teaching ? "T" : "",
+    // Q列・R列。R は Q が立っているときだけ書く
+    p.leader ? "T" : "",
+    p.leader ? (p.leader_activity ?? "") : "",
   ];
 }
 
@@ -213,6 +222,8 @@ export const LABEL: Record<string, string> = {
   student_no: "学籍番号",
   number: "8桁の番号",
   teaching: "教職",
+  leader: "課外活動リーダー",
+  leader_activity: "課外活動名",
   dept: "担当学科",
 };
 
@@ -257,6 +268,9 @@ const HEAD_WORDS: { col: Col | "dept" | "class?"; words: string[] }[] = [
    */
   { col: "number", words: ["8桁", "職員番号", "教職員番号", "職員"] },
   { col: "teaching", words: ["教職"] },
+  // Q列・R列。「課外活動名」は「リーダー」より先に見る（どちらも課外活動を含むため）
+  { col: "leader_activity", words: ["課外活動名", "団体名", "活動名"] },
+  { col: "leader", words: ["課外活動リーダー", "リーダー", "部長"] },
   // 学科は「担当」より後に見る（担当学科を先に拾わせるため）
   { col: "class_code", words: ["学科", "コース", "記号", "専攻"] },
   // ここだけは中身も見て決める

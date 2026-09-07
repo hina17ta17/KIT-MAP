@@ -32,6 +32,7 @@ export type AdminPageId =
   | "plan"
   | "feedback"
   | "history"
+  | "agent"
   | "edit";
 
 type Entry = {
@@ -44,6 +45,21 @@ type Entry = {
 };
 
 const ENTRIES: Entry[] = [
+  /*
+   * kit-agent の様子。承認・権限の上に置く。
+   *
+   * 承認しに来た人が最初に知りたいのは「agent がもう見たのか」。
+   * 見ていれば、残っているのは人が決めるものだけ。
+   * 見ていなければ、待てば減る。順番を取り違えないよう、いちばん上。
+   */
+  {
+    id: "agent",
+    href: "/admin/agent",
+    icon: "🤖",
+    label: "kit-agent の様子",
+    sub: "働いているか、誰を通して誰をはじいたか",
+    allowed: canManageAll,
+  },
   {
     id: "approve",
     href: "/admin",

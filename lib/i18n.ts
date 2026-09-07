@@ -667,6 +667,32 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* kit-agent の様子 */
+  "kit-agent の様子": "kit-agent status",
+  "働いているか、誰を通して誰をはじいたか": "Whether it is working, and who it let through or turned away",
+  "働いています": "Working",
+  "待っています": "Waiting",
+  "詰まっています": "Stuck",
+  "待っている人": "Waiting",
+  "見ている最中": "Being checked",
+  "この1時間": "Past hour",
+  きょう: "Today",
+  通した: "Let through",
+  はじいた: "Turned away",
+  "人に回した": "Passed to a person",
+  "最後に動いたのは": "Last activity",
+  ぜんぶ: "All",
+  "まだ何も残っていません。": "Nothing has been recorded yet.",
+  "kit-agent が誰かを見ると、ここに出ます。": "When kit-agent checks someone, it appears here.",
+  "申請が溜まっているのに、しばらく何もしていません。":
+    "Applications are piling up but nothing has happened for a while.",
+  "20秒ごとに見直しています。": "Refreshed every 20 seconds.",
+  "kit-agent の様子を見られるのは、レベル2.1・2.2・管理者だけです。":
+    "Only levels 2.1, 2.2 and administrators can see kit-agent’s status.",
+
+  /* 書き出しの、身分えらび */
+  "出す身分": "Which people to save",
+
   /* 申請の様子と、やり直し */
   "席をつくった": "Account created",
   "情報を入れた": "Details entered",

@@ -218,6 +218,23 @@ export default function LoginPage() {
   const [signupStep, setSignupStep] = useState<SignupStep>(1);
   /** 申請のいちばん最初に選んでもらう身分。まだ選んでいなければ null */
   const [affiliation, setAffiliation] = useState<Affiliation | null>(null);
+  /**
+   * いまどこまで済んでいるか。
+   *
+   * 進む先を決めるのに使った材料を、そのまま持っておく。
+   * 画面に「何が足りないか」を名指しで出すため。
+   * 別に数え直すと、決め方と出し方が食い違って、
+   * 「済んでいると出ているのに進めない」が起きる。
+   */
+  const [done, setDone] = useState<{
+    seat: boolean;
+    mfa: boolean;
+    info: boolean;
+    password: boolean;
+    applied: boolean;
+    aff: Affiliation;
+    missing: string[];
+  } | null>(null);
   const [name, setName] = useState("");
   const [grade, setGrade] = useState<number>(0);
   /** 学科の記号。以前ここを「クラス」と呼んでいたが、指しているのは学科 */
@@ -305,6 +322,25 @@ export default function LoginPage() {
       if (Array.isArray(p.dept_codes) && p.dept_codes.length > 0) setDepts(p.dept_codes);
 
       /*
+       * ★身分を戻す
+       *
+       *   ここで戻していなかった。読み直すと選んだ身分が消え、
+       *   null になる。null は「学生ではない」と読まれるので、
+       *   学生にも 8桁の番号を訊く欄が出て、そこから先へ進めなくなる。
+       *   本人は身分も情報も入れているのに「まだ」と言われ続ける。
+       *
+       *   席の控え（user_metadata）より、情報（profiles）のほうを先に見る。
+       *   控えは席を作ったときのままで、あとから直しても変わらない。
+       */
+      {
+        const m = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+        const fromRow = (p as unknown as { affiliation?: string }).affiliation ?? "";
+        const fromMeta = typeof m.affiliation === "string" ? m.affiliation : "";
+        const aff = (fromRow || fromMeta) as Affiliation | "";
+        if (aff === "student" || aff === "teacher" || aff === "other") setAffiliation(aff);
+      }
+
+      /*
        * 認証アプリが登録されているかは、席の情報の列ではなく
        * 認証の仕組みそのものに訊く。
        *
@@ -313,13 +349,30 @@ export default function LoginPage() {
        * 立っていないので、列だけを見ると「登録済みかどうか」を
        * 取り違える。実際に登録されている factor を数える。
        */
+      /*
+       * 認証アプリが登録されているか。
+       *
+       * ★訊けなかったときに「未登録」と決めない
+       *
+       *   前は、訊けなければ未登録として扱っていた。
+       *   ところがこの問い合わせは、電波が悪いときや、入った直後で
+       *   まだ整っていないときに失敗する。そのたびに本人確認の段へ
+       *   引き戻され、「済ませたのに、また最初から」になっていた。
+       *
+       *   訊けなかったときは、情報（profiles.verified）のほうを見る。
+       *   あちらは申請の画面を通ったときに立つので、
+       *   「一度は済ませた」ことが分かる。
+       */
       let hasFactor = false;
+      let askedFactor = false;
       try {
         const { data: fl } = await supabase.auth.mfa.listFactors();
         hasFactor = (fl?.totp ?? []).some((x) => x.status === "verified");
+        askedFactor = true;
       } catch {
-        // 訊けないときは「未登録」として扱う。登録をうながす側に倒す
+        askedFactor = false;
       }
+      if (!askedFactor) hasFactor = p.verified === true;
 
       /*
        * パスワードを決めたか。
@@ -364,9 +417,18 @@ export default function LoginPage() {
        * 訊きようがないので足りているものとして扱う。
        * そうしないと、埋めても先へ進めない画面になってしまう。
        */
+      /*
+       * ★情報（profiles）を先に見る
+       *
+       *   前は席の控え（user_metadata）を先に見ていた。控えは席を作った
+       *   ときのままなので、あとで身分を直しても古いまま。
+       *   教授として入れたのに学生として見られ、学年や名列番号を
+       *   求められて先へ進めなくなっていた。
+       */
       const affNow =
+        ((p as unknown as { affiliation?: string }).affiliation || "") ||
         (typeof meta.affiliation === "string" ? meta.affiliation : "") ||
-        ((p as unknown as { affiliation?: string }).affiliation ?? "student");
+        "student";
       const staffNow = (p as unknown as { staff_no?: string }).staff_no ?? "";
       const hasClassNo = "class_no" in (p as object);
       const hasDepts = "dept_codes" in (p as object);
@@ -375,6 +437,42 @@ export default function LoginPage() {
           ? !!(p.grade && p.class_code && p.seat_no) && (!hasClassNo || !!p.class_no)
           : staffNow.length === 8 &&
             (affNow !== "teacher" || !hasDepts || (p.dept_codes ?? []).length > 0);
+
+      /*
+       * いま何が済んでいて、何が足りないか。
+       *
+       * ★どこで詰まっているかを、その場で言う
+       *
+       *   前は、進む先を決めるだけで、なぜそこに戻されたのかは
+       *   どこにも出さなかった。本人には「済ませたのに、また最初から」
+       *   としか見えず、直しようがない。
+       *
+       *   決めるのに使った材料を、そのまま画面へ渡す。
+       *   足りないものが名指しで出る。
+       */
+      setDone({
+        seat: true,
+        mfa: hasFactor,
+        info: infoDone,
+        password: pwSet,
+        applied: p.role !== "pending",
+        aff: (affNow as Affiliation) ?? "student",
+        missing: infoDone
+          ? []
+          : affNow === "student"
+            ? [
+                !p.grade ? "学年" : "",
+                !p.class_code ? "学科" : "",
+                hasClassNo && !p.class_no ? "クラス" : "",
+                !p.seat_no ? "名列番号" : "",
+              ].filter((x) => x !== "")
+            : [
+                staffNow.length !== 8 ? "8桁の番号" : "",
+                affNow === "teacher" && hasDepts && (p.dept_codes ?? []).length === 0
+                  ? "担当学科"
+                  : "",
+              ].filter((x) => x !== ""),
+      });
 
       if (!hasFactor) {
         // まだ認証アプリが無い人は、承認済みでも登録から。
@@ -595,8 +693,19 @@ export default function LoginPage() {
       const id = u.user?.id ?? "";
       if (!id) throw new Error("ログインしていません");
 
+      /*
+       * ★身分も一緒に書く
+       *
+       *   前はここで身分を書いていなかった。書かれるのは最後の段
+       *   （パスワードを決めたとき）だけ。そのあいだ profiles の身分は
+       *   席を作ったときのままなので、読み直すと別の身分として扱われ、
+       *   訊かれるものが変わって先へ進めなくなっていた。
+       *
+       *   入れたその場で書いておけば、どこで読み直しても同じになる。
+       */
       const patch: Record<string, unknown> = asksClass
         ? {
+            affiliation,
             grade,
             class_code: classCode,
             class_no: classNo,
@@ -605,6 +714,7 @@ export default function LoginPage() {
             dept_codes: [],
           }
         : {
+            affiliation,
             grade: 0,
             class_code: "",
             class_no: 0,
@@ -940,6 +1050,7 @@ export default function LoginPage() {
 
         {step !== "done" ? (
           <Wizard
+              done={done}
             t={T}
             step={step}
             me={me}
@@ -1319,8 +1430,18 @@ function Wizard(props: {
   setStaffNo: (v: string) => void;
   canInfo: boolean;
   saveInfo: () => Promise<void>;
+  /** いまどこまで済んでいるか。足りないものを名指しで出すため */
+  done: {
+    seat: boolean;
+    mfa: boolean;
+    info: boolean;
+    password: boolean;
+    applied: boolean;
+    aff: Affiliation;
+    missing: string[];
+  } | null;
 }) {
-  const { t: T, step, me, mfa, code, setCode, enroll, verifyMfa, busy } = props;
+  const { t: T, step, me, mfa, code, setCode, enroll, verifyMfa, busy, done } = props;
   /* 申請の途中の人には段の番号を出す。すでに権限のある人には意味が無い */
   const applying = me.role === "pending";
   /** コードを写したか。押したことが分かるようにするためだけ */
@@ -1329,6 +1450,7 @@ function Wizard(props: {
   if (step === "mfa") {
     return (
       <div className="mt-4">
+        <Progress t={T} done={done} show={applying} />
         {applying ? (
           <Head n={3} total={5} text={T("認証アプリで本人確認")} />
         ) : (
@@ -1431,6 +1553,7 @@ function Wizard(props: {
     const { seat, setSeat, staffNo, setStaffNo, canInfo, saveInfo } = props;
     return (
       <div className="mt-4">
+        <Progress t={T} done={done} show={applying} />
         <Head
           n={4}
           total={5}
@@ -1532,6 +1655,7 @@ function Wizard(props: {
 
   return (
     <div className="mt-4">
+      <Progress t={T} done={done} show={applying} />
       {applying ? (
         <Head n={5} total={5} text={T("パスワードを決めてください")} />
       ) : (
@@ -1628,6 +1752,90 @@ function ResetMine({ t: T }: { t: (ja: string) => string }) {
         {T("消えるのは自分で入れた中身だけで、ログインと本人確認は残ります。")}
       </p>
       {msg && <p className="mt-1 text-[10px] font-bold text-red-600">{msg}</p>}
+    </div>
+  );
+}
+
+/**
+ * いまどこまで済んでいるか。
+ *
+ * ■ なぜ要るか
+ *   「本人確認を済ませたのに、また最初から」「情報を入れたのに、まだと出る」
+ *   ——そう見えたとき、本人には直しようがなかった。
+ *   どこまで進んでいて、何が足りないのかが、どこにも出ていなかった。
+ *
+ *   進む先を決めるのに使った材料を、そのまま出す。
+ *   別に数え直すと、決め方と出し方が食い違って、
+ *   「済んでいると出ているのに進めない」が起きる。
+ */
+function Progress({
+  t: T,
+  done,
+  show,
+}: {
+  t: (ja: string) => string;
+  done: {
+    seat: boolean;
+    mfa: boolean;
+    info: boolean;
+    password: boolean;
+    applied: boolean;
+    aff: Affiliation;
+    missing: string[];
+  } | null;
+  show: boolean;
+}) {
+  if (!show || !done) return null;
+
+  const rows = [
+    { n: 1, label: "身分をえらぶ", ok: done.seat },
+    { n: 2, label: "アドレスと氏名", ok: done.seat },
+    { n: 3, label: "認証アプリで本人確認", ok: done.mfa },
+    { n: 4, label: "大学の情報", ok: done.info },
+    { n: 5, label: "パスワードを決める", ok: done.password },
+  ];
+
+  return (
+    <div className="mb-4 rounded-xl bg-slate-50 p-3">
+      <div className="text-[11px] font-bold text-slate-700">{T("いまのところ")}</div>
+      <ul className="mt-1.5 flex flex-col gap-1">
+        {rows.map((r) => (
+          <li key={r.n} className="flex items-center gap-2 text-[11px]">
+            <span
+              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                r.ok ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"
+              }`}
+            >
+              {r.ok ? "✓" : r.n}
+            </span>
+            <span className={r.ok ? "text-slate-500" : "font-bold text-slate-900"}>
+              {T(r.label)}
+            </span>
+            <span className="ml-auto text-[10px] text-slate-400">
+              {r.ok ? T("済み") : T("まだ")}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {/* 足りないものを名指しで出す。「まだ」だけでは直しようがない */}
+      {!done.info && done.mfa && done.missing.length > 0 && (
+        <p className="mt-2 rounded-lg bg-amber-100 px-2.5 py-2 text-[10px] leading-relaxed text-amber-900">
+          <b>{T("あと、これが入っていません")}</b>
+          <br />
+          {done.missing.join("・")}
+          <br />
+          {T("いまは")}
+          <b>
+            {done.aff === "student"
+              ? T("学生")
+              : done.aff === "teacher"
+                ? T("教授")
+                : T("その他")}
+          </b>
+          {T("として見ています。ちがうときは、リセットして入れ直してください。")}
+        </p>
+      )}
     </div>
   );
 }

@@ -175,6 +175,10 @@ type Person = {
   teaching?: boolean;
   /** 身分。書き出しでシートを分けるのに使う（export_people が添えてくる） */
   kind?: string;
+  /** Q列。課外活動のリーダーか */
+  leader?: boolean;
+  /** R列。どの課外活動か */
+  leader_activity?: string;
   total: number;
 };
 
@@ -514,6 +518,13 @@ export default function CampusPage() {
 
   /** 書き出している途中か */
   const [outBusy, setOutBusy] = useState(false);
+  /**
+   * どの身分を出すか。空なら、ぜんぶ。
+   *
+   * 「学生だけほしい」「教職員だけほしい」は、よくある頼まれ方。
+   * ぜんぶ出してから消してもらうのは、渡す側の手間になる。
+   */
+  const [outKinds, setOutKinds] = useState<PeopleKind[]>([]);
 
   /**
    * いまログインしている人を、xlsx にまとめて保存する。
@@ -552,11 +563,15 @@ export default function CampusPage() {
        *   身分は添えられてくるだけで、選り分けには使っていない。
        *   知らない権限が入っていても、必ずどこかのシートに出る。
        */
+      /* 選んでいなければ、ぜんぶ（null を渡す） */
+      const pick = outKinds.length > 0 ? outKinds : null;
+
       const all: Person[] = [];
       for (let at = 0; ; at += 2000) {
         const { data, error } = await supabase.rpc("export_people", {
           p_limit: 2000,
           p_offset: at,
+          p_kinds: pick,
         });
         if (error) throw error;
         const got = (data as Person[]) ?? [];
@@ -572,7 +587,7 @@ export default function CampusPage() {
        */
       let seats = -1;
       try {
-        const { data } = await supabase.rpc("people_total");
+        const { data } = await supabase.rpc("people_total", { p_kinds: pick });
         seats = Number(data ?? -1);
       } catch {
         /* 数えられなくても、書き出しは続ける */
@@ -590,6 +605,8 @@ export default function CampusPage() {
       const sheets: Sheet[] = [];
       const seen = new Set<string>();
       for (const k of PEOPLE_KINDS) {
+        // 選んでいる身分だけ。選んでいなければ、ぜんぶ
+        if (pick && !pick.includes(k.id)) continue;
         seen.add(k.id);
         sheets.push({
           name: k.label,
@@ -1687,12 +1704,61 @@ export default function CampusPage() {
         */}
         {canWrite && (
           <div className="mt-2">
+            {/*
+              どの身分を出すか。
+
+              何も選ばなければ、ぜんぶ出す。「ぜんぶ」を選ばせる形にすると、
+              選び忘れたときに何も出ないことになる。既定はぜんぶのほうが安全。
+            */}
+            <div className="mb-2">
+              <div className="text-[10px] font-bold text-slate-500">{T("出す身分")}</div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                <button
+                  onClick={() => setOutKinds([])}
+                  className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition active:scale-95 ${
+                    outKinds.length === 0
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {T("すべて")}
+                </button>
+                {PEOPLE_KINDS.map((k) => {
+                  const on = outKinds.includes(k.id);
+                  return (
+                    <button
+                      key={k.id}
+                      onClick={() =>
+                        setOutKinds((v) =>
+                          on ? v.filter((x) => x !== k.id) : [...v, k.id],
+                        )
+                      }
+                      className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition active:scale-95 ${
+                        on
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {T(k.label)}
+                      <span className="ml-1 font-normal opacity-70">
+                        {peopleCounts?.[k.id] ?? 0}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <button
               onClick={() => void saveAll()}
               disabled={outBusy || busy}
               className="w-full rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
             >
-              {outBusy ? T("集めています…") : T("xlsx に保存する（kit(people).xlsx）")}
+              {outBusy
+                ? T("集めています…")
+                : outKinds.length === 0
+                  ? T("xlsx に保存する（kit(people).xlsx）")
+                  : `${outKinds.map((k) => T(PEOPLE_KINDS.find((x) => x.id === k)?.label ?? k)).join("・")} を xlsx に保存する`}
             </button>
             <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
               {T("身分ごとにシートを分けて出します。1行目が見出しで、そこから1行に1人です。")}
