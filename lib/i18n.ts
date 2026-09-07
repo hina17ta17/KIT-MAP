@@ -684,6 +684,8 @@ const EN: Record<string, string> = {
 
   /* 食堂の写真 */
   "写真（任意）": "Photo (optional)",
+  "写真を大きく見る": "View the photo larger",
+  "どこかを押すと閉じます": "Tap anywhere to close",
   "小さくしています…": "Shrinking…",
   "この端末で小さくしてから送ります（長辺512点）":
     "Shrunk on this device before sending (longest side 512px)",

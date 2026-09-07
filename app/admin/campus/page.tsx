@@ -173,6 +173,8 @@ type Person = {
   affiliation: string;
   /** 教職課程として通っているか。xlsx の P列に出す */
   teaching?: boolean;
+  /** 身分。書き出しでシートを分けるのに使う（export_people が添えてくる） */
+  kind?: string;
   total: number;
 };
 
@@ -536,40 +538,91 @@ export default function CampusPage() {
     setMsg(null);
     try {
       const supabase = createClient();
-      const sheets: Sheet[] = [];
-      let n = 0;
 
+      /*
+       * 席のある人を、選り分けずにぜんぶもらう。
+       *
+       * ★身分ごとに問い合わせるのはやめた
+       *   前は身分を一つずつ指定して呼んでいた。すると、
+       *   どの身分にも当てはまらない人が、どこからも返ってこない。
+       *   実際に承認待ちの人がまるごと落ちて、
+       *   xlsx に学生しか入っていなかった。
+       *
+       *   いまは「ぜんぶ返す」を一度呼ぶ（export_people）。
+       *   身分は添えられてくるだけで、選り分けには使っていない。
+       *   知らない権限が入っていても、必ずどこかのシートに出る。
+       */
+      const all: Person[] = [];
+      for (let at = 0; ; at += 2000) {
+        const { data, error } = await supabase.rpc("export_people", {
+          p_limit: 2000,
+          p_offset: at,
+        });
+        if (error) throw error;
+        const got = (data as Person[]) ?? [];
+        all.push(...got);
+        if (got.length < 2000) break;
+      }
+
+      /*
+       * 席の数と、もらえた数を突き合わせる。
+       *
+       * 足りないまま渡すと、あとから気づけない。
+       * 数が合わなければ、その場で知らせる。
+       */
+      let seats = -1;
+      try {
+        const { data } = await supabase.rpc("people_total");
+        seats = Number(data ?? -1);
+      } catch {
+        /* 数えられなくても、書き出しは続ける */
+      }
+
+      /* 身分ごとにシートを分ける。並びは PEOPLE_KINDS のとおり */
+      const byKind = new Map<string, Person[]>();
+      for (const x of all) {
+        const k = String(x.kind ?? "other");
+        const list = byKind.get(k);
+        if (list) list.push(x);
+        else byKind.set(k, [x]);
+      }
+
+      const sheets: Sheet[] = [];
+      const seen = new Set<string>();
       for (const k of PEOPLE_KINDS) {
-        const rows: string[][] = [EXPORT_HEAD];
-        for (let at = 0; ; at += 2000) {
-          const { data, error } = await supabase.rpc("list_people", {
-            p_kind: k.id,
-            p_dept_id: null,
-            p_q: "",
-            p_limit: 2000,
-            p_offset: at,
-          });
-          if (error) throw error;
-          const got = (data as Person[]) ?? [];
-          for (const x of got) rows.push(toRow(x));
-          n += got.length;
-          if (got.length < 2000) break;
-        }
-        sheets.push({ name: k.label, rows });
+        seen.add(k.id);
+        sheets.push({
+          name: k.label,
+          rows: [EXPORT_HEAD, ...(byKind.get(k.id) ?? []).map(toRow)],
+        });
+      }
+      /* 知らない身分が返ってきたら、そのぶんのシートも作る */
+      for (const [k, list] of byKind) {
+        if (seen.has(k)) continue;
+        sheets.push({ name: k, rows: [EXPORT_HEAD, ...list.map(toRow)] });
       }
 
       saveXlsx(sheets, "kit(people).xlsx");
-      setMsg({ kind: "ok", text: `${n} 人ぶんを kit(people).xlsx に保存しました。` });
-      noteEvent("people", `ログインしている人を xlsx に書き出しました（${n} 人）`, {
-        人数: n,
-        シート: sheets.map((x) => `${x.name}:${x.rows.length - 1}`).join(" "),
+
+      const inner = sheets.map((x) => `${x.name} ${x.rows.length - 1}`).join("、");
+      const short = seats >= 0 && seats !== all.length;
+      setMsg({
+        kind: short ? "err" : "ok",
+        text: short
+          ? `${all.length} 人ぶんを保存しましたが、席は ${seats} 人あります。${seats - all.length} 人ぶんが入っていません。`
+          : `${all.length} 人ぶんを kit(people).xlsx に保存しました（${inner}）。`,
+      });
+      noteEvent("people", `ログインしている人を xlsx に書き出しました（${all.length} 人）`, {
+        人数: all.length,
+        席: seats,
+        シート: inner,
       });
     } catch (e) {
       setMsg({
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/15_people.sql を入れ直していない場合は、先に入れてください）`
+            ? `${e.message}（base/24_people_all.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
       noteError("people", "ログインしている人を書き出せませんでした", e);

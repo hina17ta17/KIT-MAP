@@ -418,6 +418,13 @@ function Cafeteria({ date }: { date: Date }) {
     Map<number, { name: string; price: number | null; image: string }>
   >(new Map());
   const [loading, setLoading] = useState(true);
+  /**
+   * 大きく見ている写真。null なら開いていない。
+   *
+   * 一覧の写真は 44点角しかない。何が出るのかを確かめたいときに、
+   * その大きさでは分からない。押したら画面いっぱいに出す。
+   */
+  const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
 
   useEffect(() => {
     const d = ymd(date);
@@ -450,6 +457,34 @@ function Cafeteria({ date }: { date: Date }) {
   if (counters.length === 0) return <Note>{T("食堂の情報がまだ登録されていません。")}</Note>;
 
   return (
+    <>
+    {/*
+      写真を大きく見る。
+
+      どこを押しても閉じる。小さな✕だけだと、指の大きい人や
+      急いでいる人が閉じられない。写真そのものを押しても閉じてよい
+      ——ここから先へ進む道は無いので、押し間違いで困ることがない。
+    */}
+    {zoom && (
+      <div
+        onClick={() => setZoom(null)}
+        role="button"
+        aria-label={T("閉じる")}
+        className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/85 p-4 backdrop-blur-sm"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={zoom.src}
+          alt={zoom.name}
+          className="max-h-[75vh] w-auto max-w-full rounded-2xl object-contain shadow-2xl"
+        />
+        {zoom.name && (
+          <div className="mt-3 max-w-full truncate text-sm font-bold text-white">{zoom.name}</div>
+        )}
+        <div className="mt-1 text-[11px] text-slate-300">{T("どこかを押すと閉じます")}</div>
+      </div>
+    )}
+
     <ul className="flex flex-col gap-2">
       {counters.map((c) => {
         const st = states.get(c.id);
@@ -484,13 +519,19 @@ function Cafeteria({ date }: { date: Date }) {
                         分からなくなるうえ、行ごとに高さが変わって読みにくい。
                       */}
                       {m?.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={m.image}
-                          alt=""
-                          loading="lazy"
-                          className="h-11 w-11 shrink-0 rounded-lg object-cover ring-1 ring-slate-200"
-                        />
+                        <button
+                          onClick={() => setZoom({ src: m.image, name: m.name })}
+                          aria-label={T("写真を大きく見る")}
+                          className="shrink-0 transition active:scale-95"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={m.image}
+                            alt=""
+                            loading="lazy"
+                            className="h-11 w-11 rounded-lg object-cover ring-1 ring-slate-200"
+                          />
+                        </button>
                       ) : (
                         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white text-[9px] font-bold text-slate-300 ring-1 ring-slate-200">
                           {T("なし")}
@@ -514,6 +555,7 @@ function Cafeteria({ date }: { date: Date }) {
         );
       })}
     </ul>
+    </>
   );
 }
 
