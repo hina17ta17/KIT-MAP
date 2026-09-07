@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { shrinkPhoto } from "@/lib/photo";
 import { useAdminT } from "@/lib/adminLang";
 import MultiDatePicker from "@/components/MultiDatePicker";
 import { ROLE_LABEL, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
@@ -50,7 +51,14 @@ const STATES = [
 const BR = String.fromCharCode(10);
 
 /** よく出す品の控え */
-type Preset = { id: number; cafeteria_id: number; name: string; price: number | null };
+type Preset = {
+  id: number;
+  cafeteria_id: number;
+  name: string;
+  price: number | null;
+  /** 写真。空なら写真なし */
+  image: string;
+};
 
 export default function CafeteriaAdminPage() {
   const T = useAdminT();
@@ -75,7 +83,9 @@ export default function CafeteriaAdminPage() {
   const [target, setTarget] = useState<Item | null>(null);
 
   const [states, setStates] = useState<Map<number, string>>(new Map());
-  const [menus, setMenus] = useState<Map<number, { name: string; price: number | null }>>(new Map());
+  const [menus, setMenus] = useState<
+    Map<number, { name: string; price: number | null; image: string }>
+  >(new Map());
 
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -83,6 +93,10 @@ export default function CafeteriaAdminPage() {
   /* 入力欄 */
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
+  /** 写真。空なら写真なし（任意） */
+  const [image, setImage] = useState("");
+  /** 写真を縮めている途中か */
+  const [imgBusy, setImgBusy] = useState(false);
 
   /**
    * よく出す品の控え（テンプレ）。
@@ -132,7 +146,7 @@ export default function CafeteriaAdminPage() {
        */
       const pr = await supabase
         .from("menu_presets")
-        .select("id, cafeteria_id, name, price")
+        .select("id, cafeteria_id, name, price, image")
         .order("sort_order")
         .order("name");
       setPresets((pr.data as Preset[]) ?? []);
@@ -147,14 +161,16 @@ export default function CafeteriaAdminPage() {
     const supabase = createClient();
     const [a, b] = await Promise.all([
       supabase.from("counter_days").select("item_id, state").eq("on_date", ymd(d)),
-      supabase.from("menu_days").select("item_id, name, price").eq("on_date", ymd(d)),
+      supabase.from("menu_days").select("item_id, name, price, image").eq("on_date", ymd(d)),
     ]);
     setStates(new Map(((a.data as { item_id: number; state: string }[]) ?? []).map((r) => [r.item_id, r.state])));
     setMenus(
       new Map(
-        ((b.data as { item_id: number; name: string; price: number | null }[]) ?? []).map((r) => [
+        (
+          (b.data as { item_id: number; name: string; price: number | null; image: string }[]) ?? []
+        ).map((r) => [
           r.item_id,
-          { name: r.name, price: r.price },
+          { name: r.name, price: r.price, image: r.image ?? "" },
         ]),
       ),
     );
@@ -166,6 +182,7 @@ export default function CafeteriaAdminPage() {
     const m = menus.get(target.id);
     setName(m?.name ?? "");
     setPrice(m?.price != null ? String(m.price) : "");
+    setImage(m?.image ?? "");
     setMsg(null);
   }, [target, menus]);
 
@@ -187,6 +204,31 @@ export default function CafeteriaAdminPage() {
     }
     setStates((prev) => new Map(prev).set(item.id, state));
     setMsg({ kind: "ok", text: `${item.name} を「${STATES.find((s) => s.id === state)?.label}」にしました` });
+  };
+
+  /**
+   * 写真を選ぶ。
+   *
+   * 送る前に、この端末で小さくする（長辺512点・JPEG）。
+   * いまの端末の写真は一枚が数MBあるので、そのまま入れると
+   * その日のメニューを開くだけで、見る人みんながその通信量を
+   * 引き受けることになる。一覧に出す大きさなら、これで十分。
+   */
+  const pickPhoto = async (file: File | null) => {
+    if (!file) return;
+    setImgBusy(true);
+    setMsg(null);
+    try {
+      const r = await shrinkPhoto(file);
+      if (!r.ok) {
+        setMsg({ kind: "err", text: r.why });
+        return;
+      }
+      setImage(r.data);
+      setMsg({ kind: "ok", text: `写真を入れました（${Math.round(r.bytes / 1024)}KB）` });
+    } finally {
+      setImgBusy(false);
+    }
   };
 
   const saveMenu = async () => {
@@ -229,6 +271,7 @@ export default function CafeteriaAdminPage() {
         on_date: ymd(date),
         name: name.trim(),
         price: price.trim() ? Number(price) : null,
+        image,
       },
       { onConflict: "item_id,on_date" },
     );
@@ -238,7 +281,11 @@ export default function CafeteriaAdminPage() {
       return;
     }
     setMenus((prev) =>
-      new Map(prev).set(target.id, { name: name.trim(), price: price.trim() ? Number(price) : null }),
+      new Map(prev).set(target.id, {
+        name: name.trim(),
+        price: price.trim() ? Number(price) : null,
+        image,
+      }),
     );
     setMsg({ kind: "ok", text: `${target.name} を「${name.trim()}」にしました` });
   };
@@ -247,7 +294,7 @@ export default function CafeteriaAdminPage() {
   const loadPresets = async () => {
     const { data } = await createClient()
       .from("menu_presets")
-      .select("id, cafeteria_id, name, price")
+      .select("id, cafeteria_id, name, price, image")
       .order("sort_order")
       .order("name");
     setPresets((data as Preset[]) ?? []);
@@ -270,6 +317,7 @@ export default function CafeteriaAdminPage() {
           cafeteria_id: target.cafeteria_id,
           name: name.trim(),
           price: price.trim() ? Number(price) : null,
+          image,
         },
         { onConflict: "cafeteria_id,name" },
       );
@@ -314,6 +362,7 @@ export default function CafeteriaAdminPage() {
       on_date: d,
       name: name.trim(),
       price: price.trim() ? Number(price) : null,
+      image,
     }));
 
     if (
@@ -347,6 +396,7 @@ export default function CafeteriaAdminPage() {
         new Map(prev).set(target.id, {
           name: name.trim(),
           price: price.trim() ? Number(price) : null,
+          image,
         }),
       );
     }
@@ -636,6 +686,7 @@ export default function CafeteriaAdminPage() {
                                 onClick={() => {
                                   setName(pr.name);
                                   setPrice(pr.price != null ? String(pr.price) : "");
+                                  setImage(pr.image ?? "");
                                 }}
                                 className="rounded-l-lg bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 shadow-sm transition hover:bg-blue-50 active:scale-95"
                               >
@@ -677,6 +728,57 @@ export default function CafeteriaAdminPage() {
                       className="w-28 rounded-xl bg-slate-100 px-4 py-3 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
                     />
                     <span className="text-xs font-bold text-slate-500">{T("円（任意）")}</span>
+                  </div>
+
+                  {/*
+                    写真。任意。
+
+                    毎日撮るのは手間なので、無いほうがふつうだと考えておく。
+                    入れると、学内の情報でいちばん左に小さく出る。
+                  */}
+                  <div className="mt-2 rounded-xl bg-slate-50 p-2.5">
+                    <div className="flex items-center gap-2.5">
+                      {image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={image}
+                          alt=""
+                          className="h-16 w-16 shrink-0 rounded-lg object-cover ring-1 ring-slate-200"
+                        />
+                      ) : (
+                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-white text-[10px] font-bold text-slate-400 ring-1 ring-slate-200">
+                          {T("なし")}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-bold text-slate-700">
+                          {T("写真（任意）")}
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            void pickPhoto(e.target.files?.[0] ?? null);
+                            e.target.value = "";
+                          }}
+                          disabled={imgBusy}
+                          className="mt-1 w-full text-[10px] file:mr-2 file:rounded-md file:border-0 file:bg-slate-900 file:px-2.5 file:py-1 file:text-[10px] file:font-bold file:text-white"
+                        />
+                        <p className="mt-0.5 text-[9px] leading-relaxed text-slate-400">
+                          {imgBusy
+                            ? T("小さくしています…")
+                            : T("この端末で小さくしてから送ります（長辺512点）")}
+                        </p>
+                      </div>
+                      {image && (
+                        <button
+                          onClick={() => setImage("")}
+                          className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[10px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95"
+                        >
+                          {T("外す")}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={() => void saveMenu()}

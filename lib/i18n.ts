@@ -42,6 +42,23 @@ const EN: Record<string, string> = {
   "目的地を選んでください": "Choose a destination",
   "次に目的地のラベルを押してください": "Now tap the destination",
 
+  /* 案内中の帯 */
+  "{from} から 徒歩{n}分・{m}m": "{n} min walk from {from} · {m} m",
+  "全体に戻す": "Whole campus",
+  "地図を表示できません": "The map cannot be shown",
+  "23号館 / 23 302 / 図書館": "Bldg. 23 / 23 302 / Library",
+  "見つかりません": "Nothing found",
+  "いまは建物どうしの案内だけ使えます。": "Right now only building-to-building routes work.",
+  "教室（何号館の何階の何番）で探すには、": "To search by room (building, floor, number), ",
+  "して管理者の承認を受けてください。": " and get approved by an administrator.",
+  "{n}件": "{n}",
+
+  /* 現在地の様子（続き） */
+  "現在地を取得できませんでした": "Could not get your location",
+  "キャンパス外・遠い": "Off campus · far",
+  圏外: "Off campus",
+  "取得中…": "Finding…",
+
   /* 到着 */
   到着しました: "You have arrived",
   "建物の中では": "Inside the building",
@@ -650,6 +667,27 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* 学内の情報の、課外活動を探す欄 */
+  "名前で探して、どこでやっているかを見る": "Search by name and see where it meets",
+  "課外活動の名前で探すと、いつ・どこでやっているかが出ます。":
+    "Search a club by name to see when and where it meets.",
+  "吹奏楽、ロボット、テニス…": "Brass band, robotics, tennis…",
+  "この先ひと月に、この団体の予定は入っていません。":
+    "Nothing is scheduled for this club in the next month.",
+
+  /* 教授の、自分の授業 */
+  "自分の授業": "My classes",
+  "この日に、あなたが担当する授業は入っていません。":
+    "You have no classes scheduled on this day.",
+  "担当者の名前で照らしています。出てこないときは、予定の担当の書き方をお確かめください。":
+    "Matched on the teacher’s name. If something is missing, check how the teacher is written on the schedule.",
+
+  /* 食堂の写真 */
+  "写真（任意）": "Photo (optional)",
+  "小さくしています…": "Shrinking…",
+  "この端末で小さくしてから送ります（長辺512点）":
+    "Shrunk on this device before sending (longest side 512px)",
+
   /* 名簿の、課外活動リーダーとログインしている人 */
   "リーダーを見る": "See the leaders",
   "その名前の課外活動は見つかりませんでした。": "No club by that name was found.",
@@ -741,6 +779,7 @@ const EN_PLACE: Record<string, string> = {
   "野々市工大前バス停": "Nonoichi-Kodai-mae Bus Stop",
   "野々市工大前駅": "Nonoichi-Kodai-mae Station",
   バス停: "Bus Stop",
+  "バス停八束穂行き": "Bus Stop (for Yatsukaho)",
   "自転車(北)": "Bicycle Parking (N)",
   "自転車(北2)": "Bicycle Parking (N2)",
   "自転車(東)": "Bicycle Parking (E)",
@@ -755,6 +794,22 @@ const loose = (s: string) => s.replace(/[（）()\s]/g, "");
 const PLACE_LOOSE: Record<string, string> = {};
 for (const [k, v] of Object.entries(EN_PLACE)) PLACE_LOOSE[loose(k)] = v;
 
+/**
+ * 英語の名前から、日本語へ戻すための表。
+ *
+ * ★なぜ要るか
+ *
+ *   英語で使っているときに目的地を選ぶと、そのとき画面に出ていた
+ *   名前——つまり英語の名前——が案内に控えられる。
+ *   そのあと日本語に戻しても、控えたほうは英語のまま。
+ *   訳す向きが片道しかなかったので、戻せなかった。
+ *
+ *   お気に入りも同じ。英語で登録すると、英語の名前が端末に残る。
+ *   戻す道があれば、あとから日本語に切り替えても正しく出る。
+ */
+const PLACE_BACK: Record<string, string> = {};
+for (const [k, v] of Object.entries(EN_PLACE)) PLACE_BACK[loose(v).toLowerCase()] = k;
+
 /** 画面の文言を訳す。対応表に無ければ日本語のまま返す */
 export function t(lang: Lang, ja: string): string {
   if (lang === "ja") return ja;
@@ -768,7 +823,24 @@ export function t(lang: Lang, ja: string): string {
  * 47棟ぶん並べても、増えたときに書き足し忘れるだけなので。
  */
 export function placeName(lang: Lang, name: string): string {
-  if (lang === "ja" || !name) return name;
+  if (!name) return name;
+
+  /*
+   * 日本語に戻すとき。
+   *
+   * 英語で選んだ目的地や、英語で登録したお気に入りには、
+   * 英語の名前が控えられている。そのまま返すと、日本語に
+   * 切り替えても英語のままになる。分かるものは戻す。
+   *
+   * 付け替えた名前（カスタマイズ）はこの表に無いので、
+   * ここには当たらない。そのまま返る。
+   */
+  if (lang === "ja") {
+    const back = PLACE_BACK[loose(name).toLowerCase()];
+    if (back) return back;
+    // 「Bldg. 23」→「23号館」
+    return name.replace(/Bldg\.\s*(\d+)/g, "$1号館");
+  }
 
   const known = PLACE_LOOSE[loose(name)];
   if (known) return known;

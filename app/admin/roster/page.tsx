@@ -142,7 +142,7 @@ type DomainOn = Record<DomainKind, boolean>;
  *   その人が実際に使っているかは分からない。
  *   ここで出すのは、席があって権限が付いている人（profiles）。
  */
-type PeopleKind = "student" | "teacher" | "leader" | "cafeteria" | "other";
+type PeopleKind = "student" | "teacher" | "leader" | "cafeteria" | "other" | "pending";
 
 const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
   // byDept … 学部と学科を選んでから見る（学年・クラスを持っている人）
@@ -151,6 +151,14 @@ const PEOPLE_KINDS: { id: PeopleKind; label: string; byDept: boolean }[] = [
   { id: "leader", label: "課外活動リーダー", byDept: true },
   { id: "cafeteria", label: "食堂", byDept: false },
   { id: "other", label: "その他", byDept: false },
+  /*
+   * 承認待ち。まだ身分が決まっていない人。
+   *
+   * 前はどこにも出さないようにしていたが、その人たちも
+   * ログインはできている。出さないと人数にも入らず、
+   * xlsx に書き出しても入らなかった。
+   */
+  { id: "pending", label: "承認待ち", byDept: false },
 ];
 
 /**

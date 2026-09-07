@@ -29,8 +29,9 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
 import { t, type Lang } from "@/lib/i18n";
 import { dayColor, holidayName } from "@/lib/holidays";
+import { rankOf } from "@/lib/appdata";
 
-type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "apply";
+type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "clubs" | "apply";
 
 /** いまの言葉。上から配って、部品の中で取り出す */
 const LangCtx = createContext<Lang>("ja");
@@ -202,6 +203,15 @@ function Panel({
             <Big onClick={() => setStep("free")} icon="🚪"
               label={T("空き教室")} sub={T("号館と時限から探す")} />
             {/*
+              課外活動。名前で探して、どこでやっているかを見る。
+
+              時間割の中にも団体の一覧はあるが、あちらは
+              「その日・その時間に何があるか」を見るためのもの。
+              「あの部活はどこ？」から入りたいときに辿りつけない。
+            */}
+            <Big onClick={() => setStep("clubs")} icon="🏳"
+              label={T("課外活動")} sub={T("名前で探して、どこでやっているかを見る")} />
+            {/*
               申請。いちばん下に置く。
 
               使う人は限られているので、上に置くと
@@ -216,8 +226,9 @@ function Panel({
         )}
 
         {step === "cafeteria" && <Cafeteria date={date} />}
-        {step === "timetable" && <Timetable date={date} periods={periods} />}
+        {step === "timetable" && <Timetable date={date} periods={periods} role={role} />}
         {step === "free" && <FreeRooms date={date} periods={periods} />}
+        {step === "clubs" && <Clubs date={date} />}
         {step === "apply" && <Apply />}
       </div>
     </div>
@@ -403,7 +414,9 @@ function Cafeteria({ date }: { date: Date }) {
 
   const [items, setItems] = useState<ItemRow[]>([]);
   const [states, setStates] = useState<Map<number, { state: string; note: string }>>(new Map());
-  const [menus, setMenus] = useState<Map<number, { name: string; price: number | null }>>(new Map());
+  const [menus, setMenus] = useState<
+    Map<number, { name: string; price: number | null; image: string }>
+  >(new Map());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -414,11 +427,19 @@ function Cafeteria({ date }: { date: Date }) {
       const [a, b, c] = await Promise.all([
         supabase.from("cafeteria_items").select("id, kind, parent_id, name, sort_order").order("sort_order"),
         supabase.from("counter_days").select("item_id, state, note").eq("on_date", d),
-        supabase.from("menu_days").select("item_id, name, price").eq("on_date", d),
+        supabase.from("menu_days").select("item_id, name, price, image").eq("on_date", d),
       ]);
       setItems((a.data as ItemRow[]) ?? []);
       setStates(new Map(((b.data as { item_id: number; state: string; note: string }[]) ?? []).map((r) => [r.item_id, r])));
-      setMenus(new Map(((c.data as { item_id: number; name: string; price: number | null }[]) ?? []).map((r) => [r.item_id, r])));
+      setMenus(
+        new Map(
+          (
+            (c.data as
+              | { item_id: number; name: string; price: number | null; image: string }[]
+              | null) ?? []
+          ).map((r) => [r.item_id, { ...r, image: r.image ?? "" }]),
+        ),
+      );
       setLoading(false);
     })();
   }, [date]);
@@ -453,9 +474,30 @@ function Cafeteria({ date }: { date: Date }) {
                 {slots.map((s) => {
                   const m = menus.get(s.id);
                   return (
-                    <li key={s.id} className="flex items-baseline justify-between gap-2 text-[11px]">
+                    <li key={s.id} className="flex items-center gap-2 text-[11px]">
+                      {/*
+                        写真はいちばん左。
+
+                        無いことのほうが多いので、無いときも同じ場所に
+                        同じ大きさで「なし」と出す。場所ごと消すと、
+                        撮り忘れたのか、もともと出さない決まりなのかが
+                        分からなくなるうえ、行ごとに高さが変わって読みにくい。
+                      */}
+                      {m?.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={m.image}
+                          alt=""
+                          loading="lazy"
+                          className="h-11 w-11 shrink-0 rounded-lg object-cover ring-1 ring-slate-200"
+                        />
+                      ) : (
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white text-[9px] font-bold text-slate-300 ring-1 ring-slate-200">
+                          {T("なし")}
+                        </span>
+                      )}
                       <span className="shrink-0 text-slate-500">− {s.name}</span>
-                      <span className="min-w-0 truncate text-right font-bold text-slate-800">
+                      <span className="ml-auto min-w-0 truncate text-right font-bold text-slate-800">
                         {m ? m.name : "—"}
                         {m?.price ? (
                           <span className="ml-1 font-normal text-slate-500">
@@ -501,7 +543,15 @@ type ActRow = {
   rooms: { building_code: string; code: string; name: string } | null;
 };
 
-function Timetable({ date, periods }: { date: Date; periods: Period[] }) {
+function Timetable({
+  date,
+  periods,
+  role,
+}: {
+  date: Date;
+  periods: Period[];
+  role: Role | null;
+}) {
   const T = useT();
 
   // null = 未選択、数字 = その限、"act" = 課外活動
@@ -509,6 +559,9 @@ function Timetable({ date, periods }: { date: Date; periods: Period[] }) {
 
   return (
     <div>
+      {/* 教授には、自分が担当する授業をいちばん上に出す */}
+      {role === "admin_l2" && <MyClasses date={date} />}
+
       <p className="mb-1.5 text-[11px] font-bold text-slate-500">{T("何限を見ますか")}</p>
       <div className="grid grid-cols-3 gap-1.5">
         {periods.map((p) => (
@@ -1627,6 +1680,319 @@ function NeedVerify({ what }: { what: string }) {
       <a href="/login" className="mt-2 inline-block font-bold text-blue-700 underline">
         {T("ログインの画面へ")}
       </a>
+    </div>
+  );
+}
+
+/* ================= 教授の、自分の授業 ================= */
+
+/**
+ * その日、自分が担当する授業。
+ *
+ * ■ なぜ要るか
+ *   時間割は「学科と学年で絞って見る」形になっている。
+ *   教授にとっては、自分の授業が別々の学科・学年に散らばっているので、
+ *   何度も選び直さないと自分の一日が見えなかった。
+ *
+ * ■ どうやって自分のものと見分けるか
+ *   予定には担当者の名前が文字で入っている（timetable.teacher）。
+ *   科目のほうにも担当者がある（courses.teacher）。
+ *   どちらかが自分の名前と合えば、自分の授業とみなす。
+ *
+ *   名前で見分けるのは弱い。同姓同名がいれば混ざるし、
+ *   表記がゆれれば出てこない。ただ、いま持っているのは名前だけで、
+ *   予定と席を結ぶ列が無い。空白のゆれだけは吸収しておく。
+ */
+function MyClasses({ date }: { date: Date }) {
+  const T = useT();
+  const [rows, setRows] = useState<ClassRow[] | null>(null);
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    if (!supabaseReady) return;
+    let alive = true;
+    void (async () => {
+      const supabase = createClient();
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) {
+        if (alive) setRows([]);
+        return;
+      }
+      const { data: p } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", u.user.id)
+        .single();
+      const me = String((p as { full_name?: string } | null)?.full_name ?? "").trim();
+      if (alive) setName(me);
+      if (me === "") {
+        if (alive) setRows([]);
+        return;
+      }
+
+      const cols =
+        "id, starts_at, ends_at, teacher, changed, change_note," +
+        " rooms(building_code, code, name), courses(name, class_name, teacher)";
+
+      /*
+       * 二回に分けて訊く。
+       *
+       * 予定の担当（timetable.teacher）と、科目の担当（courses.teacher）は
+       * 別の表にある。片方だけで訊くと、もう片方にしか名前が入っていない
+       * 授業が落ちる。二つ取ってきて、同じ番号のものを一つにまとめる。
+       */
+      const [a, b] = await Promise.all([
+        supabase
+          .from("timetable")
+          .select(cols)
+          .eq("on_date", ymd(date))
+          .eq("kind", "class")
+          .ilike("teacher", `%${me}%`),
+        supabase
+          .from("timetable")
+          .select(cols.replace("courses(", "courses!inner("))
+          .eq("on_date", ymd(date))
+          .eq("kind", "class")
+          .ilike("courses.teacher", `%${me}%`),
+      ]);
+
+      const byId = new Map<number, ClassRow>();
+      for (const r of [
+        ...(((a.data as unknown as ClassRow[] | null) ?? []) as ClassRow[]),
+        ...(((b.data as unknown as ClassRow[] | null) ?? []) as ClassRow[]),
+      ]) {
+        byId.set(r.id, r);
+      }
+      const got = [...byId.values()].sort((x, y) => x.starts_at.localeCompare(y.starts_at));
+      if (alive) setRows(got);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [date]);
+
+  // 名前が入っていない人には、そもそも出さない
+  if (rows === null || name === "") return null;
+
+  return (
+    <section className="mb-3 rounded-xl bg-blue-50/60 p-2.5 ring-1 ring-blue-200">
+      <div className="text-[11px] font-bold text-blue-900">{T("自分の授業")}</div>
+      {rows.length === 0 ? (
+        <p className="mt-1 text-[10px] leading-relaxed text-blue-800">
+          {T("この日に、あなたが担当する授業は入っていません。")}
+        </p>
+      ) : (
+        <ul className="mt-1.5 flex flex-col gap-1">
+          {rows.map((r) => (
+            <li key={r.id} className="rounded-lg bg-white px-2.5 py-1.5">
+              <div className="flex items-baseline gap-1.5">
+                <span className="shrink-0 font-mono text-[10px] text-slate-500">
+                  {hhmm(r.starts_at)}
+                </span>
+                <span className="truncate text-xs font-bold text-slate-800">
+                  {r.courses?.name || T("（科目名なし）")}
+                </span>
+                {r.changed && (
+                  <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-900">
+                    {r.change_note || T("変更あり")}
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-slate-500">
+                <span>
+                  {r.rooms
+                    ? `${r.rooms.building_code}${T("号館")} ${r.rooms.code} ${r.rooms.name}`.trim()
+                    : T("教室未定")}
+                </span>
+                {r.courses?.class_name && <span>{r.courses.class_name}</span>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-1 text-[9px] leading-relaxed text-blue-700">
+        {T("担当者の名前で照らしています。出てこないときは、予定の担当の書き方をお確かめください。")}
+      </p>
+    </section>
+  );
+}
+
+/* ================= 課外活動を探す ================= */
+
+type ClubHit = {
+  id: number;
+  starts_at: string;
+  ends_at: string;
+  title: string;
+  on_date: string;
+  rooms: { building_code: string; code: string; name: string } | null;
+  club_activities: { name: string } | null;
+};
+
+/**
+ * 課外活動を名前で探して、どこでやっているかを見る。
+ *
+ * ■ 時間割の中の一覧とは、入り方が違う
+ *   あちらは「その日・その時間に何があるか」を見るためのもの。
+ *   ここは「あの部活はどこ？」から入る。分類をたどらずに、
+ *   名前を打てば辿りつける。
+ *
+ * ■ 探し方は道案内と同じ
+ *   当たり方は lib/appdata の rankOf を使う。全角・記号・
+ *   大文字小文字のゆれを同じように吸収するので、
+ *   地図で慣れた手ごたえのまま使える。
+ *
+ * ■ その日に無ければ、先の予定を探す
+ *   活動は毎日あるとはかぎらない。選んだ日に無いからといって
+ *   「やっていない」ではないので、そこから先を見にいく。
+ */
+function Clubs({ date }: { date: Date }) {
+  const T = useT();
+  const dateText = useDateText();
+
+  const [acts, setActs] = useState<Act[]>([]);
+  const [q, setQ] = useState("");
+  const [pick, setPick] = useState<Act | null>(null);
+  const [rows, setRows] = useState<ClubHit[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!supabaseReady) return;
+    void createClient()
+      .from("club_activities")
+      .select("id, category_id, name")
+      .order("sort_order")
+      .then(({ data }) => setActs((data as Act[]) ?? []));
+  }, []);
+
+  /** 打った言葉に当たる団体 */
+  const hits = useMemo(() => {
+    const word = q.trim();
+    if (word === "") return [];
+    return acts
+      .map((a) => ({ a, r: rankOf(a.name, word) }))
+      .filter((x) => x.r >= 0)
+      .sort((x, y) => x.r - y.r || x.a.name.localeCompare(y.a.name, "ja"))
+      .slice(0, 10);
+  }, [acts, q]);
+
+  useEffect(() => {
+    if (!pick || !supabaseReady) {
+      setRows(null);
+      return;
+    }
+    let alive = true;
+    setBusy(true);
+    void (async () => {
+      /*
+       * 選んだ日から、ひと月ぶん先までを見る。
+       * その日に無いからといって「やっていない」ではないので、
+       * 次にいつ・どこであるのかまで出す。
+       */
+      const from = ymd(date);
+      const end = new Date(date);
+      end.setDate(end.getDate() + 31);
+      const { data } = await createClient()
+        .from("timetable")
+        .select(
+          "id, on_date, starts_at, ends_at, title, rooms(building_code, code, name), club_activities(name)",
+        )
+        .eq("kind", "club")
+        .eq("activity_id", pick.id)
+        .gte("on_date", from)
+        .lte("on_date", ymd(end))
+        .order("on_date")
+        .order("starts_at")
+        .limit(60);
+      if (alive) {
+        setRows((data as unknown as ClubHit[]) ?? []);
+        setBusy(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [pick, date]);
+
+  return (
+    <div>
+      <p className="mb-2 rounded-xl bg-slate-50 p-2.5 text-[11px] leading-relaxed text-slate-600">
+        {T("課外活動の名前で探すと、いつ・どこでやっているかが出ます。")}
+      </p>
+
+      <div className="relative">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoComplete="off"
+          placeholder={T("吹奏楽、ロボット、テニス…")}
+          className="w-full rounded-xl bg-slate-100 px-4 py-3 text-sm outline-none transition focus:bg-white focus:ring-2 focus:ring-blue-500"
+        />
+        {hits.length > 0 && (
+          <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-xl bg-white py-1 shadow-lg ring-1 ring-slate-200">
+            {hits.map((h) => (
+              <li key={h.a.id}>
+                <button
+                  onClick={() => {
+                    setPick(h.a);
+                    setQ("");
+                  }}
+                  className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 transition hover:bg-slate-50"
+                >
+                  {h.a.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {q.trim() !== "" && hits.length === 0 && (
+          <p className="absolute left-0 right-0 top-full z-10 mt-1 rounded-xl bg-white px-4 py-2.5 text-xs text-slate-500 shadow-lg ring-1 ring-slate-200">
+            {T("その名前の課外活動は見つかりませんでした。")}
+          </p>
+        )}
+      </div>
+
+      {pick && (
+        <div className="mt-3">
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 truncate text-sm font-bold text-slate-900">{pick.name}</span>
+            <button
+              onClick={() => setPick(null)}
+              className="ml-auto shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
+            >
+              {T("やめる")}
+            </button>
+          </div>
+
+          {busy && <Note>{T("読み込み中…")}</Note>}
+
+          {!busy && rows !== null && rows.length === 0 && (
+            <Note>{T("この先ひと月に、この団体の予定は入っていません。")}</Note>
+          )}
+
+          {!busy && rows !== null && rows.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {rows.map((r) => (
+                <li key={r.id} className="rounded-xl bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-bold text-slate-800">
+                    {dateText(new Date(`${r.on_date}T00:00:00`))}
+                    <span className="ml-2 font-mono font-normal text-slate-500">
+                      {hhmm(r.starts_at)}
+                      {r.ends_at ? `–${hhmm(r.ends_at)}` : ""}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs font-bold text-blue-800">
+                    {r.rooms
+                      ? `${r.rooms.building_code}${T("号館")} ${r.rooms.code} ${r.rooms.name}`.trim()
+                      : T("教室未定")}
+                  </div>
+                  {r.title && <div className="text-[10px] text-slate-500">{r.title}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

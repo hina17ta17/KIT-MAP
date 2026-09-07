@@ -959,7 +959,34 @@ export default function Guide() {
 
   /** その言葉に直す。書くたびに lang を渡さなくて済むようにする */
   const T = useCallback((ja: string) => t(lang, ja), [lang]);
+  /**
+   * 場所の名前を、いまの言葉に直す。
+   *
+   * ★訳した名前を控えていても、戻せる
+   *   英語で目的地を選ぶと、そのとき出ていた英語の名前が控えられる。
+   *   日本語に戻したときも、ここを通せば日本語で出る（i18n の placeName）。
+   *   案内中に言葉を切り替えても、目的地と出発地が英語のまま残らない。
+   */
   const P = useCallback((name: string) => placeName(lang, name), [lang]);
+
+  /**
+   * 案内中の帯の、二行目。
+   *
+   *   日本語  23号館 から 徒歩4分・280m
+   *   英語    4 min walk from Bldg. 23 · 280 m
+   *
+   * 言葉によって並びが変わるので、文をつなぎ合わせずに型を一つ持って埋める。
+   * つなぎ合わせると、英語のときに「から」が残ったり、
+   * 並びが日本語のままになったりする。
+   */
+  const walkLine = useCallback(
+    (from: string, minutes: number, meters: number) =>
+      t(lang, "{from} から 徒歩{n}分・{m}m")
+        .replace("{from}", from)
+        .replace("{n}", String(minutes))
+        .replace("{m}", String(meters)),
+    [lang],
+  );
 
   const toggleFav = useCallback((id: string) => {
     setFavs((prev) => {
@@ -2070,7 +2097,7 @@ export default function Guide() {
       {fatal && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-100 p-6">
           <div className="max-w-sm rounded-2xl bg-white p-5 text-sm shadow-xl ring-1 ring-red-300">
-            <b className="text-red-700">地図を表示できません</b>
+            <b className="text-red-700">{T("地図を表示できません")}</b>
             <p className="mt-2 text-xs text-slate-700">{fatal}</p>
           </div>
         </div>
@@ -2199,7 +2226,7 @@ export default function Guide() {
           style={{ top: "1rem", bottom: "1rem" }}
         >
           <div className="mb-2 flex shrink-0 items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500">学内の情報</span>
+            <span className="text-[11px] font-bold text-slate-500">{T("学内の情報")}</span>
             <button
               onClick={() => setSide(false)}
               aria-label="閉じる"
@@ -2294,7 +2321,7 @@ export default function Guide() {
           {/* 順調なあいだは短く。うまくいかないときだけ下に詳しく出す */}
           {geoState === "asking" && (
             <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-amber-600 shadow-sm">
-              {lang === "en" ? "Finding…" : "取得中…"}
+              {T("取得中…")}
             </span>
           )}
           {(geoState === "on" || geoState === "rough") && (
@@ -2325,13 +2352,7 @@ export default function Guide() {
                   : T("構内の外にいます")
               }
             >
-              {tooFar
-                ? lang === "en"
-                  ? "Off campus · far"
-                  : "キャンパス外・遠い"
-                : lang === "en"
-                  ? "Off campus"
-                  : "圏外"}
+              {tooFar ? T("キャンパス外・遠い") : T("圏外")}
             </span>
           )}
         </div>
@@ -2397,7 +2418,9 @@ export default function Guide() {
           */
           <div className="pointer-events-none flex max-w-[16rem] items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-[11px] font-bold text-white shadow-md">
             <span className="min-w-0">
-              <span className="block truncate">出発：{pickedFrom.title}</span>
+              <span className="block truncate">
+                {T("出発")}：{P(pickedFrom.title)}
+              </span>
               <span className="block font-normal text-blue-100">
                 {T("次に目的地のラベルを押してください")}
               </span>
@@ -2420,10 +2443,10 @@ export default function Guide() {
             geoState === "insecure") && (
             <div className="flex max-w-[15rem] items-start gap-1.5 rounded-2xl bg-white py-1.5 pl-3 pr-1.5 text-[11px] font-medium leading-snug text-slate-600 shadow-sm">
               <div className="min-w-0 flex-1">
-                {geoState === "denied" && "現在地が拒否されています"}
-                {geoState === "timeout" && "測位できませんでした"}
-                {geoState === "unavailable" && "現在地を取得できませんでした"}
-                {geoState === "insecure" && "この接続では現在地を使えません"}
+                {geoState === "denied" && T("現在地が拒否されています")}
+                {geoState === "timeout" && T("測位できませんでした")}
+                {geoState === "unavailable" && T("現在地を取得できませんでした")}
+                {geoState === "insecure" && T("この接続では現在地を使えません")}
 
                 {/* 詳しい説明は畳んでおく。開いたままだと地図が見えなくなる */}
                 {geoHelp && (
@@ -2561,21 +2584,23 @@ export default function Guide() {
       {login && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-xs rounded-2xl bg-white p-5 shadow-2xl">
-            <h2 className="text-base font-bold tracking-tight text-slate-900">ログイン</h2>
+            <h2 className="text-base font-bold tracking-tight text-slate-900">
+              {T("ログイン")}
+            </h2>
             <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-              大学のアカウントのみ利用できます。承認された学生・教職員が対象です。
+              {T("大学のアカウントのみ利用できます。承認された学生・教職員が対象です。")}
             </p>
             <a
               href="/login"
               className="mt-3 block w-full rounded-xl bg-blue-600 px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-blue-700"
             >
-              ログイン画面へ
+              {T("ログイン画面へ")}
             </a>
             <button
               onClick={() => setLogin(false)}
               className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
             >
-              閉じる
+              {T("閉じる")}
             </button>
           </div>
         </div>
@@ -2595,8 +2620,12 @@ export default function Guide() {
               </button>
             </div>
             <p className="mb-2 shrink-0 text-[11px] leading-relaxed text-slate-500">
-              よく行く場所に★を付けると、案内の入力欄と建物一覧のいちばん上に出ます。
-              {favs.length > 0 && <span className="ml-1 font-bold text-slate-700">{favs.length}件</span>}
+              {T("よく行く場所に★を付けると、案内の入力欄と建物一覧のいちばん上に出ます。")}
+              {favs.length > 0 && (
+                <span className="ml-1 font-bold text-slate-700">
+                  {T("{n}件").replace("{n}", String(favs.length))}
+                </span>
+              )}
             </p>
             <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {listed.map(({ f, label, renamed }) => {
@@ -2732,7 +2761,10 @@ export default function Guide() {
                 // 区切りが変わったところに見出しを挟む。
                 // 列をまたいで一行使いたいので col-span-full にする
                 const head =
-                  key[0] !== listed[i - 1]?.key[0] ? GROUP_LABEL[key[0]] : undefined;
+                  key[0] !== listed[i - 1]?.key[0]
+                    ? // 区切りの見出しも訳す（「施設」「その他」）
+                      T(GROUP_LABEL[key[0]] ?? "")
+                    : undefined;
                 return (
                   <Fragment key={f.properties.tempId}>
                     {head && (
@@ -2874,7 +2906,7 @@ export default function Guide() {
             <Field
               label={T("出発地")}
               data={data}
-              value={origin.kind === "me" ? "現在地" : origin.hit.title}
+              value={origin.kind === "me" ? T("現在地") : P(origin.hit.title)}
               allowMe
               onMe={() => setOrigin({ kind: "me" })}
               onPick={(h) => setOrigin({ kind: "place", hit: h })}
@@ -2885,7 +2917,7 @@ export default function Guide() {
             <Field
               label={T("目的地")}
               data={data}
-              value={dest?.title ?? ""}
+              value={dest ? P(dest.title) : ""}
               onPick={(h) => setDest(h)}
               favs={favHits}
               lang={lang}
@@ -2894,12 +2926,12 @@ export default function Guide() {
             {/* 教室は承認された人だけが見られる。未ログインには理由を伝える */}
             {!canViewCampusInfo(role) && (
               <p className="mt-2 rounded-xl bg-slate-100 p-2.5 text-[10px] leading-relaxed text-slate-500">
-                いまは<b>建物どうしの案内</b>だけ使えます。
-                教室（何号館の何階の何番）で探すには、
+                {T("いまは建物どうしの案内だけ使えます。")}
+                {T("教室（何号館の何階の何番）で探すには、")}
                 <a href="/login" className="font-bold text-blue-600 underline">
-                  ログイン
+                  {T("ログイン")}
                 </a>
-                して管理者の承認を受けてください。
+                {T("して管理者の承認を受けてください。")}
               </p>
             )}
 
@@ -2914,7 +2946,7 @@ export default function Guide() {
               }}
               className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.99] disabled:bg-slate-200 disabled:text-slate-400"
             >
-              {dest ? "案内をはじめる" : "目的地を選んでください"}
+              {dest ? T("案内をはじめる") : T("目的地を選んでください")}
             </button>
           </div>
         </div>
@@ -2930,10 +2962,18 @@ export default function Guide() {
               </div>
               <div className="truncate text-[11px] leading-tight text-slate-500">
                 {route && !("error" in route)
-                  ? `${route.fromGate ? "正門" : trip.origin.kind === "me" ? "現在地" : trip.origin.hit.title} から 徒歩${route.minutes}分・${route.meters}m`
+                  ? walkLine(
+                      route.fromGate
+                        ? T("正門")
+                        : trip.origin.kind === "me"
+                          ? T("現在地")
+                          : P(trip.origin.hit.title),
+                      route.minutes,
+                      route.meters,
+                    )
                   : route && "error" in route
-                    ? route.error
-                    : "計算中…"}
+                    ? T(route.error ?? "")
+                    : T("計算中…")}
               </div>
             </div>
             {/* 「✕」だけでは何が消えるのか分からないので、言葉で書く */}
@@ -2988,7 +3028,7 @@ export default function Guide() {
             className="mt-1.5 flex w-fit items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 shadow-md transition hover:bg-white active:scale-95"
           >
             <span className="text-[13px]">⤢</span>
-            {lang === "en" ? "Whole campus" : "全体に戻す"}
+            {T("全体に戻す")}
           </button>
         </div>
       )}
@@ -3064,7 +3104,7 @@ function Field({
           setQ("");
           setOpen(true);
         }}
-        placeholder="23号館 / 23 302 / 図書館"
+        placeholder={t(lang, "23号館 / 23 302 / 図書館")}
         className="w-full rounded-xl bg-slate-100 px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:bg-white focus:ring-2 focus:ring-blue-500"
       />
       {open && (
@@ -3120,7 +3160,7 @@ function Field({
             </li>
           ))}
           {q && hits.length === 0 && (
-            <li className="px-4 py-3 text-xs text-slate-400">見つかりません</li>
+            <li className="px-4 py-3 text-xs text-slate-400">{t(lang, "見つかりません")}</li>
           )}
         </ul>
       )}
