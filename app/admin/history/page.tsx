@@ -37,10 +37,14 @@ type Row = {
   id: number;
   area: string;
   table_name: string;
-  action: "insert" | "update" | "delete";
+  action: "insert" | "update" | "delete" | "event" | "error";
   row_id: string;
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
+  /** できごと・エラーの一行の説明 */
+  label: string | null;
+  /** そのままの中身。エラー名や番号など */
+  detail: Record<string, unknown> | null;
   actor_mail: string;
   at: string;
   restored_at: string | null;
@@ -60,18 +64,36 @@ const AREAS: { id: string; label: string; sub: string; icon: string }[] = [
   { id: "cafeteria", label: "食堂", sub: "メニュー・提供状況・控え", icon: "🍚" },
   { id: "roster", label: "名簿", sub: "学生・教職員の名簿", icon: "📒" },
   { id: "people", label: "席と権限", sub: "利用者の情報と権限", icon: "👤" },
+  /*
+   * 表の中身が変わらなかったことも残す。
+   * 困るのは、たいてい変わらなかったときのほうにある。
+   *   ・xlsx を読ませたが、一行も入らなかった
+   *   ・申請したのに通らなかった
+   *   ・画面が急に止まった
+   * どれも今までは、履歴に何も残らなかった。
+   */
+  { id: "system", label: "そのほか", sub: "取り込み・申請・画面のできごと", icon: "📣" },
+  /*
+   * エラーだけは、分類をまたいで集める。
+   * 「何かおかしい」ときに最初に見る所なので、探し回らせない。
+   */
+  { id: "error", label: "エラー", sub: "うまくいかなかったこと（すべての分類から）", icon: "⚠" },
 ];
 
 const ACTION_LABEL: Record<string, string> = {
   insert: "足した",
   update: "変えた",
   delete: "消した",
+  event: "できごと",
+  error: "エラー",
 };
 
 const ACTION_CLS: Record<string, string> = {
   insert: "bg-emerald-100 text-emerald-900",
   update: "bg-amber-100 text-amber-900",
   delete: "bg-red-100 text-red-900",
+  event: "bg-slate-200 text-slate-800",
+  error: "bg-red-600 text-white",
 };
 
 /** 確かめの文で使う改行 */
@@ -305,7 +327,7 @@ export default function HistoryPage() {
     return (
       <Shell wide>
         <AdminHeader title={T("履歴")} />
-        <AdminMenu role={role} />
+        <AdminMenu current="history" role={role} />
 
         <p className="mt-3 rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600">
           {T("いつ・誰が・何を変えたかが残っています。")}
@@ -345,7 +367,7 @@ export default function HistoryPage() {
   return (
     <Shell wide>
       <AdminHeader title={`${T("履歴")}｜${T(here?.label ?? "")}`} />
-      <AdminMenu role={role} />
+      <AdminMenu current="history" role={role} />
 
       <button
         onClick={() => {
@@ -386,13 +408,24 @@ export default function HistoryPage() {
       <ul className="space-y-1.5">
         {rows.map((r) => {
           const opened = open === r.id;
-          const what = summarize(r.table_name, r.before ?? r.after) || r.row_id;
+          /*
+           * できごと・エラーは label に一行が入っている。
+           * 表の中身が変わっていないので、summarize では何も出せない。
+           */
+          const what =
+            r.label && r.label !== ""
+              ? r.label
+              : summarize(r.table_name, r.before ?? r.after) || r.row_id;
           const diff = changed(r.before, r.after);
           return (
             <li
               key={r.id}
               className={`rounded-xl p-2.5 ring-1 ${
-                r.action === "delete" ? "bg-red-50 ring-red-200" : "bg-white ring-slate-200"
+                r.action === "error"
+                  ? "bg-red-50 ring-red-300"
+                  : r.action === "delete"
+                    ? "bg-red-50 ring-red-200"
+                    : "bg-white ring-slate-200"
               }`}
             >
               <button
@@ -428,8 +461,27 @@ export default function HistoryPage() {
               {opened && (
                 <div className="mt-2 rounded-lg bg-slate-900 p-2.5 text-[10px] leading-relaxed text-slate-200">
                   <div className="text-slate-400">
-                    {r.table_name} ／ {T("番号")} {r.row_id}
+                    {r.table_name || T("表なし")}
+                    {r.row_id ? ` ／ ${T("番号")} ${r.row_id}` : ""}
                   </div>
+
+                  {/*
+                    そのままの中身。
+
+                    読みやすく言い換えたものだけを残すと、原因が分からなくなる。
+                    「うまくいきませんでした」では、どこを直せばよいか決まらない。
+                    出た言葉を、そのまま出す。
+                  */}
+                  {r.detail && (
+                    <div className="mt-1.5">
+                      <div className="text-[9px] font-bold text-amber-300">
+                        {T("出た言葉、そのまま")}
+                      </div>
+                      <pre className="mt-0.5 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[9px] text-slate-300">
+                        {JSON.stringify(r.detail, null, 1)}
+                      </pre>
+                    </div>
+                  )}
 
                   {r.action === "update" && diff.length > 0 && (
                     <ul className="mt-1.5 space-y-0.5">

@@ -162,33 +162,311 @@ export const LABEL: Record<string, string> = {
  *     そうでない            → 学科
  */
 const HEAD_WORDS: { col: Col | "dept" | "class?"; words: string[] }[] = [
-  { col: "kind", words: ["身分", "区分", "種別"] },
-  { col: "email", words: ["メール", "アドレス", "mail", "e-mail"] },
-  { col: "name", words: ["氏名", "名前", "なまえ"] },
-  { col: "grade", words: ["学年"] },
-  { col: "seat_no", words: ["名列", "出席番号", "席番", "座席"] },
-  { col: "student_no", words: ["学籍"] },
-  { col: "teaching", words: ["教職"] },
+  { col: "kind", words: ["身分", "区分", "種別", "属性", "立場"] },
+  { col: "email", words: ["メール", "アドレス", "mail", "address"] },
+  { col: "name", words: ["氏名", "名前", "なまえ", "name", "姓名"] },
+  { col: "grade", words: ["学年", "年次", "grade"] },
+  { col: "seat_no", words: ["名列", "出席番号", "出席no", "席番", "座席", "seat"] },
+  { col: "student_no", words: ["学籍", "学生番号", "studentno", "studentid"] },
   // 担当学科（I〜N）。「担当」が付いていれば、いくつでもここへ集める
   { col: "dept", words: ["担当"] },
-  { col: "number", words: ["8桁", "８桁", "職員番号", "教職員番号", "職員"] },
+  /*
+   * 「教職員番号」は 8桁の番号のほう。「教職」を先に見ると
+   * そちらへ取られてしまうので、番号のほうを先に置く。
+   */
+  { col: "number", words: ["8桁", "職員番号", "教職員番号", "職員"] },
+  { col: "teaching", words: ["教職"] },
   // 学科は「担当」より後に見る（担当学科を先に拾わせるため）
-  { col: "class_code", words: ["学科", "コース", "記号"] },
+  { col: "class_code", words: ["学科", "コース", "記号", "専攻"] },
   // ここだけは中身も見て決める
-  { col: "class?", words: ["クラス", "組"] },
+  { col: "class?", words: ["クラス", "組", "class"] },
 ];
+
+/**
+ * 見出しの言葉をそろえる。
+ *
+ * ★ 大文字・小文字と、全角・半角と、区切りの記号を無くしてから比べる
+ *
+ *   前は書いてあるとおりに比べていた。だから
+ *     "E-mail" は "e-mail" と一致せず
+ *     "Mail"   は "mail"   と一致せず
+ *     "ﾒｰﾙ"    も外れる
+ *   ——見出しがあるのに、メールの列だけ見つからないことがあった。
+ *
+ *   見つからないと、その列は空のまま送られる。すると全部の行が
+ *   「B列（メールアドレス）が正しくありません」で弾かれる。
+ *   手で入れたときは起きず、xlsx のときだけ起きるので、
+ *   原因が分かりにくかった。
+ */
+function normHead(cell: string): string {
+  return (cell ?? "")
+    /*
+     * NFKC で、全角の英数字は半角に、半角のカナは全角に そろう。
+     *   "Ｅ－ｍａｉｌ" → "E-mail"
+     *   "ﾒｰﾙ"        → "メール"
+     * 見出しを見比べるためだけに使う。人の名前には掛けない
+     * （㈱ のような字が別の字に変わってしまうため）。
+     */
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s　()（）[\]［］{}｛｝_＿・･.,、。:：;；\-ー―‐/／|｜#＃*＊"'`]/g, "");
+}
 
 /** その升目が、どの列の見出しに当たるか */
 export function headOf(cell: string): Col | "dept" | "class?" | null {
-  const t = (cell ?? "").replace(/[\s　]/g, "");
+  const t = normHead(cell ?? "");
   if (t === "") return null;
   for (const h of HEAD_WORDS) {
-    if (h.words.some((w) => t.includes(w))) return h.col;
+    if (h.words.some((w) => t.includes(normHead(w)))) return h.col;
   }
   return null;
 }
 
-export type Head = { at: number; map: Map<number, string> };
+export type Head = {
+  at: number;
+  map: Map<number, string>;
+  /** 見出しでなく、中身を見て決めた列。画面に印を出すため */
+  guessed: Set<number>;
+};
+
+/* ================= 中身から見つける ================= */
+
+/**
+ * その升目が、その欄らしいか。
+ *
+ * 見出しが無い・見出しの言葉が知らないものだった、というときに、
+ * 列の中身そのものから当てるために使う。
+ *
+ * ここに置いてあるのは、見間違えようのないものだけ。
+ *   アドレス   … @ がある
+ *   身分       … 学生／教授／その他 のどれか
+ *   学籍番号   … 7桁の数字が取り出せる
+ *   8桁の番号  … ちょうど8文字
+ *   学科       … 英字だけ（KM・CC など）
+ * 学年・クラス・名列番号は、どれも小さい数で見分けがつかないので、
+ * 数の大きさで当てる（下の fitNumbers）。
+ */
+const LOOKS: Record<string, (v: string) => boolean> = {
+  kind: (v) => /^(学生|教授|その他)$/.test(v.trim()),
+  email: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(toHalf(v)),
+  student_no: (v) => !/@/.test(v) && studentNoOf(toHalf(v)) !== "",
+  number: (v) => /^[0-9A-Za-z]{8}$/.test(toHalf(v)),
+  class_code: (v) => /^[A-Za-z]{1,6}$/.test(toHalf(v)),
+  teaching: (v) => /^[tT]$/.test(toHalf(v).trim()),
+  name: (v) => v.trim() !== "" && !/@/.test(v) && !/^[0-9]+$/.test(toHalf(v).trim()),
+};
+
+/** その列の、空でない升目のうち、当てはまる割合 */
+function fitOf(raw: Row[], from: number, col: number, test: (v: string) => boolean): number {
+  let all = 0;
+  let hit = 0;
+  for (let i = from; i < Math.min(raw.length, from + 60); i++) {
+    const v = (raw[i]?.[col] ?? "").trim();
+    if (v === "") continue;
+    all += 1;
+    if (test(v)) hit += 1;
+  }
+  return all === 0 ? 0 : hit / all;
+}
+
+/** その列に入っている数の、いちばん大きいもの（数でなければ null） */
+function maxNumOf(raw: Row[], from: number, col: number): number | null {
+  let max = 0;
+  let all = 0;
+  let num = 0;
+  for (let i = from; i < Math.min(raw.length, from + 60); i++) {
+    const v = (raw[i]?.[col] ?? "").trim();
+    if (v === "") continue;
+    all += 1;
+    const s = numOf(v);
+    if (s === "") continue;
+    num += 1;
+    max = Math.max(max, Number(s));
+  }
+  if (all === 0 || num / all < 0.9) return null;
+  return max;
+}
+
+/**
+ * 見つからなかった欄を、中身から埋める。
+ *
+ * ■ なぜ要るか
+ *   見出しの言葉は、作る人によって違う。「アカウント」「学校メール」
+ *   のように、こちらが知らない言い方をされると、その列は空のまま
+ *   送られ、全部の行が弾かれる。
+ *
+ *   ただ、中身を見れば分かることも多い。@ が入っていればアドレスだし、
+ *   「学生／教授／その他」しか入っていなければ身分。
+ *   見出しで分からなかったぶんだけ、中身から埋める。
+ *
+ * ■ 見間違えようのないものだけ
+ *   当てずっぽうで埋めると、間違ったまま静かに入ってしまう。
+ *   はっきり言えるものだけにして、埋めたところには印を付け、
+ *   画面で「中身から」と分かるようにしてある。
+ */
+function rescue(raw: Row[], head: Head): Head {
+  const from = head.at + 1;
+  const used = new Set(head.map.keys());
+  /** その表にある列の数 */
+  let width = 0;
+  for (let i = from; i < Math.min(raw.length, from + 60); i++)
+    width = Math.max(width, raw[i]?.length ?? 0);
+
+  const have = new Set(head.map.values());
+
+  // ① 見間違えようのないものから埋める
+  for (const col of ["email", "kind", "student_no", "number", "class_code", "teaching"]) {
+    if (have.has(col)) continue;
+    let best = -1;
+    let bestFit = 0;
+    for (let n = 0; n < width; n++) {
+      if (used.has(n)) continue;
+      const fit = fitOf(raw, from, n, LOOKS[col]);
+      if (fit > bestFit) {
+        bestFit = fit;
+        best = n;
+      }
+    }
+    if (best >= 0 && bestFit >= 0.7) {
+      head.map.set(best, col);
+      head.guessed.add(best);
+      used.add(best);
+      have.add(col);
+    }
+  }
+
+  // ② 数の欄は、入っている数の大きさで当てる
+  const nums: { n: number; max: number }[] = [];
+  for (let n = 0; n < width; n++) {
+    if (used.has(n)) continue;
+    const m = maxNumOf(raw, from, n);
+    if (m !== null && m >= 1) nums.push({ n, max: m });
+  }
+  for (const [col, cap] of [
+    ["grade", 4],
+    ["class_no", 10],
+    ["seat_no", 200],
+  ] as const) {
+    if (have.has(col)) continue;
+    // その欄に収まるもののうち、いちばん左のもの
+    const i = nums.findIndex((x) => x.max <= cap);
+    if (i < 0) continue;
+    head.map.set(nums[i].n, col);
+    head.guessed.add(nums[i].n);
+    used.add(nums[i].n);
+    have.add(col);
+    nums.splice(i, 1);
+  }
+
+  // ③ 氏名は、残った文字の列
+  if (!have.has("name")) {
+    let best = -1;
+    let bestFit = 0;
+    for (let n = 0; n < width; n++) {
+      if (used.has(n)) continue;
+      const fit = fitOf(raw, from, n, LOOKS.name);
+      if (fit > bestFit) {
+        bestFit = fit;
+        best = n;
+      }
+    }
+    if (best >= 0 && bestFit >= 0.9) {
+      head.map.set(best, "name");
+      head.guessed.add(best);
+    }
+  }
+
+  return head;
+}
+
+/**
+ * 見出しが無い表の、ずれを直す。
+ *
+ * ■ なぜ要るか
+ *   見出しが無ければ A列から順に当てるしかない。
+ *   ところが表の左に空の列が一つあるだけで、全部が一つずつずれる。
+ *   すると身分は空、学籍番号のところに名列番号……と、
+ *   何もかもが噛み合わなくなる。
+ *
+ * ■ どう直すか
+ *   ずらし方を -3〜+3 まで試して、いちばん当てはまるものを選ぶ。
+ *   当てはまり具合は、見間違えようのない欄
+ *   （身分・アドレス・学籍番号・学科・8桁の番号）で測る。
+ *
+ *   ずらすかどうかは、ずらしたほうがはっきり良いときだけ。
+ *   同じくらいなら、元のまま（ずらさない）にする。
+ */
+function bestShift(raw: Row[], head: Head): Head {
+  const from = head.at + 1;
+  const test = ["kind", "email", "student_no", "class_code", "number"] as const;
+
+  const scoreOf = (d: number): number => {
+    let sum = 0;
+    for (const [n, c] of head.map) {
+      if (!(test as readonly string[]).includes(c)) continue;
+      const at = n + d;
+      if (at < 0) continue;
+      sum += fitOf(raw, from, at, LOOKS[c]);
+    }
+    return sum;
+  };
+
+  const base = scoreOf(0);
+  let bestD = 0;
+  let best = base;
+  for (const d of [1, 2, 3, -1, -2, -3]) {
+    const s = scoreOf(d);
+    if (s > best) {
+      best = s;
+      bestD = d;
+    }
+  }
+  // はっきり良くなるときだけ動かす
+  if (bestD === 0 || best < base + 0.8) return head;
+
+  const moved = new Map<number, string>();
+  for (const [n, c] of head.map) {
+    const at = n + bestD;
+    if (at >= 0) moved.set(at, c);
+  }
+  return { at: head.at, map: moved, guessed: new Set([...moved.keys()]) };
+}
+
+/**
+ * アドレスの列が、本当にアドレスかを確かめる。
+ *
+ * 見出しどおりに読んでも、表そのものが一列ずれていることがある。
+ * そのときは全部の行が「アドレスが正しくありません」で弾かれる。
+ * ここで、@ がいちばん多く入っている列へ付け替える。
+ */
+function fixEmail(raw: Row[], head: Head): Head {
+  const from = head.at + 1;
+  let now = -1;
+  for (const [n, c] of head.map) if (c === "email") now = n;
+  const nowFit = now >= 0 ? fitOf(raw, from, now, LOOKS.email) : 0;
+  if (nowFit >= 0.5) return head;
+
+  let width = 0;
+  for (let i = from; i < Math.min(raw.length, from + 60); i++)
+    width = Math.max(width, raw[i]?.length ?? 0);
+
+  let best = -1;
+  let bestFit = 0;
+  for (let n = 0; n < width; n++) {
+    const fit = fitOf(raw, from, n, LOOKS.email);
+    if (fit > bestFit) {
+      bestFit = fit;
+      best = n;
+    }
+  }
+  if (best < 0 || bestFit < 0.8 || best === now) return head;
+
+  // いま入っている割り当てを外して、こちらへ移す
+  if (now >= 0) head.map.delete(now);
+  head.map.set(best, "email");
+  head.guessed.add(best);
+  return head;
+}
 
 /**
  * 見出しの行を探して、列の当て方を作る。
@@ -233,9 +511,16 @@ export function readHead(raw: Row[]): Head | null {
       const hasCode = [...map.values()].includes("class_code");
       map.set(n, isNo || hasCode ? "class_no" : "class_code");
     }
-    return { at: i, map };
+    return { at: i, map, guessed: new Set<number>() };
   }
   return null;
+}
+
+/** 見出しが無いときの当て方。A列から順に */
+function byOrder(): Head {
+  const map = new Map<number, string>();
+  COLS.forEach((c, n) => map.set(n, c === "dept1" || isDeptCol(c) ? "dept" : c));
+  return { at: -1, map, guessed: new Set<number>() };
 }
 
 /**
@@ -244,30 +529,34 @@ export function readHead(raw: Row[]): Head | null {
  * 見出しがあればそれに従い、無ければ A列から順に当てる。
  * 数の欄と、突き合わせに使う欄は、ここで整えておく。
  */
-export function toSending(raw: Row[]): { rows: Sending[]; head: Head | null } {
-  const head = readHead(raw);
+export function toSending(raw: Row[]): {
+  rows: Sending[];
+  head: Head | null;
+  /** 見出しから読めたか。false なら A列から順に当てた */
+  named: boolean;
+} {
+  const named = readHead(raw);
+  /*
+   * 見出しが無ければ A列から順に当てる。そのうえで、どちらの場合も
+   * 中身を見て埋め直す。見出しがあっても知らない言い方だと拾えないし、
+   * 見出しが無い表は一列ずれていることがあるため。
+   */
+  const head = fixEmail(
+    raw,
+    // 見出しが無いときだけ、表そのもののずれを直してから中身で埋める
+    rescue(raw, named ?? bestShift(raw, byOrder())),
+  );
 
   const cellOf = (cells: Row, want: string): string => {
-    if (head) {
-      for (const [n, c] of head.map) if (c === want) return cells[n] ?? "";
-      return "";
-    }
-    const n = (COLS as readonly string[]).indexOf(want);
-    return n < 0 ? "" : (cells[n] ?? "");
+    for (const [n, c] of head.map) if (c === want) return cells[n] ?? "";
+    return "";
   };
 
   const deptsOf = (cells: Row): string[] => {
     const out: string[] = [];
-    if (head) {
-      for (const [n, c] of [...head.map.entries()].sort((a, b) => a[0] - b[0])) {
-        if (c !== "dept") continue;
-        const v = toHalf(cells[n] ?? "");
-        if (v !== "") out.push(v);
-      }
-      return out;
-    }
-    for (const c of DEPT_COLS) {
-      const v = toHalf(cells[(COLS as readonly string[]).indexOf(c)] ?? "");
+    for (const [n, c] of [...head.map.entries()].sort((a, b) => a[0] - b[0])) {
+      if (c !== "dept") continue;
+      const v = toHalf(cells[n] ?? "");
       if (v !== "") out.push(v);
     }
     return out;
@@ -293,19 +582,24 @@ export function toSending(raw: Row[]): { rows: Sending[]; head: Head | null } {
   });
 
   // 見出しの行そのものは送らない
-  const body = head ? all.filter((_, i) => i !== head.at) : all;
+  const body = all.filter((_, i) => i !== head.at);
   // まったくの空行も送らない
   const rows = body.filter(
     (s) => s.depts.length > 0 || COLS.some((c) => !isDeptCol(c) && s[c as PlainCol] !== ""),
   );
-  return { rows, head };
+  return { rows, head, named: named !== null };
 }
 
-/** 「A=身分　B=メール　…」。何をどう読んだかを、画面に出すため */
+/**
+ * 「A=身分　B=メール　…」。何をどう読んだかを、画面に出すため。
+ *
+ * 中身から当てた列には ＊ を付ける。見出しから読めたものと
+ * 見分けが付かないと、当てずっぽうを信じてしまう。
+ */
 export function headNoteOf(head: Head | null): string {
   if (!head) return "";
   return [...head.map.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([n, c]) => `${colName(n)}=${LABEL[c] ?? c}`)
+    .map(([n, c]) => `${colName(n)}=${LABEL[c] ?? c}${head.guessed.has(n) ? "＊" : ""}`)
     .join("　");
 }

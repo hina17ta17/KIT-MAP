@@ -44,6 +44,7 @@ import {
   type Role,
 } from "@/lib/auth";
 import { readXlsx } from "@/lib/xlsx";
+import { noteError, noteEvent } from "@/lib/note";
 import {
   COLS,
   DEPT_COLS,
@@ -303,6 +304,8 @@ export default function CampusPage() {
   const [report, setReport] = useState<Report | null>(null);
   /** 見出しから読み取った列の当て方。空なら A列から順に当てた */
   const [headNote, setHeadNote] = useState("");
+  /** 見出しの行から読めたか。false なら A列から順に当てた */
+  const [headNamed, setHeadNamed] = useState(false);
 
   /** 一人ずつ手で入れる欄 */
   const [manualOpen, setManualOpen] = useState(false);
@@ -1158,14 +1161,22 @@ export default function CampusPage() {
        * 見出しがあればそこから、無ければ A列から順に当てる。
        * 決まりそのものは lib/roster.ts に置いてある（机の上で試せるように）。
        */
-      const { rows: kept, head } = toSending(raw);
+      const { rows: kept, head, named } = toSending(raw);
       setHeadNote(headNoteOf(head));
+      setHeadNamed(named);
 
       setFileName(file.name);
       setRows(kept);
+      noteEvent("roster", `xlsx を読みました（${file.name}／${kept.length} 行）`, {
+        file: file.name,
+        rows: kept.length,
+        見出しから: named,
+        列の当て方: headNoteOf(head),
+      });
       if (kept.length === 0) setMsg({ kind: "err", text: T("中身のある行がありませんでした") });
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "読めませんでした" });
+      noteError("roster", `xlsx を読めませんでした（${file.name}）`, e);
     } finally {
       setBusy(false);
     }
@@ -1186,6 +1197,12 @@ export default function CampusPage() {
         kind: "ok",
         text: `学生 ${rep.students} 件、教授・その他 ${rep.staff} 件を入れました。`,
       });
+      /*
+       * 何行入って何行落ちたかを、履歴に残す。
+       * 「読ませたのに入らない」を、あとから追えるようにするため。
+       * 落ちた理由も 20 件まで一緒に残る。
+       */
+      void createClient().rpc("import_note", { p_result: rep, p_from: fileName });
       await load();
       // 見ている最中なら、入れたものがそのまま並ぶようにする
       if (listOpen) await loadList(listKind, kindDef.byDept ? deptId : null, q.trim(), page);
@@ -1197,6 +1214,7 @@ export default function CampusPage() {
             ? `${e.message}（base/12_roster_import.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
+      noteError("roster", `名簿を取り込めませんでした（${fileName}／${rows.length} 行）`, e);
     } finally {
       setBusy(false);
     }
@@ -2301,20 +2319,24 @@ export default function CampusPage() {
             */}
             <p
               className={`mt-1 rounded-lg px-2 py-1.5 text-[10px] leading-relaxed ${
-                headNote ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"
+                headNamed ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"
               }`}
             >
-              {headNote ? (
+              <b>
+                {headNamed
+                  ? T("見出しから読み取りました")
+                  : T("見出しが見つからないので、A列から順に当てました")}
+              </b>
+              <br />
+              {headNote}
+              {headNote.includes("＊") && (
                 <>
-                  <b>{T("見出しから読み取りました")}</b>
                   <br />
-                  {headNote}
+                  {T("＊が付いた列は、見出しでは分からなかったので中身から当てたものです。")}
                 </>
-              ) : (
+              )}
+              {!headNamed && (
                 <>
-                  <b>{T("見出しが見つからないので、A列から順に当てました")}</b>
-                  <br />
-                  {T("A身分 B メール C氏名 D学年 E学科 Fクラス G名列番号 H学籍番号 I〜N担当学科 O8桁 P教職")}
                   <br />
                   {T("下の中身が思ったとおりでなければ、1行目に見出しを入れてから読ませてください。")}
                 </>

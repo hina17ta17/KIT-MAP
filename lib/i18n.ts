@@ -650,6 +650,19 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* 履歴 */
+  履歴: "History",
+  "いつ・誰が・何をしたか。エラーも残ります": "Who did what, when — errors are kept too",
+  できごと: "Event",
+  エラー: "Error",
+  そのほか: "Other",
+  "取り込み・申請・画面のできごと": "Imports, applications, and things that happened on screen",
+  "うまくいかなかったこと（すべての分類から）": "Things that went wrong (across every group)",
+  "出た言葉、そのまま": "Exactly as it was reported",
+  表なし: "no table",
+  "＊が付いた列は、見出しでは分からなかったので中身から当てたものです。":
+    "Columns marked ＊ could not be read from the header, so they were worked out from the contents.",
+
   /* 管理画面の、xlsx から取り込む欄 */
   見出しから読み取りました: "Read from the header row",
   "見出しが見つからないので、A列から順に当てました":

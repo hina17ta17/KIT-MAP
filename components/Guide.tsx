@@ -28,7 +28,6 @@ import {
 import {
   ROLE_LABEL,
   ROLE_SHORT,
-  canManageAll,
   canReadFeedback,
   canViewCampusInfo,
   type Role,
@@ -2243,27 +2242,12 @@ export default function Guide() {
           )}
 
           {/*
-            履歴への入口。感想のすぐ下に置く。
+            履歴への入口は、ここには置かない。
 
-            見られるのはレベル2.1・2.2・管理者だけ。
-            誰が何を変えたか・消したかが並ぶので、
-            人の操作が見える種類の情報にあたる。
+            ログインの画面の並び（みんなの感想のすぐ下）に移した。
+            管理の行き先は一箇所にまとまっていたほうが探しやすい。
+            ここから増やしていくと、地図の脇が管理の道で埋まる。
           */}
-          {canManageAll(role) && (
-            <a
-              href="/admin/history"
-              className="mt-1.5 flex shrink-0 items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5 transition hover:bg-slate-200 active:scale-95"
-            >
-              <span className="text-base">🕘</span>
-              <span className="min-w-0">
-                <span className="block text-xs font-bold text-slate-800">{T("履歴")}</span>
-                <span className="block text-[10px] text-slate-500">
-                  {T("いつ・誰が・何を変えたか。消したものは戻せます")}
-                </span>
-              </span>
-              <span className="ml-auto shrink-0 text-slate-400">›</span>
-            </a>
-          )}
         </div>
       )}
 

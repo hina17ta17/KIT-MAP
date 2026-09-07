@@ -31,6 +31,7 @@ export type AdminPageId =
   | "campus"
   | "plan"
   | "feedback"
+  | "history"
   | "edit";
 
 type Entry = {
@@ -105,6 +106,21 @@ const ENTRIES: Entry[] = [
     label: "みんなの感想",
     sub: "使っている人から届いた声。名前は分かりません",
     allowed: canReadFeedback,
+  },
+  /*
+   * 履歴。感想のすぐ下に置く。
+   *
+   * 前は地図の脇に置いていたが、管理の行き先はここに
+   * まとまっていたほうが探しやすい。地図の脇に増やしていくと、
+   * 地図を見るための画面が管理の道で埋まる。
+   */
+  {
+    id: "history",
+    href: "/admin/history",
+    icon: "🕘",
+    label: "履歴",
+    sub: "いつ・誰が・何をしたか。エラーも残ります",
+    allowed: canManageAll,
   },
   /*
    * 作図ツールは、手元でだけ動かす道具。

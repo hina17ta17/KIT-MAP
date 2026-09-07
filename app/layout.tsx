@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { SessionEpoch } from "@/components/SessionEpoch";
+import ErrorNote from "@/components/ErrorNote";
 
 export const metadata: Metadata = {
   // タブに出る名前。案内画面が入口なのでこれだけにする
@@ -32,6 +33,8 @@ export default function RootLayout({
       <body className="h-full overflow-hidden">
         {/* ログインの版が上がっていたら、入り直してもらう。見た目には出ない */}
         <SessionEpoch />
+        {/* 画面で起きたエラーを、そのままの言葉で履歴に残す */}
+        <ErrorNote />
         {children}
       </body>
     </html>
