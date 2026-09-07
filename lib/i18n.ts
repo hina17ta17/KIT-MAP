@@ -650,6 +650,25 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* 管理画面の、xlsx から取り込む欄 */
+  見出しから読み取りました: "Read from the header row",
+  "見出しが見つからないので、A列から順に当てました":
+    "No header row found, so columns were taken in order from A",
+  "A身分 B メール C氏名 D学年 E学科 Fクラス G名列番号 H学籍番号 I〜N担当学科 O8桁 P教職":
+    "A kind, B email, C name, D year, E department, F class, G seat no., H student no., I–N departments taught, O 8-char number, P teaching",
+  "下の中身が思ったとおりでなければ、1行目に見出しを入れてから読ませてください。":
+    "If the rows below are not what you expect, add a header row and read the file again.",
+  "学生 {n} 行のうち {m} 行で、名列番号が空です。":
+    "{m} of {n} student rows have no seat number.",
+  "列がずれている可能性があります。下の中身を見て確かめてください。":
+    "The columns may be shifted. Please check the rows below.",
+  "P 教職（学生と教授。履修していれば T。空なら履修していない）":
+    "P teaching (students and professors; T if enrolled, blank if not)",
+  "1行目に見出しを入れておくと、その言葉で列を読み取ります。":
+    "With a header row, columns are read by name.",
+  "列を足しても、順を入れ替えても構いません。見出しが無いときだけ、A列から順に当てます。":
+    "You may add columns or reorder them. Only without a header are columns taken in order from A.",
+
   /* 管理画面の、課外活動リーダーの名簿 */
   課外活動リーダーの名簿: "Club leader roster",
   "ここに載っている番号の人だけが、課外活動リーダーの申請で通ります。":

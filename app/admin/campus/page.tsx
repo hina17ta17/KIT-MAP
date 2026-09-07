@@ -43,81 +43,23 @@ import {
   canReadRoster,
   type Role,
 } from "@/lib/auth";
-import { readXlsx, type Row } from "@/lib/xlsx";
+import { readXlsx } from "@/lib/xlsx";
+import {
+  COLS,
+  DEPT_COLS,
+  LABEL,
+  colName,
+  isDeptCol,
+  studentNoOf,
+  toSending,
+  headNoteOf,
+  type PlainCol,
+  type Sending,
+} from "@/lib/roster";
 
-/**
- * xlsx の列。A列から順に。
- *
- *   A 身分（学生・教授・その他）
- *   B メールアドレス
- *   C 氏名
- *   D 学年            学生だけ
- *   E 学科            学生だけ。KM・CC など
- *   F クラス（1〜10）  学生だけ
- *   G 名列番号        学生だけ
- *   H 学籍番号        学生だけ。アドレスの7桁と同じもの
- *   I〜N 担当学科     教授だけ。いくつでも（空けてよい）
- *   O 8桁の番号       教授とその他
- *
- * 身分ごとに使う列
- *   学生    A B C D E F G H
- *   教授    A B C  I〜N O
- *   その他  A B C      O
- *
- * ★E列は以前「クラス」と書いていたが、指しているのは学科。
- *   クラス（1〜10）は新しく F 列に分けた。
- */
-const COLS = [
-  "kind",
-  "email",
-  "name",
-  "grade",
-  "class_code",
-  "class_no",
-  "seat_no",
-  "student_no",
-  "dept1",
-  "dept2",
-  "dept3",
-  "dept4",
-  "dept5",
-  "dept6",
-  "number",
-] as const;
-
-/** そのうち担当学科の列（I〜N）。まとめて一つの並びにして送る */
-const DEPT_COLS = ["dept1", "dept2", "dept3", "dept4", "dept5", "dept6"] as const;
-
-type DeptCol = (typeof DEPT_COLS)[number];
-/** 担当学科以外の列。こちらは一つずつそのまま送る */
-type PlainCol = Exclude<(typeof COLS)[number], DeptCol>;
-
-const isDeptCol = (c: (typeof COLS)[number]): c is DeptCol =>
-  (DEPT_COLS as readonly string[]).includes(c);
-
-/** 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
+/* 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
 
-/**
- * 学籍番号として使う7桁の数字を取り出す。
- *
- * 学籍番号は「アドレスに書いてある7桁の数字」。
- *   c1234567@st.example.ac.jp → 1234567
- *   c1234567                  → 1234567
- *   1234567                   → 1234567
- *   7桁にならないもの          → 空
- *
- * 通す・弾くを決めるのはデータベース側（student_no_of）。
- * ここは、押す前に画面で気づけるようにするための同じ計算。
- */
-function studentNoOf(text: string): string {
-  const local = (text ?? "").split("@")[0];
-  const digits = local.replace(/\D/g, "");
-  return digits.length === 7 ? digits : "";
-}
-
-/** データベースへ渡す一行。担当学科だけは並びにまとめる */
-type Sending = { row: number; depts: string[] } & Record<PlainCol, string>;
 type Rejected = { row: number; why: string };
 type Report = { students: number; staff: number; rejected: Rejected[] };
 /** all が false なら「学生の数しか見せてもらえていない」（教授のとき） */
@@ -359,6 +301,8 @@ export default function CampusPage() {
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Sending[] | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  /** 見出しから読み取った列の当て方。空なら A列から順に当てた */
+  const [headNote, setHeadNote] = useState("");
 
   /** 一人ずつ手で入れる欄 */
   const [manualOpen, setManualOpen] = useState(false);
@@ -1208,28 +1152,15 @@ export default function CampusPage() {
     if (!file) return;
     setBusy(true);
     try {
-      const raw: Row[] = await readXlsx(file);
+      const raw = await readXlsx(file);
+
       /*
-       * 何行目かを添えて渡す。弾かれたときに
-       * 「xlsx の何行目を直せばよいか」を言えるようにするため。
+       * 見出しがあればそこから、無ければ A列から順に当てる。
+       * 決まりそのものは lib/roster.ts に置いてある（机の上で試せるように）。
        */
-      const sending: Sending[] = raw.map((cells, i) => {
-        const o = { row: i + 1, depts: [] as string[] } as Sending;
-        COLS.forEach((c, n) => {
-          const v = (cells[n] ?? "").trim();
-          // 担当学科（I〜N）はまとめて一つの並びに。空けてある列は飛ばす
-          if (isDeptCol(c)) {
-            if (v !== "") o.depts.push(v);
-          } else {
-            o[c] = v;
-          }
-        });
-        return o;
-      });
-      // まったくの空行は送らない
-      const kept = sending.filter(
-        (s) => s.depts.length > 0 || COLS.some((c) => !isDeptCol(c) && s[c] !== ""),
-      );
+      const { rows: kept, head } = toSending(raw);
+      setHeadNote(headNoteOf(head));
+
       setFileName(file.name);
       setRows(kept);
       if (kept.length === 0) setMsg({ kind: "err", text: T("中身のある行がありませんでした") });
@@ -2326,6 +2257,9 @@ export default function CampusPage() {
           <li>
             <b className="text-slate-900">{T("その他")}</b>　A B C ＋ <b>{T("O 8桁の番号")}</b>
           </li>
+          <li className="text-slate-500">
+            {T("P 教職（学生と教授。履修していれば T。空なら履修していない）")}
+          </li>
         </ul>
         <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
           <b>{T("E 学科")}</b>
@@ -2338,7 +2272,8 @@ export default function CampusPage() {
           <b>{T("7桁の数字")}</b>です
           {T("（c1234567@… なら 1234567）。頭の一文字ごと書いてあっても構いません。")}
           <br />
-          {T("見出しの行があっても構いません（A列が三択でないので自動で飛ばされます）。")}
+          <b>{T("1行目に見出しを入れておくと、その言葉で列を読み取ります。")}</b>
+          {T("列を足しても、順を入れ替えても構いません。見出しが無いときだけ、A列から順に当てます。")}
           <br />
           <span className="text-slate-400">
             {T("ファイルそのものはどこにも送りません。この端末で読み取った中身だけを送ります。")}
@@ -2357,15 +2292,69 @@ export default function CampusPage() {
             <p className="mt-2 text-[11px] font-bold text-slate-700">
               {fileName}：{rows.length} 行を読みました
             </p>
+
+            {/*
+              どの列を何として読んだか。
+
+              ここが見えないと、列がずれていても気づけない。
+              「名列番号が入らない」は、ずれたまま送っていたのが原因だった。
+            */}
+            <p
+              className={`mt-1 rounded-lg px-2 py-1.5 text-[10px] leading-relaxed ${
+                headNote ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"
+              }`}
+            >
+              {headNote ? (
+                <>
+                  <b>{T("見出しから読み取りました")}</b>
+                  <br />
+                  {headNote}
+                </>
+              ) : (
+                <>
+                  <b>{T("見出しが見つからないので、A列から順に当てました")}</b>
+                  <br />
+                  {T("A身分 B メール C氏名 D学年 E学科 Fクラス G名列番号 H学籍番号 I〜N担当学科 O8桁 P教職")}
+                  <br />
+                  {T("下の中身が思ったとおりでなければ、1行目に見出しを入れてから読ませてください。")}
+                </>
+              )}
+            </p>
+
+            {(() => {
+              /* 学生の行で、名列番号が空のもの。多ければ列がずれている */
+              const miss = rows.filter((r) => r.kind === "学生" && r.seat_no === "").length;
+              const stu = rows.filter((r) => r.kind === "学生").length;
+              if (stu === 0 || miss === 0) return null;
+              return (
+                <p className="mt-1 rounded-lg bg-red-50 px-2 py-1.5 text-[10px] leading-relaxed text-red-800">
+                  <b>
+                    {T("学生 {n} 行のうち {m} 行で、名列番号が空です。")
+                      .replace("{n}", String(stu))
+                      .replace("{m}", String(miss))}
+                  </b>
+                  <br />
+                  {T("列がずれている可能性があります。下の中身を見て確かめてください。")}
+                </p>
+              );
+            })()}
+
             <ul className="mt-1 max-h-40 overflow-y-auto rounded-lg bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600">
               {rows.slice(0, 30).map((r) => (
                 <li key={r.row} className="truncate">
                   {r.row}: {r.kind} / {r.email} / {r.name}
+                  {r.grade ? ` / ${r.grade}年` : ""}
                   {r.class_code ? ` / ${r.class_code}` : ""}
                   {r.class_no ? `-${r.class_no}` : ""}
+                  {r.kind === "学生" ? (
+                    <span className={r.seat_no ? "" : "font-bold text-red-600"}>
+                      {r.seat_no ? ` / ${r.seat_no}番` : " / 名列番号なし"}
+                    </span>
+                  ) : null}
                   {r.student_no ? ` / ${r.student_no}` : ""}
                   {r.depts.length > 0 ? ` / ${r.depts.join("・")}` : ""}
                   {r.number ? ` / ${r.number}` : ""}
+                  {r.teaching ? ` / 教職${r.teaching}` : ""}
                 </li>
               ))}
               {rows.length > 30 && <li className="text-slate-400">ほか {rows.length - 30} 行</li>}

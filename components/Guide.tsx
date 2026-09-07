@@ -634,9 +634,18 @@ export default function Guide() {
        *   指の組は残る。触っている人の操作がいちばん強い、という形。
        */
       {
-        const cv = map.getCanvas();
+        /** 覆い（ボタン・帯・一覧）も入っている、いちばん外側 */
+        const wrap = map.getContainer().parentElement ?? map.getContainer();
+        /** 地図そのものの入れ物。MapLibre はこの中の指しか数えない */
+        const canvasBox = map.getCanvasContainer();
 
-        type Handlers = { stop?: (allowEndAnimation?: boolean) => void };
+        type Handlers = {
+          stop?: (allowEndAnimation?: boolean) => void;
+          /** 指の中から「地図の指」を選り分ける。ここを広げる */
+          _getMapTouches?: (touches: TouchList) => Touch[];
+          /** 合図を地図へ渡す入口 */
+          handleEvent?: (e: Event, name?: string) => void;
+        };
         /* 置き場所は版によって違う。6系は _handlers、それより前は handlers */
         const m = map as unknown as { _handlers?: Handlers; handlers?: Handlers };
         const handlers = m._handlers ?? m.handlers;
@@ -730,14 +739,103 @@ export default function Guide() {
           if (e.touches.length === 0) holdOff();
         };
 
-        cv.addEventListener("touchstart", onTouchStart, { passive: true });
+        /*
+         * ================================================================
+         * 二本目の指がボタンや帯の上に乗っていても、つまめるようにする
+         * ================================================================
+         *
+         * ■ なぜ効かなかったか
+         *
+         *   MapLibre は「地図の入れ物の中で始まった指」しか数えない。
+         *     _getMapTouches … el.contains(指が乗った要素) で選り分ける
+         *     touchstart      … 地図の入れ物にだけ張ってある
+         *
+         *   このアプリのボタンは、地図の入れ物の外（兄弟）に置いてある。
+         *   だから二本目がボタンの上で始まると、その合図は地図に届かず、
+         *   地図は「一本しか触れていない」まま。つまむのが効かない。
+         *
+         *   指を広く開くほど、どちらかがボタンや帯に乗る。
+         *   「ある幅より広げると効かない＝支点の幅が決まっている」と
+         *   感じるのは、これが理由。出発地を選ぶと帯が増えるので、
+         *   そのあとはさらに狭くなる。
+         *
+         *   前は左の列ぜんぶを素通し（pointer-events-none）にして
+         *   避けていた。つまむのは直ったが、こんどは左のボタンが
+         *   一つも押せなくなった。押せるように戻したので、
+         *   つまむほうがまた効かなくなっていた。
+         *   どちらかを諦める形になっていた。
+         *
+         * ■ 両方を立てる
+         *
+         *   指が一本のときは、今までどおり。ボタンは押せるし、
+         *   建物一覧の上下も動く。
+         *
+         *   指が二本以上のときだけ、画面のどこに乗っていても
+         *   地図の指として数え、その合図を地図へ回す。
+         *   二本指でボタンを押す人はいないので、取り違えは起きない。
+         *   これで、つまめる幅に決まりが無くなる。
+         *
+         *   つまみ終わったあとにボタンが押されることは無い。
+         *   MapLibre が指を離した瞬間に、次の click を一度だけ握りつぶす。
+         */
+
+        /** 選り分けの、すり替える前のもの */
+        const realGetTouches = handlers?._getMapTouches;
+        if (handlers && typeof realGetTouches === "function") {
+          handlers._getMapTouches = function (touches: TouchList) {
+            // 二本以上なら、どこに乗っていても地図の指として数える
+            if (touches.length >= 2) return Array.from(touches);
+            return realGetTouches.call(this, touches);
+          };
+        }
+
+        /** いま二本以上の指が乗っているか。離しきるまで立てておく */
+        let twoUp = false;
+
+        /**
+         * 覆いの上で始まった合図を、地図へ回す。
+         *
+         * 地図の上で始まったものは、MapLibre が自分で受け取っているので
+         * ここでは何もしない（同じものを二度渡さない）。
+         */
+        const relay = (e: TouchEvent) => {
+          if (e.touches.length >= 2) twoUp = true;
+          if (canvasBox.contains(e.target as Node)) {
+            if (e.touches.length === 0) twoUp = false;
+            return;
+          }
+          if (!twoUp) return;
+
+          /*
+           * 画面ごと拡大されないように止める。
+           * ボタンには touch-action が付いていないので、
+           * ここで止めないと iOS が頁そのものをつまむ。
+           */
+          if (e.type === "touchmove" && e.cancelable) e.preventDefault();
+
+          handlers?.handleEvent?.(e);
+          if (e.touches.length === 0) twoUp = false;
+        };
+
+        wrap.addEventListener("touchstart", onTouchStart, { passive: true });
+        wrap.addEventListener("touchstart", relay, { passive: true });
+        wrap.addEventListener("touchmove", relay, { passive: false });
+        wrap.addEventListener("touchend", relay);
+        wrap.addEventListener("touchcancel", relay);
         // 指が地図の外へ出ても必ず受け取れるよう、離す合図は窓で拾う
         window.addEventListener("touchend", onTouchEnd, { passive: true });
         window.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
         pixelOff = () => {
           holdOff();
-          cv.removeEventListener("touchstart", onTouchStart);
+          if (handlers && typeof realGetTouches === "function") {
+            handlers._getMapTouches = realGetTouches;
+          }
+          wrap.removeEventListener("touchstart", onTouchStart);
+          wrap.removeEventListener("touchstart", relay);
+          wrap.removeEventListener("touchmove", relay);
+          wrap.removeEventListener("touchend", relay);
+          wrap.removeEventListener("touchcancel", relay);
           window.removeEventListener("touchend", onTouchEnd);
           window.removeEventListener("touchcancel", onTouchEnd);
         };
@@ -2172,19 +2270,20 @@ export default function Guide() {
       {/*
         左上に縦に積む。重なりが起きないよう1つの列にまとめる。
 
-        ★指は素通りさせる（pointer-events-none）
-          ここに出るのは、ほとんどが読むためのもの
-          （現在地の状態、出発地の帯、位置情報の知らせ）。
-          触れるようにしておくと、そこへ指を置いたぶんが
-          地図に届かない。とくに二本指でつまむとき、片方が
-          ここに乗ると地図は「一本しか触れていない」と受け取り、
-          拡大縮小がまったく効かなくなる。
+        ★ここは、ふつうに押せるままにしてある
 
-          出発地を選ぶと帯が出るので、そのあとだけ
-          「つまめる場所が狭い（支点の幅が決まってしまう）」
-          ように感じていたのは、これが理由。
+          前は列ぜんぶを素通し（pointer-events-none）にしていた。
+          二本指でつまむとき、片方がここに乗ると地図に届かず、
+          拡大縮小が効かなくなるためだった。
+          ただ、それをすると左のボタンが一つも押せなくなる。
 
-          押すもの（ボタンや行き先）だけ、下で auto に戻す。
+          いまは地図の側で受け止めている。指が二本以上のときだけ、
+          画面のどこに乗っていても地図の指として数えるようにした
+          （地図を作る所の「二本目の指が…」を見てほしい）。
+          だから、ここは押せるままでよい。
+
+          出発地の帯だけは素通しにしてある。読むためのもので、
+          押す先が「やめる」しか無いため。
       */}
       <div className="absolute left-4 top-4 z-10 flex w-fit max-w-[16rem] flex-col items-start gap-2">
         {/* 現在地と、その状態を横に並べる。
