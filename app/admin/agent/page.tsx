@@ -228,22 +228,21 @@ export default function AgentPage() {
           ))}
         </div>
 
-        <div className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 text-[10px] text-slate-400">
-          <span>
-            {T("通した")} <b className="text-emerald-400">{st?.approved ?? 0}</b>
-          </span>
-          <span>
-            {T("はじいた")} <b className="text-red-400">{st?.reset ?? 0}</b>
-          </span>
-          <span>
-            {T("人に回した")} <b className="text-amber-400">{st?.skipped ?? 0}</b>
-          </span>
-          {st?.last_at && (
-            <span className="ml-auto">
-              {T("最後に動いたのは")} {when(st.last_at)}
-            </span>
-          )}
-        </div>
+        {/*
+          さばいた数の並びは外した。
+
+          下に「ぜんぶ／通した／はじいた／人に回した」で選ぶ欄があり、
+          そちらに件数も出る。同じ数を二か所に出すと、
+          どちらを見ればよいのか迷う。
+
+          最後に動いた時刻だけは残す。数ではなく、
+          「止まっていないか」を見るためのもの。
+        */}
+        {st?.last_at && (
+          <div className="px-3 py-2 text-[10px] text-slate-400">
+            {T("最後に動いたのは")} {when(st.last_at)}
+          </div>
+        )}
       </div>
 
       {state === "stuck" && (

@@ -671,6 +671,7 @@ const EN: Record<string, string> = {
   "ぜんぶ集める": "Collect everyone",
   "保存する": "Save",
   "名簿から選ぶ": "Pick from the roster",
+  番: " ",
   "氏名・学籍番号・アドレスで探す": "Search by name, student number or address",
   "名簿に見つかりません。先に名簿へ入れてください。":
     "Not in the roster. Please add them to the roster first.",

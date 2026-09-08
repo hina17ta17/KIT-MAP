@@ -308,9 +308,23 @@ export default function CampusPage() {
   const [pickQ, setPickQ] = useState("");
   /** 探して出てきた人 */
   const [pickRows, setPickRows] = useState<
-    { kind: string; email: string; full_name: string; student_no: string; number: string }[]
+    {
+      kind: string;
+      email: string;
+      full_name: string;
+      student_no: string;
+      number: string;
+      grade: number | null;
+      class_code: string;
+      class_no: number | null;
+      seat_no: number | null;
+    }[]
   >([]);
   const [pickBusy, setPickBusy] = useState(false);
+  /** 学年・学科・クラスでの絞り込み。名前がうろ覚えのときに使う */
+  const [pickGrade, setPickGrade] = useState<number | null>(null);
+  const [pickCode, setPickCode] = useState<string | null>(null);
+  const [pickNo, setPickNo] = useState<number | null>(null);
 
   /** ドメイン名確認 */
   const [domainOpen, setDomainOpen] = useState(false);
@@ -1137,35 +1151,55 @@ export default function CampusPage() {
    *   「入れたのに通らない」だけが残る。
    *   名簿から選べば、番号も氏名もそのまま入る。
    */
-  const findPeople = useCallback(async (word: string) => {
-    if (!supabaseReady || word.trim() === "") {
-      setPickRows([]);
-      return;
-    }
-    setPickBusy(true);
-    try {
-      const { data, error } = await createClient().rpc("roster_pick", {
-        p_q: word.trim(),
-        p_limit: 30,
-      });
-      if (error) throw error;
-      setPickRows(
-        (data as { kind: string; email: string; full_name: string; student_no: string; number: string }[]) ??
-          [],
-      );
-    } catch (e) {
-      setPickRows([]);
-      setMsg({
-        kind: "err",
-        text:
-          e instanceof Error
-            ? `${e.message}（base/28_number8.sql をまだ入れていない場合は、先に入れてください）`
-            : String(e),
-      });
-    } finally {
-      setPickBusy(false);
-    }
-  }, []);
+  const findPeople = useCallback(
+    async (word: string, g: number | null, c: string | null, n: number | null) => {
+      if (!supabaseReady) {
+        setPickRows([]);
+        return;
+      }
+      /* 言葉も絞り込みも無いときは、訊きにいかない（名簿ぜんぶは出さない） */
+      if (word.trim() === "" && g === null && c === null && n === null) {
+        setPickRows([]);
+        return;
+      }
+      setPickBusy(true);
+      try {
+        const { data, error } = await createClient().rpc("roster_pick", {
+          p_q: word.trim(),
+          p_limit: 60,
+          p_grade: g,
+          p_class_code: c,
+          p_class_no: n,
+        });
+        if (error) throw error;
+        setPickRows(
+          (data as {
+            kind: string;
+            email: string;
+            full_name: string;
+            student_no: string;
+            number: string;
+            grade: number | null;
+            class_code: string;
+            class_no: number | null;
+            seat_no: number | null;
+          }[]) ?? [],
+        );
+      } catch (e) {
+        setPickRows([]);
+        setMsg({
+          kind: "err",
+          text:
+            e instanceof Error
+              ? `${e.message}（base/28_number8.sql をまだ入れていない場合は、先に入れてください）`
+              : String(e),
+        });
+      } finally {
+        setPickBusy(false);
+      }
+    },
+    [],
+  );
 
   const addLeader = async () => {
     /* すべて数字の8桁だけ。学籍番号（c1234567）は番号ではない */
@@ -2314,12 +2348,70 @@ export default function CampusPage() {
                   value={pickQ}
                   onChange={(e) => {
                     setPickQ(e.target.value);
-                    void findPeople(e.target.value);
+                    void findPeople(e.target.value, pickGrade, pickCode, pickNo);
                   }}
                   autoComplete="off"
                   placeholder={T("氏名・学籍番号・アドレスで探す")}
                   className={`${rSelect} mt-1`}
                 />
+
+                {/*
+                  学年・学科・クラスでも絞れる。
+
+                  名前がうろ覚えのときがある。「2年の CC の 3組」まで
+                  分かれば、そこから選べる。名前で探すのと、どちらでもよい。
+                */}
+                <div className="mt-1 grid grid-cols-3 gap-1">
+                  <select
+                    value={pickGrade ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value ? Number(e.target.value) : null;
+                      setPickGrade(v);
+                      void findPeople(pickQ, v, pickCode, pickNo);
+                    }}
+                    className={rSelect}
+                  >
+                    <option value="">{T("学年（すべて）")}</option>
+                    {GRADES.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                        {T("年")}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={pickCode ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value || null;
+                      setPickCode(v);
+                      void findPeople(pickQ, pickGrade, v, pickNo);
+                    }}
+                    className={rSelect}
+                  >
+                    <option value="">{T("学科（すべて）")}</option>
+                    {CLASS_CODES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code}　{T(c.name)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={pickNo ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value ? Number(e.target.value) : null;
+                      setPickNo(v);
+                      void findPeople(pickQ, pickGrade, pickCode, v);
+                    }}
+                    className={rSelect}
+                  >
+                    <option value="">{T("クラス（すべて）")}</option>
+                    {CLASS_NOS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 {pickBusy && (
                   <p className="mt-1 text-[10px] text-slate-400">{T("探しています…")}</p>
@@ -2350,8 +2442,14 @@ export default function CampusPage() {
                               {x.kind === "student" ? T("学生") : T("教職員・職員")}
                             </span>
                           </span>
-                          <span className="block truncate font-mono text-[10px] text-slate-500">
-                            {x.number || x.student_no || x.email}
+                          <span className="block truncate text-[10px] text-slate-500">
+                            <span className="font-mono">
+                              {x.number || x.student_no || x.email}
+                            </span>
+                            {x.grade ? `　${x.grade}${T("年")}` : ""}
+                            {x.class_code ? `　${x.class_code}` : ""}
+                            {x.class_no ? `　${T("クラス")}${x.class_no}` : ""}
+                            {x.seat_no ? `　${x.seat_no}${T("番")}` : ""}
                           </span>
                         </button>
                       </li>
@@ -2359,11 +2457,13 @@ export default function CampusPage() {
                   </ul>
                 )}
 
-                {pickQ.trim() !== "" && !pickBusy && pickRows.length === 0 && (
+                {(pickQ.trim() !== "" || pickGrade !== null || pickCode !== null || pickNo !== null) &&
+                  !pickBusy &&
+                  pickRows.length === 0 && (
                   <p className="mt-1 text-[10px] leading-relaxed text-amber-700">
-                    {T("名簿に見つかりません。先に名簿へ入れてください。")}
-                  </p>
-                )}
+                      {T("名簿に見つかりません。先に名簿へ入れてください。")}
+                    </p>
+                  )}
               </div>
 
               {/* 選んだ人。番号は 8桁の数字で */}
