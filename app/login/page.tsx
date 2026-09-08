@@ -1619,18 +1619,28 @@ function Wizard(props: {
             <Label>{T("8桁の番号")}</Label>
             <p className="mb-1 pl-1 text-[10px] leading-relaxed text-slate-500">
               {T("大学から配られている8桁の番号を入れてください。名簿と突き合わせます。")}
+              <br />
+              {T("すべて数字です。メールアドレスの前の部分とは別のものです。")}
             </p>
             <input
               value={staffNo}
-              onChange={(e) => setStaffNo(e.target.value.trim().slice(0, 8))}
-              inputMode="text"
+              /*
+               * すべて数字の8桁。
+               *
+               * アドレスの前の部分（c1234567）は学籍番号であって、
+               * 学生証・職員証の番号ではない。同じものだと思って
+               * 入れると、名簿との突き合わせが合わなくなる。
+               */
+              onChange={(e) => setStaffNo(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))}
+              inputMode="numeric"
+              maxLength={8}
               autoCapitalize="off"
               placeholder="12345678"
               className={`${inputCls} text-center text-lg tracking-[0.3em]`}
             />
             {staffNo.length > 0 && staffNo.length !== 8 && (
               <p className="mt-1 pl-1 text-[10px] font-bold text-red-600">
-                {T("8桁で入れてください")}（{staffNo.length}）
+                {T("すべて数字の8桁で入れてください")}（{staffNo.length}）
               </p>
             )}
 

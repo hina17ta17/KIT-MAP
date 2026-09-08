@@ -339,8 +339,18 @@ export default function AgentPage() {
   );
 }
 
+/**
+ * 画面の外枠。
+ *
+ * ★高さを決めてから、その中で流す
+ *   body は overflow-hidden なので、min-height だけだと
+ *   はみ出したぶんが body に切り落とされ、下まで見られない。
+ *   高さを 100dvh に決めて、その中で流す。ほかの管理画面と同じ形。
+ */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto min-h-dvh max-w-lg overflow-y-auto p-4">{children}</main>
+    <main className="h-[100dvh] overflow-y-auto bg-slate-100 p-4">
+      <div className="mx-auto max-w-sm rounded-2xl bg-white p-5 shadow-lg">{children}</div>
+    </main>
   );
 }

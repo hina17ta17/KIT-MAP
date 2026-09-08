@@ -667,6 +667,20 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* 8桁の番号と、名簿から選ぶ */
+  "ぜんぶ集める": "Collect everyone",
+  "保存する": "Save",
+  "名簿から選ぶ": "Pick from the roster",
+  "氏名・学籍番号・アドレスで探す": "Search by name, student number or address",
+  "名簿に見つかりません。先に名簿へ入れてください。":
+    "Not in the roster. Please add them to the roster first.",
+  "8桁の番号（数字だけ）": "8-digit number (digits only)",
+  "学生証・職員証の8桁の番号です。すべて数字で、アドレスの前の部分とは別のものです。":
+    "The 8-digit number on the student or staff card. All digits — not the part before the @ in the address.",
+  "すべて数字です。メールアドレスの前の部分とは別のものです。":
+    "All digits. Not the part before the @ in your address.",
+  "すべて数字の8桁で入れてください": "Enter 8 digits",
+
   /* kit-agent の様子 */
   "kit-agent の様子": "kit-agent status",
   "働いているか、誰を通して誰をはじいたか": "Whether it is working, and who it let through or turned away",

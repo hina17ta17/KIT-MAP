@@ -2234,8 +2234,10 @@ function EditForm({
           </label>
           <input
             value={form.number}
-            onChange={(e) => set({ number: e.target.value.trim().slice(0, 8) })}
-            inputMode="text"
+            // すべて数字の8桁。アドレスの前の部分とは別のもの
+            onChange={(e) => set({ number: e.target.value.replace(/[^0-9]/g, "").slice(0, 8) })}
+            inputMode="numeric"
+            maxLength={8}
             autoCapitalize="off"
             className={`${editInput} font-mono`}
           />

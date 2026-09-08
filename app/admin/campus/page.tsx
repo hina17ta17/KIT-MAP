@@ -59,7 +59,7 @@ import {
   type PlainCol,
   type Sending,
 } from "@/lib/roster";
-import { saveXlsx, type Sheet } from "@/lib/xlsxOut";
+import { buildXlsx, type Sheet } from "@/lib/xlsxOut";
 
 /* 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
@@ -304,6 +304,13 @@ export default function CampusPage() {
   const [leadAct, setLeadAct] = useState<number | null>(null);
   const [leadNo, setLeadNo] = useState("");
   const [leadName, setLeadName] = useState("");
+  /** 名簿から人を探すときの言葉 */
+  const [pickQ, setPickQ] = useState("");
+  /** 探して出てきた人 */
+  const [pickRows, setPickRows] = useState<
+    { kind: string; email: string; full_name: string; student_no: string; number: string }[]
+  >([]);
+  const [pickBusy, setPickBusy] = useState(false);
 
   /** ドメイン名確認 */
   const [domainOpen, setDomainOpen] = useState(false);
@@ -525,6 +532,21 @@ export default function CampusPage() {
    * ぜんぶ出してから消してもらうのは、渡す側の手間になる。
    */
   const [outKinds, setOutKinds] = useState<PeopleKind[]>([]);
+  /**
+   * 出来上がったファイル。
+   *
+   * ★押した流れの中で保存させない
+   *
+   *   前は、押したらそのまま保存させていた。人を集めるのに何度か
+   *   問い合わせるので、保存が始まるのは押してから少しあと。
+   *   端末によっては「押した勢い」がそこまで続かず、
+   *   何も起きないまま終わる。押しても反応しない、の正体。
+   *
+   *   集めるのと保存するのを分ける。集め終わったら、押せる形の
+   *   保存の道が出る。そこを押した瞬間に保存が始まるので、
+   *   どの端末でも取りこぼさない。
+   */
+  const [outFile, setOutFile] = useState<{ url: string; name: string; n: number } | null>(null);
 
   /**
    * いまログインしている人を、xlsx にまとめて保存する。
@@ -619,15 +641,18 @@ export default function CampusPage() {
         sheets.push({ name: k, rows: [EXPORT_HEAD, ...list.map(toRow)] });
       }
 
-      saveXlsx(sheets, "kit(people).xlsx");
+      /* 押した瞬間に保存できるよう、ここでは作るだけ */
+      if (outFile) URL.revokeObjectURL(outFile.url);
+      const url = URL.createObjectURL(buildXlsx(sheets));
+      setOutFile({ url, name: "kit(people).xlsx", n: all.length });
 
       const inner = sheets.map((x) => `${x.name} ${x.rows.length - 1}`).join("、");
       const short = seats >= 0 && seats !== all.length;
       setMsg({
         kind: short ? "err" : "ok",
         text: short
-          ? `${all.length} 人ぶんを保存しましたが、席は ${seats} 人あります。${seats - all.length} 人ぶんが入っていません。`
-          : `${all.length} 人ぶんを kit(people).xlsx に保存しました（${inner}）。`,
+          ? `${all.length} 人ぶんを集めましたが、席は ${seats} 人あります。${seats - all.length} 人ぶんが入っていません。`
+          : `${all.length} 人ぶんを集めました（${inner}）。下の「保存する」を押してください。`,
       });
       noteEvent("people", `ログインしている人を xlsx に書き出しました（${all.length} 人）`, {
         人数: all.length,
@@ -1103,14 +1128,57 @@ export default function CampusPage() {
    * ここで入れた番号と、申請する本人の番号が合わないと通らないので、
    * 打ち間違いはそのまま「通らない」になって返ってくる。
    */
+  /**
+   * 名簿から人を探す。
+   *
+   * ★手で打たせない
+   *   前は番号と氏名を手で打っていた。打ち間違えると、その人は
+   *   申請しても通らない。しかも間違いに気づけない——
+   *   「入れたのに通らない」だけが残る。
+   *   名簿から選べば、番号も氏名もそのまま入る。
+   */
+  const findPeople = useCallback(async (word: string) => {
+    if (!supabaseReady || word.trim() === "") {
+      setPickRows([]);
+      return;
+    }
+    setPickBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("roster_pick", {
+        p_q: word.trim(),
+        p_limit: 30,
+      });
+      if (error) throw error;
+      setPickRows(
+        (data as { kind: string; email: string; full_name: string; student_no: string; number: string }[]) ??
+          [],
+      );
+    } catch (e) {
+      setPickRows([]);
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/28_number8.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+    } finally {
+      setPickBusy(false);
+    }
+  }, []);
+
   const addLeader = async () => {
-    const no = leadNo.replace(/[\s\u3000]/g, "");
+    /* すべて数字の8桁だけ。学籍番号（c1234567）は番号ではない */
+    const no = leadNo.replace(/[^0-9]/g, "");
     if (leadAct === null) {
       setMsg({ kind: "err", text: "どこの団体かを選んでください。" });
       return;
     }
     if (no.length !== 8) {
-      setMsg({ kind: "err", text: `番号は 8桁で入れてください（いま ${no.length}桁）。` });
+      setMsg({
+        kind: "err",
+        text: `番号は、すべて数字の8桁で入れてください（いま ${no.length}桁）。`,
+      });
       return;
     }
     const act = leadActs.find((a) => a.id === leadAct);
@@ -1757,9 +1825,25 @@ export default function CampusPage() {
               {outBusy
                 ? T("集めています…")
                 : outKinds.length === 0
-                  ? T("xlsx に保存する（kit(people).xlsx）")
-                  : `${outKinds.map((k) => T(PEOPLE_KINDS.find((x) => x.id === k)?.label ?? k)).join("・")} を xlsx に保存する`}
+                  ? T("ぜんぶ集める")
+                  : `${outKinds.map((k) => T(PEOPLE_KINDS.find((x) => x.id === k)?.label ?? k)).join("・")} を集める`}
             </button>
+
+            {/*
+              保存の道。集め終わってから出す。
+
+              押した瞬間に保存が始まるので、端末を選ばない。
+              a に download を付けた本物の道にしてあるのは、そのため。
+            */}
+            {outFile && (
+              <a
+                href={outFile.url}
+                download={outFile.name}
+                className="mt-1.5 block w-full rounded-xl bg-blue-600 px-3 py-3 text-center text-xs font-bold text-white transition hover:bg-blue-700 active:scale-95"
+              >
+                {T("保存する")}（{outFile.name}・{outFile.n} {T("人")}）
+              </a>
+            )}
             <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
               {T("身分ごとにシートを分けて出します。1行目が見出しで、そこから1行に1人です。")}
               <br />
@@ -2213,23 +2297,97 @@ export default function CampusPage() {
                     </option>
                   ))}
               </select>
-              <div className="mt-1 grid grid-cols-2 gap-1">
+              {/*
+                人は、名簿から選ぶ。
+
+                ★手で打たせない
+                  打ち間違えると、その人は申請しても通らない。しかも
+                  間違いに気づけず、「入れたのに通らない」だけが残る。
+                  名簿から選べば、番号も氏名もそのまま入る。
+
+                  名簿にいない人はリーダーにできないが、それでよい。
+                  名簿にいない人は、そもそも申請そのものが通らない。
+              */}
+              <div className="mt-1.5 rounded-lg bg-white p-2 ring-1 ring-slate-200">
+                <div className="text-[10px] font-bold text-slate-500">{T("名簿から選ぶ")}</div>
+                <input
+                  value={pickQ}
+                  onChange={(e) => {
+                    setPickQ(e.target.value);
+                    void findPeople(e.target.value);
+                  }}
+                  autoComplete="off"
+                  placeholder={T("氏名・学籍番号・アドレスで探す")}
+                  className={`${rSelect} mt-1`}
+                />
+
+                {pickBusy && (
+                  <p className="mt-1 text-[10px] text-slate-400">{T("探しています…")}</p>
+                )}
+
+                {pickRows.length > 0 && (
+                  <ul className="mt-1 max-h-48 divide-y divide-slate-100 overflow-y-auto rounded-lg bg-slate-50">
+                    {pickRows.map((x) => (
+                      <li key={`${x.kind}-${x.email}`}>
+                        <button
+                          onClick={() => {
+                            /*
+                             * 学生は名簿に 8桁の番号を持っていない。
+                             * 学生証の番号は、こちらでは分からないので
+                             * 空にして、手で入れてもらう。
+                             * 氏名とアドレスは、そのまま入れる。
+                             */
+                            setLeadNo(x.number ?? "");
+                            setLeadName(x.full_name ?? "");
+                            setPickQ(x.full_name ?? "");
+                            setPickRows([]);
+                          }}
+                          className="block w-full px-2.5 py-2 text-left transition hover:bg-white"
+                        >
+                          <span className="block truncate text-xs font-bold text-slate-800">
+                            {x.full_name || "（名前なし）"}
+                            <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-600">
+                              {x.kind === "student" ? T("学生") : T("教職員・職員")}
+                            </span>
+                          </span>
+                          <span className="block truncate font-mono text-[10px] text-slate-500">
+                            {x.number || x.student_no || x.email}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {pickQ.trim() !== "" && !pickBusy && pickRows.length === 0 && (
+                  <p className="mt-1 text-[10px] leading-relaxed text-amber-700">
+                    {T("名簿に見つかりません。先に名簿へ入れてください。")}
+                  </p>
+                )}
+              </div>
+
+              {/* 選んだ人。番号は 8桁の数字で */}
+              <div className="mt-1.5 grid grid-cols-2 gap-1">
                 <input
                   value={leadNo}
-                  onChange={(e) => setLeadNo(e.target.value)}
+                  onChange={(e) => setLeadNo(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))}
                   autoComplete="off"
-                  maxLength={16}
-                  placeholder={T("8桁の番号（例：c1234567）")}
+                  inputMode="numeric"
+                  maxLength={8}
+                  placeholder={T("8桁の番号（数字だけ）")}
                   className={`${rSelect} font-mono`}
                 />
                 <input
                   value={leadName}
                   onChange={(e) => setLeadName(e.target.value)}
                   autoComplete="off"
-                  placeholder={T("氏名（無くてもよい）")}
+                  placeholder={T("氏名")}
                   className={rSelect}
                 />
               </div>
+              <p className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                {T("学生証・職員証の8桁の番号です。すべて数字で、アドレスの前の部分とは別のものです。")}
+              </p>
               <button
                 onClick={() => void addLeader()}
                 disabled={leadBusy}
@@ -2764,7 +2922,11 @@ export default function CampusPage() {
                   <input
                     value={one.number}
                     onChange={(e) =>
-                      setOne((o) => ({ ...o, number: e.target.value.trim().slice(0, 8) }))
+                      setOne((o) => ({
+                        ...o,
+                        // すべて数字の8桁。アドレスの前の部分とは別のもの
+                        number: e.target.value.replace(/[^0-9]/g, "").slice(0, 8),
+                      }))
                     }
                     autoComplete="off"
                     placeholder="12345678"
@@ -3039,8 +3201,10 @@ function EditForm({
           </label>
           <input
             value={form.number}
-            onChange={(e) => set({ number: e.target.value.trim().slice(0, 8) })}
-            inputMode="text"
+            // すべて数字の8桁。アドレスの前の部分とは別のもの
+            onChange={(e) => set({ number: e.target.value.replace(/[^0-9]/g, "").slice(0, 8) })}
+            inputMode="numeric"
+            maxLength={8}
             autoCapitalize="off"
             className={`${editInput} font-mono`}
           />
