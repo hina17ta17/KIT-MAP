@@ -1907,7 +1907,7 @@ export default function CampusPage() {
         {[
           ["/admin/rooms", "教室の登録"],
           ["#depts", "学科登録"],
-          ["#leaders", "課外活動リーダーの名簿"],
+          ["#leaders", "課外活動の情報"],
           ["#domain", "ドメイン名確認"],
           ["#people", "ログインしている人を見る"],
           ["#xlsx", "xlsx から取り込む"],
@@ -2442,10 +2442,19 @@ export default function CampusPage() {
       </section>
 
       {/*
-        課外活動リーダーの名簿。
+        課外活動の情報。
 
-        地図の「申請 → 課外活動リーダー申請」で、kit-agent が照らす先。
-        ここに載っている番号の人だけが通る。
+        はじめはリーダーの名簿だけだったので「課外活動リーダーの名簿」と
+        呼んでいたが、団体そのものを増やす欄が入ったので、
+        二つをまとめた呼び方にしてある。
+
+        ■ 中は二つ
+          団体を増やす … 2.2 と管理者だけ
+          リーダーの名簿 … 2.1 以上（この画面を開ける人）
+
+        ■ 名簿は、kit-agent が照らす先
+          地図の「申請 → 課外活動リーダー申請」で使う。
+          ここに載っている番号の人だけが通る。
 
         ■ 番号は 8桁
           学生証・職員証に書いてあるもの（c1234567 など）。
@@ -2459,12 +2468,12 @@ export default function CampusPage() {
       {canWrite && (
       <section id="leaders" className="mt-4 scroll-mt-4 rounded-xl border border-slate-200 p-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-bold text-slate-900">{T("課外活動リーダーの名簿")}</div>
+          <div className="text-xs font-bold text-slate-900">{T("課外活動の情報")}</div>
           <button
             onClick={() => setLeadOpen((v) => !v)}
             className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"
           >
-            {leadOpen ? T("閉じる") : T("名簿を開く")}
+            {leadOpen ? T("閉じる") : T("開く")}
           </button>
         </div>
 

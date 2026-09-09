@@ -853,8 +853,17 @@ const EN: Record<string, string> = {
   "列を足しても、順を入れ替えても構いません。見出しが無いときだけ、A列から順に当てます。":
     "You may add columns or reorder them. Only without a header are columns taken in order from A.",
 
-  /* 管理画面の、課外活動リーダーの名簿 */
+  /*
+   * 管理画面の、課外活動の情報。
+   *
+   * はじめはリーダーの名簿だけだったので「課外活動リーダーの名簿」。
+   * 団体そのものを増やす欄が入ったので、呼び方を変えた。
+   * 古いほうも残してある。どこかで拾い残していても、
+   * 英語のときに日本語のまま出るということにならない。
+   */
+  課外活動の情報: "Club information",
   課外活動リーダーの名簿: "Club leader roster",
+  開く: "Open",
   "ここに載っている番号の人だけが、課外活動リーダーの申請で通ります。":
     "Only the numbers listed here pass the club leader application.",
   "空のあいだは、kit-agent は誰も通しません。":
