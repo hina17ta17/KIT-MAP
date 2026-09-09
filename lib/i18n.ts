@@ -859,6 +859,11 @@ const EN: Record<string, string> = {
     "Only the numbers listed here pass the club leader application.",
   "空のあいだは、kit-agent は誰も通しません。":
     "While it is empty, kit-agent lets nobody through.",
+  課外活動そのものを増やす: "Add a club itself",
+  課外活動の名前: "Club name",
+  この課外活動を増やす: "Add this club",
+  "増やすと、リーダーの名簿・予定の登録・学内の情報の三つに出てきます。":
+    "Once added, it appears in the leader roster, the schedule form and the campus info.",
   一人足す: "Add one person",
   どこの団体ですか: "Which club?",
   "8桁の番号（例：c1234567）": "8-character number (e.g. c1234567)",

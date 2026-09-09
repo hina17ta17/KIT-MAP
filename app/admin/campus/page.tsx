@@ -301,6 +301,9 @@ export default function CampusPage() {
   const [leadPick, setLeadPick] = useState<number | null>(null);
   /** 入れる欄。分類を選んでから団体を選ぶ */
   const [leadCat, setLeadCat] = useState<number | null>(null);
+  /* 課外活動そのものを増やす欄 */
+  const [newActCat, setNewActCat] = useState<number | null>(null);
+  const [newActName, setNewActName] = useState("");
   const [leadAct, setLeadAct] = useState<number | null>(null);
   const [leadNo, setLeadNo] = useState("");
   const [leadName, setLeadName] = useState("");
@@ -1283,6 +1286,89 @@ export default function CampusPage() {
     },
     [],
   );
+
+  /**
+   * 課外活動そのものを増やす。
+   *
+   * ■ なぜ要るか
+   *   団体の一覧は、はじめに入れた 97 のまま増やせなかった。
+   *   新しい同好会ができても、リーダーを入れることも、
+   *   予定を入れることも、学内の情報で探すこともできない。
+   *   一覧に無いものは、どこからも扱えない。
+   *
+   * ■ 系統は選ぶ、名前は打つ
+   *   系統（体育部会・文化部会・同好会…）は決まったものなので選ぶ。
+   *   名前は、そこにしか無いものなので打ってもらう。
+   *
+   * ■ 同じ名前は入れない
+   *   二つあると、リーダーも予定もどちらに付いたのか分からなくなる。
+   *   先に在るかを見て、あればそう伝える。
+   */
+  const addActivity = async () => {
+    const name = newActName.trim();
+    if (newActCat === null) {
+      setMsg({ kind: "err", text: "何系の活動かを選んでください。" });
+      return;
+    }
+    if (name === "") {
+      setMsg({ kind: "err", text: "課外活動の名前を入れてください。" });
+      return;
+    }
+    const same = leadActs.find((a) => a.name.replace(/\s/g, "") === name.replace(/\s/g, ""));
+    if (same) {
+      setMsg({ kind: "err", text: `「${same.name}」は、もう入っています。` });
+      return;
+    }
+
+    const catName = leadCats.find((c) => c.id === newActCat)?.name ?? "";
+    if (
+      !window.confirm(
+        [
+          `課外活動を一つ増やします。`,
+          "",
+          `  系統  ${catName}`,
+          `  名前  ${name}`,
+          "",
+          "増やすと、リーダーの名簿・予定の登録・学内の情報の三つに出てきます。",
+          "よろしいですか？",
+        ].join(BR),
+      )
+    )
+      return;
+
+    setLeadBusy(true);
+    setMsg(null);
+    try {
+      const supabase = createClient();
+      /* 並びは、その系統のいちばん後ろに付ける */
+      const tail =
+        leadActs.filter((a) => a.category_id === newActCat).length + 1;
+      const { error } = await supabase
+        .from("club_activities")
+        .insert({ category_id: newActCat, name, sort_order: tail });
+      if (error) throw error;
+
+      const { data } = await supabase
+        .from("club_activities")
+        .select("id, category_id, name")
+        .order("sort_order");
+      setLeadActs((data as { id: number; category_id: number | null; name: string }[]) ?? []);
+      setNewActName("");
+      setMsg({ kind: "ok", text: `${catName} に「${name}」を増やしました。` });
+      noteEvent("campus", `課外活動を増やしました（${name}）`, { 系統: catName, 名前: name });
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      setMsg({
+        kind: "err",
+        text: /duplicate|unique/i.test(m)
+          ? `「${name}」は、もう入っています。`
+          : `${m}（base/02_campus.sql をまだ入れていない場合は、先に入れてください）`,
+      });
+      noteError("campus", "課外活動を増やせませんでした", e);
+    } finally {
+      setLeadBusy(false);
+    }
+  };
 
   const addLeader = async () => {
     /* すべて数字の8桁だけ。学籍番号（c1234567）は番号ではない */
@@ -2378,6 +2464,49 @@ export default function CampusPage() {
               {T("ここに載っている番号の人だけが、課外活動リーダーの申請で通ります。")}
               {T("空のあいだは、kit-agent は誰も通しません。")}
             </p>
+
+            {/*
+              課外活動そのものを増やす。
+
+              一覧に無いものは、リーダーも予定も学内の情報も扱えない。
+              新しい同好会ができたときに、ここから足せるようにしておく。
+            */}
+            <div className="mt-2 rounded-xl bg-emerald-50 p-2.5">
+              <div className="text-[10px] font-bold text-emerald-800">
+                {T("課外活動そのものを増やす")}
+              </div>
+              <div className="mt-1 grid grid-cols-2 gap-1">
+                <select
+                  value={newActCat ?? ""}
+                  onChange={(e) => setNewActCat(e.target.value ? Number(e.target.value) : null)}
+                  className={rSelect}
+                >
+                  <option value="">{T("何系の活動ですか")}</option>
+                  {leadCats.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={newActName}
+                  onChange={(e) => setNewActName(e.target.value.slice(0, 60))}
+                  autoComplete="off"
+                  placeholder={T("課外活動の名前")}
+                  className={rSelect}
+                />
+              </div>
+              <button
+                onClick={() => void addActivity()}
+                disabled={leadBusy || newActCat === null || newActName.trim() === ""}
+                className="mt-1.5 w-full rounded-xl bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                {leadBusy ? T("入れています…") : T("この課外活動を増やす")}
+              </button>
+              <p className="mt-1 text-[10px] leading-relaxed text-emerald-700">
+                {T("増やすと、リーダーの名簿・予定の登録・学内の情報の三つに出てきます。")}
+              </p>
+            </div>
 
             {/* 入れる */}
             <div className="mt-2 rounded-xl bg-slate-50 p-2.5">
