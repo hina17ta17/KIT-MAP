@@ -185,13 +185,35 @@ function Panel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {step === "calendar" && (
-          <Calendar
-            date={date}
-            onPick={(d) => {
-              setDate(d);
-              setStep("home");
-            }}
-          />
+          <>
+            <Calendar
+              date={date}
+              onPick={(d) => {
+                setDate(d);
+                setStep("home");
+              }}
+            />
+
+            {/*
+              申請は、日を選ぶ前から見えるようにする。
+
+              ★なぜここにも置くか
+                申請は「その日のこと」ではない。教職課程やリーダーの
+                申し込みに、日は関係ない。それなのに、暦で日を選ばないと
+                辿りつけなかった。関係のない一手を挟ませていた。
+
+                日を選ぶ画面のいちばん下に置く。上の暦は毎日使うものなので、
+                そこは動かさない。
+            */}
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              <Big
+                onClick={() => setStep("apply")}
+                icon="📝"
+                label={T("申請")}
+                sub={T("教職課程・課外活動リーダー")}
+              />
+            </div>
+          </>
         )}
 
         {step === "home" && (
@@ -1861,6 +1883,27 @@ function MyClasses({ date }: { date: Date }) {
 
 /* ================= 課外活動を探す ================= */
 
+/** 課外活動のお気に入り。この端末にだけ覚える */
+const CLUB_FAV_KEY = "kitmap.clubFavs";
+
+/**
+ * お気に入りを読む。
+ *
+ * 端末に覚えるだけにしてある。データベースに持たせると、
+ * どの団体を気にしているかが人に見えてしまう。
+ * 見せる相手のいない覚えなので、手元で足りる。
+ */
+function loadClubFavs(): number[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(CLUB_FAV_KEY);
+    const v = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(v) ? v.filter((x): x is number => typeof x === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
 type ClubHit = {
   id: number;
   starts_at: string;
@@ -1897,6 +1940,24 @@ function Clubs({ date }: { date: Date }) {
   const [pick, setPick] = useState<Act | null>(null);
   const [rows, setRows] = useState<ClubHit[] | null>(null);
   const [busy, setBusy] = useState(false);
+  /** お気に入りにした団体の番号 */
+  const [favs, setFavs] = useState<number[]>([]);
+
+  useEffect(() => {
+    setFavs(loadClubFavs());
+  }, []);
+
+  const toggleFav = useCallback((id: number) => {
+    setFavs((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      try {
+        localStorage.setItem(CLUB_FAV_KEY, JSON.stringify(next));
+      } catch {
+        /* 覚えられなくても、その場では使える */
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady) return;
@@ -1917,6 +1978,20 @@ function Clubs({ date }: { date: Date }) {
       .sort((x, y) => x.r - y.r || x.a.name.localeCompare(y.a.name, "ja"))
       .slice(0, 10);
   }, [acts, q]);
+
+  /**
+   * お気に入りにした団体。あいうえお順。
+   *
+   * 押した順に並べると、あとから足したものが下に付いて、
+   * 探す目が毎回そこへ行かない。名前の順なら、いつも同じ場所にある。
+   */
+  const favActs = useMemo(
+    () =>
+      acts
+        .filter((a) => favs.includes(a.id))
+        .sort((a, b) => a.name.localeCompare(b.name, "ja")),
+    [acts, favs],
+  );
 
   useEffect(() => {
     if (!pick || !supabaseReady) {
@@ -1962,6 +2037,39 @@ function Clubs({ date }: { date: Date }) {
         {T("課外活動の名前で探すと、いつ・どこでやっているかが出ます。")}
       </p>
 
+      {/*
+        お気に入り。探す前から、いちばん上に出しておく。
+
+        いつも同じ団体を見る人のほうが多い。毎回名前を打たせるのは、
+        分かっている答えを打たせているのと同じ。
+        並びはあいうえお順。押した順だと、あとから足したものが下に付いて、
+        探す目が毎回そこへ行かない。
+      */}
+      {favActs.length > 0 && !pick && (
+        <div className="mb-2">
+          <div className="text-[10px] font-bold text-amber-700">{T("★ お気に入り")}</div>
+          <ul className="mt-1 flex flex-col gap-1">
+            {favActs.map((a) => (
+              <li key={a.id} className="flex items-center gap-1">
+                <button
+                  onClick={() => setPick(a)}
+                  className="min-w-0 flex-1 rounded-xl bg-amber-50 px-3 py-2.5 text-left text-xs font-bold text-amber-900 transition hover:bg-amber-100 active:scale-95"
+                >
+                  <span className="block truncate">{a.name}</span>
+                </button>
+                <button
+                  onClick={() => toggleFav(a.id)}
+                  aria-label={T("お気に入りから外す")}
+                  className="shrink-0 rounded-lg px-2 py-2 text-sm text-amber-500 transition hover:bg-amber-50 active:scale-90"
+                >
+                  ★
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="relative">
         <input
           value={q}
@@ -1973,15 +2081,27 @@ function Clubs({ date }: { date: Date }) {
         {hits.length > 0 && (
           <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-xl bg-white py-1 shadow-lg ring-1 ring-slate-200">
             {hits.map((h) => (
-              <li key={h.a.id}>
+              <li key={h.a.id} className="flex items-center">
                 <button
                   onClick={() => {
                     setPick(h.a);
                     setQ("");
                   }}
-                  className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 transition hover:bg-slate-50"
+                  className="min-w-0 flex-1 truncate px-4 py-2.5 text-left text-sm text-slate-800 transition hover:bg-slate-50"
                 >
                   {h.a.name}
+                </button>
+                {/* 探している最中でも、その場で印を付けられる */}
+                <button
+                  onClick={() => toggleFav(h.a.id)}
+                  aria-label={
+                    favs.includes(h.a.id) ? T("お気に入りから外す") : T("お気に入りに入れる")
+                  }
+                  className={`shrink-0 px-3 py-2.5 text-sm transition active:scale-90 ${
+                    favs.includes(h.a.id) ? "text-amber-500" : "text-slate-300 hover:text-amber-400"
+                  }`}
+                >
+                  ★
                 </button>
               </li>
             ))}
@@ -1996,8 +2116,30 @@ function Clubs({ date }: { date: Date }) {
 
       {pick && (
         <div className="mt-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <span className="min-w-0 truncate text-sm font-bold text-slate-900">{pick.name}</span>
+
+            {/* 予定。いま出しているものが、まさにそれ */}
+            <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold text-blue-800">
+              {T("予定")}
+              {rows !== null ? `　${rows.length}` : ""}
+            </span>
+
+            {/* お気に入り。ここからも入れられる */}
+            <button
+              onClick={() => toggleFav(pick.id)}
+              aria-label={
+                favs.includes(pick.id) ? T("お気に入りから外す") : T("お気に入りに入れる")
+              }
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold transition active:scale-95 ${
+                favs.includes(pick.id)
+                  ? "bg-amber-500 text-white"
+                  : "bg-slate-100 text-slate-500 hover:bg-amber-100"
+              }`}
+            >
+              ★ {favs.includes(pick.id) ? T("お気に入り") : T("入れる")}
+            </button>
+
             <button
               onClick={() => setPick(null)}
               className="ml-auto shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-200 active:scale-95"

@@ -579,30 +579,34 @@ export default function CampusPage() {
    *   足りなければ続きを取りに行く。途中で切れたことに
    *   気づけないほうが困る。
    */
-  const saveAll = async () => {
-    if (!supabaseReady) return;
-    setOutBusy(true);
-    setMsg(null);
+  /**
+   * 席のある人を集める。
+   *
+   * ■ 三通りのやり方を、順に試す
+   *
+   *   ① export_people(限り, 位置, 身分)   28 まで入っている
+   *   ② export_people(限り, 位置)         24 まで入っている
+   *   ③ list_people(身分, …) を身分ごと    15 まで入っている
+   *
+   *   なぜこうするか。データベース側は手で貼るので、画面のほうだけが
+   *   先に新しくなる時期が必ずある。そのとき「関数がありません」と
+   *   出るだけで、何も保存できなかった。何が足りないのか、
+   *   どれを貼ればよいのかも分からない。
+   *
+   *   古いやり方でも動くようにしておけば、貼るまでのあいだも使える。
+   *   そのうえで「どれを貼ると、もっとよくなるか」を画面に出す。
+   *
+   * ■ ③は取りこぼす
+   *   身分ごとに訊く形なので、どの身分にも当てはまらない人
+   *   （承認待ちなど）が返ってこない。そこは正直に知らせる。
+   */
+  const collectPeople = async (
+    supabase: ReturnType<typeof createClient>,
+    pick: PeopleKind[] | null,
+  ): Promise<{ rows: Person[]; how: 1 | 2 | 3; note: string }> => {
+    /* ① いちばん新しいやり方 */
     try {
-      const supabase = createClient();
-
-      /*
-       * 席のある人を、選り分けずにぜんぶもらう。
-       *
-       * ★身分ごとに問い合わせるのはやめた
-       *   前は身分を一つずつ指定して呼んでいた。すると、
-       *   どの身分にも当てはまらない人が、どこからも返ってこない。
-       *   実際に承認待ちの人がまるごと落ちて、
-       *   xlsx に学生しか入っていなかった。
-       *
-       *   いまは「ぜんぶ返す」を一度呼ぶ（export_people）。
-       *   身分は添えられてくるだけで、選り分けには使っていない。
-       *   知らない権限が入っていても、必ずどこかのシートに出る。
-       */
-      /* 選んでいなければ、ぜんぶ（null を渡す） */
-      const pick = outKinds.length > 0 ? outKinds : null;
-
-      const all: Person[] = [];
+      const rows: Person[] = [];
       for (let at = 0; ; at += 2000) {
         const { data, error } = await supabase.rpc("export_people", {
           p_limit: 2000,
@@ -611,9 +615,72 @@ export default function CampusPage() {
         });
         if (error) throw error;
         const got = (data as Person[]) ?? [];
-        all.push(...got);
+        rows.push(...got);
         if (got.length < 2000) break;
       }
+      return { rows, how: 1, note: "" };
+    } catch {
+      /* 次を試す */
+    }
+
+    /* ② 身分で絞れない版。こちらで絞る */
+    try {
+      const rows: Person[] = [];
+      for (let at = 0; ; at += 2000) {
+        const { data, error } = await supabase.rpc("export_people", {
+          p_limit: 2000,
+          p_offset: at,
+        });
+        if (error) throw error;
+        const got = (data as Person[]) ?? [];
+        rows.push(...got);
+        if (got.length < 2000) break;
+      }
+      return {
+        rows: pick ? rows.filter((x) => pick.includes(String(x.kind ?? "other") as PeopleKind)) : rows,
+        how: 2,
+        note: "課外活動リーダーの欄（Q列・R列）は、base/26_leader_cols.sql を入れると出ます。",
+      };
+    } catch {
+      /* 次を試す */
+    }
+
+    /* ③ いちばん古いやり方。身分ごとに訊く */
+    const rows: Person[] = [];
+    for (const k of PEOPLE_KINDS) {
+      if (pick && !pick.includes(k.id)) continue;
+      for (let at = 0; ; at += 2000) {
+        const { data, error } = await supabase.rpc("list_people", {
+          p_kind: k.id,
+          p_dept_id: null,
+          p_q: "",
+          p_limit: 2000,
+          p_offset: at,
+        });
+        if (error) throw error;
+        const got = ((data as Person[]) ?? []).map((x) => ({ ...x, kind: k.id }));
+        rows.push(...got);
+        if (got.length < 2000) break;
+      }
+    }
+    return {
+      rows,
+      how: 3,
+      note: "身分ごとに訊く古いやり方で集めました。base/24_people_all.sql を入れると、一度で確かに集められます。",
+    };
+  };
+
+  const saveAll = async () => {
+    if (!supabaseReady) return;
+    setOutBusy(true);
+    setMsg(null);
+    try {
+      const supabase = createClient();
+
+      /* 選んでいなければ、ぜんぶ（null を渡す） */
+      const pick = outKinds.length > 0 ? outKinds : null;
+
+      const { rows: all, how, note } = await collectPeople(supabase, pick);
 
       /*
        * 席の数と、もらえた数を突き合わせる。
@@ -623,10 +690,16 @@ export default function CampusPage() {
        */
       let seats = -1;
       try {
-        const { data } = await supabase.rpc("people_total", { p_kinds: pick });
-        seats = Number(data ?? -1);
+        const a = await supabase.rpc("people_total", { p_kinds: pick });
+        if (a.error) throw a.error;
+        seats = Number(a.data ?? -1);
       } catch {
-        /* 数えられなくても、書き出しは続ける */
+        try {
+          const b = await supabase.rpc("people_total");
+          if (!b.error && pick === null) seats = Number(b.data ?? -1);
+        } catch {
+          /* 数えられなくても、書き出しは続ける */
+        }
       }
 
       /* 身分ごとにシートを分ける。並びは PEOPLE_KINDS のとおり */
@@ -641,7 +714,6 @@ export default function CampusPage() {
       const sheets: Sheet[] = [];
       const seen = new Set<string>();
       for (const k of PEOPLE_KINDS) {
-        // 選んでいる身分だけ。選んでいなければ、ぜんぶ
         if (pick && !pick.includes(k.id)) continue;
         seen.add(k.id);
         sheets.push({
@@ -665,21 +737,32 @@ export default function CampusPage() {
       setMsg({
         kind: short ? "err" : "ok",
         text: short
-          ? `${all.length} 人ぶんを集めましたが、席は ${seats} 人あります。${seats - all.length} 人ぶんが入っていません。`
-          : `${all.length} 人ぶんを集めました（${inner}）。下の「保存する」を押してください。`,
+          ? `${all.length} 人ぶんを集めましたが、席は ${seats} 人あります。${seats - all.length} 人ぶんが入っていません。${note}`
+          : `${all.length} 人ぶんを集めました（${inner}）。下の「保存する」を押してください。${note}`,
       });
       noteEvent("people", `ログインしている人を xlsx に書き出しました（${all.length} 人）`, {
         人数: all.length,
         席: seats,
+        やり方: how,
         シート: inner,
       });
     } catch (e) {
+      /*
+       * どこで止まったのかを、そのまま出す。
+       *
+       * 「保存できません」だけでは、貼り忘れなのか、権限なのか、
+       * つながっていないのかが分からない。出た言葉をそのまま見せて、
+       * 貼るべきものも並べる。
+       */
+      const raw =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null && "message" in e
+            ? String((e as { message: unknown }).message)
+            : String(e);
       setMsg({
         kind: "err",
-        text:
-          e instanceof Error
-            ? `${e.message}（base/24_people_all.sql をまだ入れていない場合は、先に入れてください）`
-            : String(e),
+        text: `${raw}｜base/15_people.sql と base/24_people_all.sql が入っているかをお確かめください。`,
       });
       noteError("people", "ログインしている人を書き出せませんでした", e);
     } finally {

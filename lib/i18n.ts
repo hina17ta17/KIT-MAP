@@ -667,6 +667,12 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* 課外活動のお気に入り */
+  "お気に入りに入れる": "Add to favorites",
+  "お気に入りから外す": "Remove from favorites",
+  予定: "Schedule",
+  "入れる": "Add",
+
   /* 8桁の番号と、名簿から選ぶ */
   "ぜんぶ集める": "Collect everyone",
   "保存する": "Save",
