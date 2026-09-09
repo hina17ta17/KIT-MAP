@@ -349,7 +349,7 @@ export default function AgentPage() {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="h-[100dvh] overflow-y-auto bg-slate-100 p-4">
-      <div className="mx-auto max-w-sm rounded-2xl bg-white p-5 shadow-lg">{children}</div>
+      <div className="mx-auto w-full max-w-sm rounded-2xl bg-white p-5 shadow-lg sm:max-w-2xl lg:max-w-4xl">{children}</div>
     </main>
   );
 }

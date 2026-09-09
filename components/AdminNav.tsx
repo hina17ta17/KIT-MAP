@@ -33,6 +33,7 @@ export type AdminPageId =
   | "feedback"
   | "history"
   | "agent"
+  | "news"
   | "edit";
 
 type Entry = {
@@ -59,6 +60,22 @@ const ENTRIES: Entry[] = [
     label: "kit-agent の様子",
     sub: "働いているか、誰を通して誰をはじいたか",
     allowed: canManageAll,
+  },
+  /*
+   * ニュース。kit-agent と 承認・権限 のあいだ。
+   *
+   * 出すのは、学生と承認待ち以外のぜんぶ。
+   * 通すのは 2.2 と管理者で、そちらは承認・権限の画面のほう。
+   * 出す所と通す所を分けてあるので、並びも分けてある。
+   */
+  {
+    id: "news",
+    href: "/admin/news",
+    icon: "📰",
+    label: "ニュースを入れる",
+    sub: "写真と開く先を決めて申請する",
+    allowed: (r) =>
+      r === "admin_l0" || r === "admin_l1" || r === "admin_l2" || canManageAll(r),
   },
   {
     id: "approve",

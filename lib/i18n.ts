@@ -667,6 +667,40 @@ const EN: Record<string, string> = {
   "人の番号を入れても通りません。番号がご本人のものかを先に見ています。":
     "Someone else's number will not work — we check the number is yours first.",
 
+  /* ニュース */
+  お知らせ: "News",
+  "横に送って見られます": "Swipe sideways",
+  "ニュースを入れる": "Post news",
+  "写真と開く先を決めて申請する": "Choose a photo and a link, then apply",
+  "ニュースを入れられるのは、学生と承認待ち以外の人です。":
+    "Only people other than students and those awaiting approval can post news.",
+  "写真を一枚と、押したときに開く先を決めて申請します。":
+    "Choose one photo and the page it opens, then apply.",
+  "通ると、学内の情報のいちばん上に出ます。通すのは副管理者（2.2）と管理者です。":
+    "Once approved it appears at the top of Campus info. Sub-admins (2.2) and administrators approve it.",
+  写真: "Photo",
+  "押したときに開く先": "Where it opens when tapped",
+  "元の頁がある知らせは、そちらへ送ってください。ここで書き写すと、直したときに食い違います。":
+    "If the notice already has a page, link to it. Copying the text here means the two can drift apart.",
+  "一言（無くてもよい）": "A short line (optional)",
+  "工大祭のお知らせ": "About the campus festival",
+  "いつからいつまで出すか": "From when until when",
+  "終わりの日が、始まりより前になっています。": "The end date is before the start date.",
+  "送っています…": "Sending…",
+  "出したもの": "What you posted",
+  "まだ出していません。": "You have not posted anything yet.",
+  "取り下げる": "Withdraw",
+  "出ています": "Live",
+  "断られました": "Turned down",
+  "取り下げました": "Withdrawn",
+  "この端末で小さくしてから送ります。地図を開いた人みんなが読み込むので、軽くしておきます。":
+    "Shrunk on this device before sending — everyone who opens the map loads it, so it is kept small.",
+  "ニュースの承認": "News approvals",
+  "いま待っているものはありません。": "Nothing is waiting.",
+  "出るようにする": "Publish it",
+  断る: "Turn down",
+  "（名前なし）": "(no name)",
+
   /* 課外活動のお気に入り */
   "お気に入りに入れる": "Add to favorites",
   "お気に入りから外す": "Remove from favorites",

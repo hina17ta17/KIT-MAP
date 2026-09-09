@@ -30,6 +30,7 @@ import { CLASS_CODES, canViewCampusInfo, type Role } from "@/lib/auth";
 import { t, type Lang } from "@/lib/i18n";
 import { dayColor, holidayName } from "@/lib/holidays";
 import { rankOf } from "@/lib/appdata";
+import NewsStrip from "./NewsStrip";
 
 type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "clubs" | "apply";
 
@@ -218,6 +219,15 @@ function Panel({
 
         {step === "home" && (
           <div className="flex flex-col gap-2">
+            {/*
+              お知らせ。いちばん上。
+
+              地図を開いた人がまず目にする場所。
+              何も出ていないときは、枠ごと出さない
+              （空の枠は、見に来た人の場所を削るだけ）。
+            */}
+            <NewsStrip t={T} />
+
             <Big onClick={() => setStep("cafeteria")} icon="🍚"
               label={T("食堂のメニュー")} sub={T("その日の提供状況")} />
             <Big onClick={() => setStep("timetable")} icon="📘"

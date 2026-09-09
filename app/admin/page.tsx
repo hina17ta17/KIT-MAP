@@ -152,6 +152,186 @@ const RESETTABLE: Role[] = ["pending", "student", "admin_l0", "admin_l1", "admin
 
 const SHORT = ROLE_SHORT;
 
+/** 承認を待っているニュース */
+type NewsWait = {
+  id: number;
+  image: string;
+  url: string;
+  title: string;
+  from_date: string;
+  to_date: string;
+  author_mail: string;
+  author_name: string;
+  author_role: string;
+  created_at: string;
+};
+
+/** 2026-09-09 → 9月9日 */
+function md(d: string): string {
+  const x = new Date(d);
+  return `${x.getMonth() + 1}月${x.getDate()}日`;
+}
+
+/**
+ * ニュースの承認。
+ *
+ * ■ 何を見て決めるか
+ *   写真・開く先・いつからいつまで・出した人。この四つ。
+ *   出した人は、名前だけでなくログインのアドレスと権限も出す。
+ *   同姓同名がいるし、「その権限の人が出してよい知らせか」も
+ *   ここで見ることになる。
+ *
+ * ■ 開く先は、押して確かめられるようにする
+ *   写真だけ見て通すと、まったく別の所へ飛ばす知らせも通ってしまう。
+ *   別の窓で開けるようにしておく。
+ *
+ * ■ 断るときは理由を書く
+ *   出した人の画面に、そのまま出る。
+ *   「断られた」だけでは、直しようがない。
+ */
+function NewsApprove({ t: T }: { t: (ja: string) => string }) {
+  const [rows, setRows] = useState<NewsWait[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [can, setCan] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!supabaseReady) return;
+    const supabase = createClient();
+    try {
+      const a = await supabase.rpc("can_decide_news");
+      setCan(a.data === true);
+      if (a.data !== true) return;
+      const b = await supabase.rpc("news_waiting");
+      if (b.error) throw b.error;
+      setRows((b.data as NewsWait[]) ?? []);
+      setMsg(null);
+    } catch (e) {
+      setMsg(
+        e instanceof Error
+          ? `${e.message}（base/29_news.sql をまだ入れていない場合は、先に入れてください）`
+          : String(e),
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const decide = async (n: NewsWait, ok: boolean) => {
+    let why = "";
+    if (!ok) {
+      const v = window.prompt(
+        `「${n.title || n.url}」を断ります。${String.fromCharCode(10)}理由を書いてください（出した人に、そのまま出ます）`,
+        "",
+      );
+      if (v === null) return;
+      why = v;
+    } else if (!window.confirm(`「${n.title || n.url}」を出るようにします。よろしいですか？`)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_decide", {
+        p_id: n.id,
+        p_ok: ok,
+        p_reason: why,
+      });
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg(v.reason);
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!can) return null;
+
+  return (
+    <section className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-bold text-indigo-900">{T("ニュースの承認")}</span>
+        <span className="rounded-full bg-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-900">
+          {rows.length}
+        </span>
+      </div>
+
+      {msg && (
+        <p className="mt-1.5 rounded-lg bg-white px-2.5 py-2 text-[10px] leading-relaxed text-slate-700">
+          {msg}
+        </p>
+      )}
+
+      {rows.length === 0 ? (
+        <p className="mt-1.5 text-[10px] text-indigo-800">
+          {T("いま待っているものはありません。")}
+        </p>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {rows.map((n) => (
+            <li key={n.id} className="rounded-xl bg-white p-2.5 shadow-sm">
+              <div className="flex items-start gap-2.5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={n.image}
+                  alt=""
+                  className="h-20 w-28 shrink-0 rounded-lg object-cover ring-1 ring-slate-200"
+                />
+                <div className="min-w-0 flex-1">
+                  {n.title && (
+                    <div className="truncate text-xs font-bold text-slate-900">{n.title}</div>
+                  )}
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="mt-0.5 block truncate text-[10px] font-bold text-blue-700 underline"
+                  >
+                    {n.url}
+                  </a>
+                  <div className="mt-0.5 text-[10px] text-slate-600">
+                    {md(n.from_date)} 〜 {md(n.to_date)}
+                  </div>
+                  {/* 出した人。名前だけでなく、アドレスと権限も */}
+                  <div className="mt-1 rounded-lg bg-slate-50 px-2 py-1 text-[10px] leading-relaxed text-slate-600">
+                    {n.author_name || T("（名前なし）")}
+                    <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-700">
+                      {ROLE_LABEL[n.author_role as Role] ?? n.author_role}
+                    </span>
+                    <br />
+                    <span className="font-mono">{n.author_mail}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2 flex gap-1.5">
+                <button
+                  onClick={() => void decide(n, true)}
+                  disabled={busy}
+                  className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+                >
+                  {T("出るようにする")}
+                </button>
+                <button
+                  onClick={() => void decide(n, false)}
+                  disabled={busy}
+                  className="rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                >
+                  {T("断る")}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /**
  * その人が、申請のどこまで行ったか。
  *
@@ -842,6 +1022,15 @@ export default function AdminPage() {
     <Shell wide>
       <AdminHeader title={T("承認・権限の管理")} />
       <AdminMenu current="approve" role={myRole} />
+
+      {/*
+        ニュースの承認。人の承認より上に置く。
+
+        知らせには「いつからいつまで」がある。放っておくと、
+        出す日を過ぎてから通すことになる。待たせてよいものではないので、
+        目に入る場所に置く。決められる人（2.2・管理者）にだけ出る。
+      */}
+      <NewsApprove t={T} />
 
       {/* 申請してきた人 / 既存 */}
       <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1">
@@ -1757,7 +1946,7 @@ function Shell({ children, wide }: { children: React.ReactNode; wide?: boolean }
   return (
     // 本文は地図のために overflow-hidden。ここで送れるようにする
     <main className="h-[100dvh] overflow-y-auto bg-slate-100 p-4">
-      <div className={`mx-auto ${wide ? "max-w-2xl" : "max-w-sm"} rounded-2xl bg-white p-5 shadow-lg`}>
+      <div className={`mx-auto w-full ${wide ? "max-w-2xl lg:max-w-5xl" : "max-w-sm sm:max-w-2xl lg:max-w-4xl"} rounded-2xl bg-white p-5 shadow-lg`}>
         {children}
       </div>
     </main>

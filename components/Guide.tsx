@@ -28,7 +28,6 @@ import {
 import {
   ROLE_LABEL,
   ROLE_SHORT,
-  canReadFeedback,
   canViewCampusInfo,
   type Role,
 } from "@/lib/auth";
@@ -2250,24 +2249,13 @@ export default function Guide() {
             読めない権限の人には出さない。押せない行き先が並んでいても
             迷うだけなので、その人が使えるものだけを見せる。
           */}
-          {canReadFeedback(role) && (
-            <a
-              href="/admin/feedback"
-              className="mt-2 flex shrink-0 items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5 transition hover:bg-slate-200 active:scale-95"
-            >
-              <span className="text-base">✉</span>
-              <span className="min-w-0">
-                <span className="block text-xs font-bold text-slate-800">
-                  {T("みんなの感想")}
-                </span>
-                <span className="block text-[10px] text-slate-500">
-                  {T("使っている人から届いた声")}
-                </span>
-              </span>
-              <span className="ml-auto shrink-0 text-slate-400">›</span>
-            </a>
-          )}
+          {/*
+            みんなの感想への入口も、ここには置かない。
 
+            管理の行き先は、ログインの画面の並びにまとまっている。
+            地図の脇に増やしていくと、地図を見るための画面が
+            管理の道で埋まる。学内の情報を見に来た人には要らない。
+          */}
           {/*
             履歴への入口は、ここには置かない。
 
