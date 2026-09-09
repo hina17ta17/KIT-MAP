@@ -39,6 +39,7 @@ import {
   CLASS_NOS,
   DEPT_MAX,
   GRADES,
+  canManage,
   canManageAll,
   canReadRoster,
   type Role,
@@ -1303,8 +1304,17 @@ export default function CampusPage() {
    * ■ 同じ名前は入れない
    *   二つあると、リーダーも予定もどちらに付いたのか分からなくなる。
    *   先に在るかを見て、あればそう伝える。
+   *
+   * ■ できるのはレベル2.2 と管理者だけ
+   *   欄そのものを 2.1 には出していないが、ここでも見ている。
+   *   画面の出し分けは、押せるかどうかを決めるものではない。
+   *   本当に止めているのはデータベース側（base/30_club_add.sql）。
    */
   const addActivity = async () => {
+    if (!canManage(role)) {
+      setMsg({ kind: "err", text: "課外活動を増やせるのは、レベル2.2 と管理者だけです。" });
+      return;
+    }
     const name = newActName.trim();
     if (newActCat === null) {
       setMsg({ kind: "err", text: "何系の活動かを選んでください。" });
@@ -2470,7 +2480,14 @@ export default function CampusPage() {
 
               一覧に無いものは、リーダーも予定も学内の情報も扱えない。
               新しい同好会ができたときに、ここから足せるようにしておく。
+
+              ■ 出すのはレベル2.2 と管理者だけ
+                この画面じたいは 2.1 も開けるが、団体を増やす欄は出さない。
+                増やしたものは消すのが難しい（リーダーも予定もぶら下がる）ので、
+                人の権限に触れられるのと同じ顔ぶれに合わせてある。
+                データベース側も base/30_club_add.sql で同じ所に締めてある。
             */}
+            {canManage(role) && (
             <div className="mt-2 rounded-xl bg-emerald-50 p-2.5">
               <div className="text-[10px] font-bold text-emerald-800">
                 {T("課外活動そのものを増やす")}
@@ -2507,6 +2524,7 @@ export default function CampusPage() {
                 {T("増やすと、リーダーの名簿・予定の登録・学内の情報の三つに出てきます。")}
               </p>
             </div>
+            )}
 
             {/* 入れる */}
             <div className="mt-2 rounded-xl bg-slate-50 p-2.5">
