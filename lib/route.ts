@@ -1,7 +1,13 @@
 /**
  * 経路探索。
  *
- * チェックポイントを節点、接続を辺とするグラフを A* で解く。
+ * チェックポイントを節点、接続を辺とするグラフで、いちばん短い道すじを探す。
+ *
+ * 案内で使っているのは findBestPath（ダイクストラ）。建物には出入口が
+ * いくつもあるので、出発側の出入口すべてから同時に広げて、目的側で最初に
+ * 着いた出入口を選ぶ。findPath（A*）は一対一の探し方として残してあるが、
+ * いまは画面からは呼んでいない。
+ *
  * いまは節点 4,177・辺 4,414（2026-09-10 時点の public/data）。
  * この大きさなら、外部ライブラリを使わず自前で持てる。
  * 依存が減るぶん、型の食い違いやビルドの失敗も起きない。
@@ -160,13 +166,24 @@ export function findPath(graph: Graph, from: string, to: string): string[] | nul
  *
  * ■ 進め方
  *   出発側の出入口すべてを距離0として同時に広げる（多点始点）。
- *   一度広げれば、すべての点への最短距離が分かるので、
- *   そこから目的側の出入口のうち最短のものを選ぶ。
+ *   近い順に一つずつ確定させ、目的側の出入口のどれかを
+ *   確定させたところで止める。近い順に確定するので、
+ *   最初に確定した目的側の出入口が、そのままいちばん近いものになる。
  *   出入口の数が増えても探索は一度で済む。
  *
- *   ここでは推定値を使わない素直な広げ方（ダイクストラ）にしている。
- *   行き先が複数あると推定値の置き方が難しくなるうえ、
- *   648点では速さの差が出ないため。
+ *   推定値を使わない素直な広げ方（ダイクストラ）にしている。
+ *   行き先が複数あると、推定値の置き方が難しくなるため。
+ *
+ * ■ 速さ（2026-09-11 に直した）
+ *   前は、次に確定させる点を「候補を毎回ぜんぶ見比べて」選び、
+ *   目的地に着いたあとも網の端まで広げきっていた。
+ *   648点の網ではそれで差が出なかったが、いまは 4,177点ある。
+ *   目的地を押したときの画面の組み直しの中でこれが走り、
+ *   スマホ相当の速さで一回 30ms ほど、画面が止まっていた。
+ *
+ *   いまは候補を下の MinHeap に積んで小さい順に取り出し、着いたら止める。
+ *   本物の地図データで 600通り（中を通る網・外だけの網 各300）比べて、
+ *   距離も道すじもすべて前と同じ。平均で 4〜5倍速い。
  */
 export function findBestPath(
   graph: Graph,
@@ -180,24 +197,25 @@ export function findBestPath(
   const dist = new Map<string, number>();
   const prev = new Map<string, string>();
   const done = new Set<string>();
-  const open = new Map<string, number>();
+  const heap = new MinHeap();
   for (const s of starts) {
     dist.set(s, 0);
-    open.set(s, 0);
+    heap.push(0, s);
   }
 
-  while (open.size) {
-    // 節点が少ないので、優先度付きキューは使わず毎回いちばん小さいものを探す
-    let cur = "";
-    let curD = Infinity;
-    for (const [id, d] of open) {
-      if (d < curD) {
-        curD = d;
-        cur = id;
-      }
-    }
-    open.delete(cur);
+  let best: string | null = null;
+  while (heap.size > 0) {
+    const curD = heap.topKey();
+    const cur = heap.pop();
+    // 距離を縮めるたびに積み直しているので、同じ点が何度も出てくる。確定済みなら捨てる
+    if (done.has(cur)) continue;
     done.add(cur);
+
+    // 近い順に確定するので、最初に確定した目的側の出入口がいちばん近い
+    if (goals.has(cur)) {
+      best = cur;
+      break;
+    }
 
     for (const e of graph.adj.get(cur) ?? []) {
       if (done.has(e.to)) continue;
@@ -205,19 +223,8 @@ export function findBestPath(
       if (nd < (dist.get(e.to) ?? Infinity)) {
         dist.set(e.to, nd);
         prev.set(e.to, cur);
-        open.set(e.to, nd);
+        heap.push(nd, e.to);
       }
-    }
-  }
-
-  // 目的側の出入口のうち、いちばん近いもの
-  let best: string | null = null;
-  let bestD = Infinity;
-  for (const g of goals) {
-    const d = dist.get(g);
-    if (d != null && d < bestD) {
-      bestD = d;
-      best = g;
     }
   }
   if (!best) return null;
@@ -230,7 +237,70 @@ export function findBestPath(
     path.unshift(p);
     cur = p;
   }
-  return { path, meters: bestD };
+  return { path, meters: dist.get(best) ?? 0 };
+}
+
+/**
+ * 小さい順に取り出す山（二分ヒープ）。findBestPath の候補置き場。
+ *
+ * 距離を縮めた点は、古いものを消さずに新しく積む。
+ * 山の途中から探して消すより、積んで、取り出したときに捨てるほうが速い。
+ */
+class MinHeap {
+  private keys: number[] = [];
+  private vals: string[] = [];
+
+  get size(): number {
+    return this.keys.length;
+  }
+
+  /** いちばん小さい距離。空のときに呼ばないこと */
+  topKey(): number {
+    return this.keys[0];
+  }
+
+  push(key: number, val: string): void {
+    const k = this.keys;
+    const v = this.vals;
+    let i = k.length;
+    k.push(key);
+    v.push(val);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (k[p] <= key) break;
+      k[i] = k[p];
+      v[i] = v[p];
+      i = p;
+    }
+    k[i] = key;
+    v[i] = val;
+  }
+
+  /** いちばん小さいものを取り出す。空のときに呼ばないこと */
+  pop(): string {
+    const k = this.keys;
+    const v = this.vals;
+    const top = v[0];
+    const lastK = k.pop()!;
+    const lastV = v.pop()!;
+    const n = k.length;
+    if (n > 0) {
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        if (l >= n) break;
+        const r = l + 1;
+        const c = r < n && k[r] < k[l] ? r : l;
+        if (k[c] >= lastK) break;
+        k[i] = k[c];
+        v[i] = v[c];
+        i = c;
+      }
+      k[i] = lastK;
+      v[i] = lastV;
+    }
+    return top;
+  }
 }
 
 /* ---------------- 案内文 ---------------- */
