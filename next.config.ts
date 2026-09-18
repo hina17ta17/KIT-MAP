@@ -5,6 +5,26 @@ const DEV = process.env.NODE_ENV === "development";
 
 const nextConfig: NextConfig = {
   /*
+   * 作業の根っこを、このフォルダに固定する。
+   *
+   * ■ 何が起きたか
+   *   Next.js は package-lock.json を探して「作業の根っこ」を決める。
+   *   ホームフォルダ（C:\Users\…）に中身の無い package-lock.json が
+   *   一つできていると、そちらを根っこだと判断してしまう。
+   *
+   *   すると内部の名前に、途中のフォルダ名「プログラミング」が入る。
+   *   Turbopack はその名前をバイト数で切るので、日本語の途中で切れて
+   *   組み立てが落ちる（start byte index 8 is not a char boundary）。
+   *   実際に、これで手元の `next build` が通らなくなった。
+   *
+   * ■ なぜここで直すか
+   *   よそのフォルダに置かれたファイルに、こちらの組み立てが
+   *   左右されないようにするため。置き場所を片づけて直すこともできるが、
+   *   また誰かが npm を別の場所で動かせば同じことが起きる。
+   */
+  outputFileTracingRoot: __dirname,
+
+  /*
    * 作図ツール（/edit）は手元でだけ動かす。
    *
    * ページとして認めるファイルの種類を、開発中だけ増やす。
