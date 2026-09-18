@@ -201,8 +201,22 @@ export function rankOf(text: string, query: string): number {
  *
  * 完全一致 → 前方一致 → 部分一致 の順に並べる。
  * あいまい検索のライブラリを使わずに済むよう、表記ゆれは normalize で吸収する。
+ *
+ * ■ 付け替えた名前でも探せる
+ *   カスタマイズで「41号館」を「夢考房」にした人の画面では、地図にも
+ *   建物一覧にも「夢考房」と出ている。それなのに案内の欄で「夢考房」と
+ *   打って出てこないと、**画面に見えている名前で探せない**ことになる。
+ *
+ *   names に「建物ID → 付け替えた名前」を渡すと、その名前でも当たり、
+ *   一覧にもその名前で出る。元の名前（41号館）でも今までどおり当たる。
+ *   どちらで覚えている人も探せるよう、両方を候補にしてある。
  */
-export function search(data: AppData, query: string, limit = 8): SearchHit[] {
+export function search(
+  data: AppData,
+  query: string,
+  limit = 8,
+  names: Record<string, string> = {},
+): SearchHit[] {
   const q = normalize(query);
   if (!q) return [];
 
@@ -218,29 +232,36 @@ export function search(data: AppData, query: string, limit = 8): SearchHit[] {
 
   for (const b of data.buildings.features) {
     const p = b.properties;
-    const cands = [p.name, p.code, p.code ? `${p.code}号館` : ""].filter(Boolean);
+    const original = p.name || (p.code ? `${p.code}号館` : "");
+    const mine = (names[p.tempId] ?? "").trim();
+    const cands = [mine, p.name, p.code, p.code ? `${p.code}号館` : ""].filter(Boolean);
     let best = -1;
     for (const c of cands) {
       const r = rank(normalize(c));
       if (r >= 0 && (best < 0 || r < best)) best = r;
     }
     if (best >= 0) {
-      hits.push({ buildingId: p.tempId, title: p.name || `${p.code}号館`, sub: "", score: best });
+      /* 出す名前は、付け替えてあればそちら。画面に見えているものと揃える */
+      hits.push({ buildingId: p.tempId, title: mine || original, sub: "", score: best });
     }
   }
 
   const buildingName = new Map(
-    data.buildings.features.map((b) => [
-      b.properties.tempId,
-      b.properties.name || `${b.properties.code}号館`,
-    ]),
+    data.buildings.features.map((b) => {
+      const p = b.properties;
+      const orig = p.name || `${p.code}号館`;
+      const mine = (names[p.tempId] ?? "").trim();
+      return [p.tempId, { orig, mine, shown: mine || orig }];
+    }),
   );
 
   for (const r of data.rooms) {
     const bn = buildingName.get(r.buildingId);
     if (!bn) continue;
     // 「23302」「302」「情報演習室」「23号館302」のどれでも当たるようにする
-    const cands = [r.code, r.name, `${bn}${r.code}`, `${bn}${r.name}`].filter(Boolean);
+    const cands = [r.code, r.name, `${bn.orig}${r.code}`, `${bn.orig}${r.name}`].filter(Boolean);
+    // 付け替えた名前でも当たるようにする（「夢考房302」など）
+    if (bn.mine) cands.push(`${bn.mine}${r.code}`, `${bn.mine}${r.name}`);
     let best = -1;
     for (const c of cands) {
       const rk = rank(normalize(c));
@@ -250,7 +271,7 @@ export function search(data: AppData, query: string, limit = 8): SearchHit[] {
       hits.push({
         buildingId: r.buildingId,
         // 部屋番号は "23-220" のように号館まで含むので、号館名を重ねない
-        title: r.code ? `${r.code} ${r.name}`.trim() : `${bn} ${r.name}`,
+        title: r.code ? `${r.code} ${r.name}`.trim() : `${bn.shown} ${r.name}`,
         sub: floorText(r.floor),
         // 部屋は建物より少し後ろに出す
         score: best + 0.5,

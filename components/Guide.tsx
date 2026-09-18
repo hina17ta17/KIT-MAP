@@ -2900,6 +2900,7 @@ export default function Guide() {
               onPick={(h) => setOrigin({ kind: "place", hit: h })}
               favs={favHits}
               lang={lang}
+              names={custom.names}
             />
             <div className="h-2" />
             <Field
@@ -2909,6 +2910,7 @@ export default function Guide() {
               onPick={(h) => setDest(h)}
               favs={favHits}
               lang={lang}
+              names={custom.names}
             />
 
             {/* 教室は承認された人だけが見られる。未ログインには理由を伝える */}
@@ -3053,6 +3055,7 @@ function Field({
   onPick,
   favs,
   lang,
+  names,
 }: {
   label: string;
   data: AppData;
@@ -3062,11 +3065,19 @@ function Field({
   onPick: (h: SearchHit) => void;
   favs: SearchHit[];
   lang: Lang;
+  /**
+   * 付け替えた名前（建物ID → その人が付けた名前）。
+   *
+   * 地図と建物一覧は付け替えた名前で出しているので、
+   * ここで探すときも同じ名前で当たらないと、
+   * 画面に見えている名前で探せないことになる。
+   */
+  names: Record<string, string>;
 }) {
   const T = (ja: string) => t(lang, ja);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
-  const hits = useMemo(() => (q ? search(data, q) : []), [data, q]);
+  const hits = useMemo(() => (q ? search(data, q, 8, names) : []), [data, q, names]);
 
   /**
    * 出すお気に入り。
