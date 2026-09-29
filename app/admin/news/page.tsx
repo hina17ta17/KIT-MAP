@@ -180,6 +180,46 @@ export default function NewsPage() {
     }
   };
 
+  /**
+   * 控えを消す。
+   *
+   * 取り下げても行は残る（state が gone になるだけ）ので、
+   * 出したもの の一覧に古いものが並び続ける。ここで消せるようにする。
+   * 消せるのは、取り下げたものと断られたものだけ（SQL 側でも見ている）。
+   */
+  const forget = async (n: Mine) => {
+    if (!window.confirm(`「${n.title || n.url}」の控えを消します。元には戻せません。`)) return;
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_forget", { p_id: n.id });
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 取り下げ・断られたものを、まとめて消す */
+  const forgetAll = async () => {
+    if (!window.confirm("取り下げたものと断られたものの控えを、まとめて消します。元には戻せません。")) return;
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_forget_done");
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!ready) return null;
 
   if (!can) {
@@ -331,7 +371,19 @@ export default function NewsPage() {
 
       {/* 出したもの */}
       <div className="mt-5">
-        <div className="text-[11px] font-bold text-slate-700">{T("出したもの")}</div>
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="text-[11px] font-bold text-slate-700">{T("出したもの")}</div>
+          {/* 済んだものが溜まってきたときだけ出す */}
+          {mine.some((n) => n.state === "gone" || n.state === "no") && (
+            <button
+              onClick={() => void forgetAll()}
+              disabled={busy}
+              className="rounded-lg px-2 py-1 text-[10px] font-bold text-slate-500 transition hover:bg-slate-100 active:scale-95 disabled:text-slate-300"
+            >
+              {T("済んだものをまとめて消す")}
+            </button>
+          )}
+        </div>
         <ul className="mt-1.5 flex flex-col gap-1.5">
           {mine.map((n) => {
             const st = STATE[n.state] ?? { label: n.state, cls: "bg-slate-100 text-slate-600" };
@@ -368,6 +420,15 @@ export default function NewsPage() {
                     className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-bold text-red-600 transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
                   >
                     {T("取り下げる")}
+                  </button>
+                )}
+                {(n.state === "gone" || n.state === "no") && (
+                  <button
+                    onClick={() => void forget(n)}
+                    disabled={busy}
+                    className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-bold text-slate-500 transition hover:bg-slate-200 active:scale-95 disabled:text-slate-300"
+                  >
+                    {T("消す")}
                   </button>
                 )}
               </li>

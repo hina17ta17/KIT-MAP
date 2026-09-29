@@ -671,6 +671,7 @@ const EN: Record<string, string> = {
   お知らせ: "News",
   "横に送って見られます": "Swipe sideways",
   "ニュースを入れる": "Post news",
+  済んだものをまとめて消す: "Clear finished ones",
   "写真と開く先を決めて申請する": "Choose a photo and a link, then apply",
   "ニュースを入れられるのは、学生と承認待ち以外の人です。":
     "Only people other than students and those awaiting approval can post news.",
