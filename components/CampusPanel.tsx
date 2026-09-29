@@ -1142,6 +1142,23 @@ function useMe(): { me: Mine | null | undefined; reload: () => Promise<void> } {
       setMe(null);
       return;
     }
+    /*
+     * 本人確認の印を、認証アプリの実体に合わせてから読む。
+     *
+     * 印（profiles.verified）は申請の画面の④を通ったときに立つ。
+     * ところが、そこで通信が切れた人や、データベースから直に権限を
+     * 付けた人には立っていない。認証アプリは登録されているのに
+     * 「本人確認がまだ」と出て、教職課程も課外活動リーダーも申請できない。
+     * しかも申請の画面は登録済みのものを作り直さないので、自力で直せない。
+     *
+     * 読む前に直しておけば、その場で正しい様子になる。
+     * まだ base/32 を入れていないときは、黙って今までどおり動く。
+     */
+    try {
+      await supabase.rpc("sync_verified");
+    } catch {
+      /* 直せなくても、下の読み込みは続ける */
+    }
     const { data } = await supabase.from("profiles").select("*").eq("id", u.user.id).single();
     const p = (data ?? {}) as Record<string, unknown>;
     setMe({

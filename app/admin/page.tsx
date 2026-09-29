@@ -458,6 +458,23 @@ export default function AdminPage() {
     setMyRole(role);
 
     if (canManage(role)) {
+      /*
+       * 一覧を出す前に、本人確認の印のずれを直す。
+       *
+       * 印（profiles.verified）は申請の画面の④で立つが、そこで通信が
+       * 切れた人や、データベースから直に権限を付けた人には立っていない。
+       * 認証アプリは登録されているのに「本人確認まだ」と並び、承認できない。
+       * 本人の画面からも直せない（登録済みのものは作り直さないため）。
+       *
+       * ここで実体（認証アプリ）を見て印を直すと、その人の申請は
+       * kit-agent がもう一度見るので、止まっていたぶんも動き出す。
+       * まだ base/32 を入れていないときは、黙って今までどおり動く。
+       */
+      try {
+        await supabase.rpc("sync_verified_all");
+      } catch {
+        /* 直せなくても、一覧は出す */
+      }
       // 列を並べずに取る。010 を流す前でも落ちないようにするため
       const { data } = await supabase.from("profiles").select("*").order("created_at");
       setRows((data as Row[]) ?? []);
