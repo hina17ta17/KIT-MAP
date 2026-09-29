@@ -18,6 +18,15 @@
  * ■ 誰が通すか
  *   レベル2.2 と管理者。承認・権限の画面のほうで決める。
  *   出す人と通す人を分けておかないと、自分で出して自分で通せる。
+ *
+ * ■ 出したあとでも、写真は替えられる
+ *   写真を間違えた、貼り紙が新しくなった。それだけのことで
+ *   取り下げて出し直すと、直している間は地図から消える。
+ *   「出したもの」の一枚ごとに、写真だけを替えられるようにしてある。
+ *
+ *   出ているものは、通るまで今の写真のまま出続ける。
+ *   地図の入口に出る一枚なので、差し替えももう一度見てもらう。
+ *   （通ったあとに黙って替えられるなら、承認の意味が無くなる）
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -38,6 +47,9 @@ type Mine = {
   to_date: string;
   state: "waiting" | "live" | "no" | "gone";
   reason: string;
+  /** 差し替えを待っている写真。空なら差し替え中ではない */
+  next_image: string;
+  swap_at: string | null;
   decided_mail: string;
   decided_at: string | null;
   created_at: string;
@@ -78,6 +90,8 @@ export default function NewsPage() {
   const [to, setTo] = useState(today(14));
 
   const [mine, setMine] = useState<Mine[]>([]);
+  /** いま写真を差し替えている一枚（送っている間だけ） */
+  const [swapId, setSwapId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -209,6 +223,66 @@ export default function NewsPage() {
     setBusy(true);
     try {
       const { data, error } = await createClient().rpc("news_forget_done");
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 出したものの写真を、あとから差し替える。
+   *
+   * 出ているものは、通るまで今の写真のまま出続ける（SQL 側でそうしている）。
+   * 取り下げて出し直すのと違い、直している間も知らせは消えない。
+   *
+   * 承認待ちのものは、その場で入れ替わる。まだ誰も見ていないので、
+   * 待たせる意味がない。断られたものは、替えるとまた承認へ回る。
+   */
+  const swapPhoto = async (n: Mine, file: File | null) => {
+    if (!file) return;
+    setSwapId(n.id);
+    setMsg(null);
+    try {
+      const r = await shrinkPhoto(file);
+      if (!r.ok) {
+        setMsg({ kind: "err", text: r.why });
+        return;
+      }
+      const { data, error } = await createClient().rpc("news_photo", {
+        p_id: n.id,
+        p_image: r.data,
+      });
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
+      if (v.ok) {
+        noteEvent("system", "ニュースの写真を差し替えました", { id: n.id, state: n.state });
+        await load();
+      }
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text:
+          e instanceof Error
+            ? `${e.message}（base/33_news_photo.sql をまだ入れていない場合は、先に入れてください）`
+            : String(e),
+      });
+      noteError("system", "ニュースの写真を差し替えられませんでした", e);
+    } finally {
+      setSwapId(null);
+    }
+  };
+
+  /** 差し替えをやめる。出ているものは、いまの写真のままになる */
+  const cancelSwap = async (n: Mine) => {
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_photo_cancel", { p_id: n.id });
       if (error) throw error;
       const v = data as { ok: boolean; reason: string };
       setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
@@ -384,6 +458,11 @@ export default function NewsPage() {
             </button>
           )}
         </div>
+        {mine.length > 0 && (
+          <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+            {T("写真は、出したあとでも差し替えられます。出ているものは、通るまで今の写真のままです。")}
+          </p>
+        )}
         <ul className="mt-1.5 flex flex-col gap-1.5">
           {mine.map((n) => {
             const st = STATE[n.state] ?? { label: n.state, cls: "bg-slate-100 text-slate-600" };
@@ -410,6 +489,55 @@ export default function NewsPage() {
                   {n.reason && (
                     <div className="mt-0.5 text-[10px] leading-relaxed text-red-700">
                       {n.reason}
+                    </div>
+                  )}
+
+                  {/*
+                    写真の差し替え。取り下げたものは替えられない（出し直してもらう）。
+                    待っている差し替えがあるときは、その写真を見せて、やめられるようにする。
+                  */}
+                  {n.state !== "gone" && (
+                    <div className="mt-1.5">
+                      {n.next_image ? (
+                        <div className="flex items-center gap-1.5 rounded-lg bg-white p-1.5 ring-1 ring-amber-200">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={n.next_image}
+                            alt=""
+                            className="h-10 w-14 shrink-0 rounded object-cover ring-1 ring-slate-200"
+                          />
+                          <div className="min-w-0 flex-1 text-[10px] leading-relaxed text-amber-900">
+                            {T("この写真に差し替えるところです。通るまでは、いまの写真が出ます。")}
+                          </div>
+                          <button
+                            onClick={() => void cancelSwap(n)}
+                            disabled={busy}
+                            className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-500 transition hover:bg-slate-100 active:scale-95 disabled:text-slate-300"
+                          >
+                            {T("やめる")}
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-50">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              void swapPhoto(n, e.target.files?.[0] ?? null);
+                              e.target.value = "";
+                            }}
+                            disabled={busy || swapId === n.id}
+                          />
+                          {swapId === n.id
+                            ? T("小さくしています…")
+                            : n.state === "no"
+                              ? T("写真を替えて出し直す")
+                              : n.state === "waiting"
+                                ? T("写真を替える")
+                                : T("写真を差し替える")}
+                        </label>
+                      )}
                     </div>
                   )}
                 </div>

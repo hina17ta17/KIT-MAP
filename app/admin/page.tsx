@@ -166,6 +166,23 @@ type NewsWait = {
   created_at: string;
 };
 
+/** 写真の差し替えを待っているニュース */
+type NewsSwap = {
+  id: number;
+  /** いま出ている写真 */
+  image: string;
+  /** これから出したい写真 */
+  next_image: string;
+  url: string;
+  title: string;
+  from_date: string;
+  to_date: string;
+  author_mail: string;
+  author_name: string;
+  author_role: string;
+  swap_at: string | null;
+};
+
 /** 2026-09-09 → 9月9日 */
 function md(d: string): string {
   const x = new Date(d);
@@ -188,9 +205,20 @@ function md(d: string): string {
  * ■ 断るときは理由を書く
  *   出した人の画面に、そのまま出る。
  *   「断られた」だけでは、直しようがない。
+ *
+ * ■ 写真の差し替えも、ここで見る
+ *   通ったあとに出した人が写真を替えたいときは、差し替えとして出てくる。
+ *   通るまでは、いまの写真が出たままになっている（知らせは消えない）。
+ *
+ *   ★ いまの写真と新しい写真を、並べて出す。
+ *     新しいほうだけ見ても、何がどう変わるのか分からない。
+ *     おとなしい写真で通してから中身を入れ替える、という手を
+ *     止めるためにある仕組みなので、見比べられることが要る。
  */
 function NewsApprove({ t: T }: { t: (ja: string) => string }) {
   const [rows, setRows] = useState<NewsWait[]>([]);
+  /** 写真の差し替えを待っているもの */
+  const [swaps, setSwaps] = useState<NewsSwap[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [can, setCan] = useState(false);
@@ -205,6 +233,12 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
       const b = await supabase.rpc("news_waiting");
       if (b.error) throw b.error;
       setRows((b.data as NewsWait[]) ?? []);
+      /*
+       * 写真の差し替え。33 をまだ入れていないときは、ここだけ静かに見送る。
+       * 承認そのものは 29 だけで動くので、止める理由がない。
+       */
+      const c = await supabase.rpc("news_swaps");
+      setSwaps(c.error ? [] : ((c.data as NewsSwap[]) ?? []));
       setMsg(null);
     } catch (e) {
       setMsg(
@@ -234,6 +268,44 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
     setBusy(true);
     try {
       const { data, error } = await createClient().rpc("news_decide", {
+        p_id: n.id,
+        p_ok: ok,
+        p_reason: why,
+      });
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg(v.reason);
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 写真の差し替えを決める。
+   *
+   * 通すと、その場で出る写真が入れ替わる。
+   * 断ると新しい写真は捨てられ、いまの写真のまま出続ける。
+   */
+  const decideSwap = async (n: NewsSwap, ok: boolean) => {
+    let why = "";
+    if (!ok) {
+      const v = window.prompt(
+        `「${n.title || n.url}」の写真の差し替えを断ります。${String.fromCharCode(10)}理由を書いてください（出した人に、そのまま出ます）`,
+        "",
+      );
+      if (v === null) return;
+      why = v;
+    } else if (
+      !window.confirm(`「${n.title || n.url}」の写真を、新しいものに入れ替えます。よろしいですか？`)
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_swap_decide", {
         p_id: n.id,
         p_ok: ok,
         p_reason: why,
@@ -327,6 +399,97 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* 写真の差し替え。待っているものがあるときだけ出す */}
+      {swaps.length > 0 && (
+        <div className="mt-3 border-t border-indigo-200 pt-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-indigo-900">{T("写真の差し替え")}</span>
+            <span className="rounded-full bg-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-900">
+              {swaps.length}
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] leading-relaxed text-indigo-800">
+            {T("通るまでは、いまの写真が出ています。")}
+          </p>
+
+          <ul className="mt-2 flex flex-col gap-2">
+            {swaps.map((n) => (
+              <li key={n.id} className="rounded-xl bg-white p-2.5 shadow-sm">
+                {/* いまの写真と、これから出す写真を並べる */}
+                <div className="flex items-start gap-1.5">
+                  <div className="min-w-0 flex-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={n.image}
+                      alt=""
+                      className="h-20 w-full rounded-lg object-cover ring-1 ring-slate-200"
+                    />
+                    <div className="mt-0.5 text-center text-[9px] font-bold text-slate-400">
+                      {T("いまの写真")}
+                    </div>
+                  </div>
+                  <span className="self-center text-sm font-bold text-slate-400">→</span>
+                  <div className="min-w-0 flex-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={n.next_image}
+                      alt=""
+                      className="h-20 w-full rounded-lg object-cover ring-2 ring-indigo-300"
+                    />
+                    <div className="mt-0.5 text-center text-[9px] font-bold text-indigo-700">
+                      {T("新しい写真")}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-1.5">
+                  {n.title && (
+                    <div className="truncate text-xs font-bold text-slate-900">{n.title}</div>
+                  )}
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="mt-0.5 block truncate text-[10px] font-bold text-blue-700 underline"
+                  >
+                    {n.url}
+                  </a>
+                  <div className="mt-0.5 text-[10px] text-slate-600">
+                    {md(n.from_date)} 〜 {md(n.to_date)}
+                  </div>
+                  {/* 出した人。差し替えでも、誰が替えたいのかは同じだけ大事 */}
+                  <div className="mt-1 rounded-lg bg-slate-50 px-2 py-1 text-[10px] leading-relaxed text-slate-600">
+                    {n.author_name || T("（名前なし）")}
+                    <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-700">
+                      {ROLE_LABEL[n.author_role as Role] ?? n.author_role}
+                    </span>
+                    <br />
+                    <span className="font-mono">{n.author_mail}</span>
+                  </div>
+                </div>
+
+                <div className="mt-2 flex gap-1.5">
+                  <button
+                    onClick={() => void decideSwap(n, true)}
+                    disabled={busy}
+                    className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+                  >
+                    {T("差し替えを通す")}
+                  </button>
+                  <button
+                    onClick={() => void decideSwap(n, false)}
+                    disabled={busy}
+                    className="rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                  >
+                    {T("断る")}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   );

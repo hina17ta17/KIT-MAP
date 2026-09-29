@@ -702,6 +702,21 @@ const EN: Record<string, string> = {
   断る: "Turn down",
   "（名前なし）": "(no name)",
 
+  /* ニュースの写真の差し替え */
+  "写真を差し替える": "Replace the photo",
+  "写真を替える": "Change the photo",
+  "写真を替えて出し直す": "Change the photo and apply again",
+  "この写真に差し替えるところです。通るまでは、いまの写真が出ます。":
+    "Waiting to change to this photo. Until it is approved, the current photo stays up.",
+  "写真は、出したあとでも差し替えられます。出ているものは、通るまで今の写真のままです。":
+    "Photos can be replaced after posting. For live ones, the current photo stays up until the change is approved.",
+  "写真の差し替え": "Photo changes",
+  "いまの写真": "Now",
+  "新しい写真": "New",
+  "差し替えを通す": "Approve the change",
+  "差し替えを待っているものはありません。": "No photo changes are waiting.",
+  "通るまでは、いまの写真が出ています。": "Until it is approved, the current photo stays up.",
+
   /* 課外活動のお気に入り */
   "お気に入りに入れる": "Add to favorites",
   "お気に入りから外す": "Remove from favorites",
