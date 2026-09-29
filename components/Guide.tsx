@@ -2284,7 +2284,22 @@ export default function Guide() {
           出発地の帯だけは素通しにしてある。読むためのもので、
           押す先が「やめる」しか無いため。
       */}
-      <div className="absolute left-4 top-4 z-10 flex w-fit max-w-[16rem] flex-col items-start gap-2">
+      {/*
+        左の列の重なり順は 7。
+
+        ■ なぜ 7 か
+          地図に重ねた建物の名前（6）より上、下からせり上がる
+          建物一覧（10）より下。この間にしか置けない。
+
+          名前より下にすると、現在地や案内のボタンの上に
+          建物の名前が乗ってしまう。
+          一覧より上にすると、現在地が取れないときに出る説明の札が
+          一覧に重なって、どちらも読めなくなる。実際にそうなっていた。
+
+          一覧は開いても画面の 58% までなので、この列の上のほうに
+          ある現在地・案内・お気に入りは、開いたままでも押せる。
+      */}
+      <div className="absolute left-4 top-4 z-[7] flex w-fit max-w-[16rem] flex-col items-start gap-2">
         {/* 現在地と、その状態を横に並べる。
             状態を下の段に置くと、地図が見える面積を余計に削るため */}
         <div className="flex items-center gap-1.5">
