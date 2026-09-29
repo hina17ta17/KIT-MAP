@@ -710,6 +710,20 @@ const EN: Record<string, string> = {
     "Waiting to change to this photo. Until it is approved, the current photo stays up.",
   "写真は、出したあとでも差し替えられます。出ているものは、通るまで今の写真のままです。":
     "Photos can be replaced after posting. For live ones, the current photo stays up until the change is approved.",
+  /* kit-agent の履歴の絞りこみ */
+  身分: "Standing",
+  "絞りをやめる": "Clear filters",
+  "名前・アドレス・8桁の番号で探す": "Search by name, address or 8-digit number",
+  "どの学年も": "Any year",
+  "どの学科も": "Any department",
+  "どのクラスも": "Any class",
+  "どの身分も": "Any standing",
+  "この絞りこみに当たるものはありません。": "Nothing matches these filters.",
+  "絞りを外すと、ぜんぶ出ます。": "Clear the filters to see everything.",
+  "学年・学科・クラス・身分での絞りこみは、データベースに base/34_agent_find.sql を入れると使えるようになります。":
+    "Filtering by year, department, class and standing needs base/34_agent_find.sql in the database.",
+  "席が消えた人は、学年や学科では出てきません（アドレスでは探せます）。":
+    "People whose account is gone cannot be filtered by year or department (you can still search their address).",
   "写真の差し替え": "Photo changes",
   "いまの写真": "Now",
   "新しい写真": "New",

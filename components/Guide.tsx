@@ -1310,6 +1310,69 @@ export default function Guide() {
   const geoMutedRef = useRef(false);
   geoMutedRef.current = geoMuted;
 
+  /**
+   * 最新の ensureWatch を持ち回す。
+   *
+   * 起動時に聞く効果は一度しか走らない。許可の状態を訊いている間に
+   * 画面が描き直されると、その効果が掴んでいるものは古くなる。
+   * 呼ぶ時点の新しいほうを使う。
+   *
+   * ★書き込みは効果の中で行う（描いている最中に ref を触らない）
+   */
+  const ensureRef = useRef(ensureWatch);
+  useEffect(() => {
+    ensureRef.current = ensureWatch;
+  }, [ensureWatch]);
+  /** 起動時に一度だけ聞く。二度聞かないための印 */
+  const asked = useRef(false);
+
+  /**
+   * 起動したときに、現在地を聞く。
+   *
+   * ■ なぜ起動時にするか
+   *   これまでは現在地のボタンを押したときだけ聞いていた。
+   *   ところが地図を開いた人がまず知りたいのは、たいてい
+   *   「いま自分がどこに居るか」である。押すまで出ないので、
+   *   現在地が出ない地図に見えていた。
+   *
+   * ■ すでに答えを持っている人には、聞かない
+   *   許可済み … 窓は出ない。そのまま追従を始める
+   *   拒否済み … 聞いても窓は出ない。押したときに直し方を出す
+   *              （拒否は別の効果が見ていて、知らせのほうに出る）
+   *   まだ     … ここで窓が出る
+   *
+   * ■ 起動画面が閉じてから聞く
+   *   タイトルが出ている最中に窓を重ねると、何を聞かれているのか
+   *   分からない。地図が見えてから聞く。
+   *
+   * ■ 「使わない」と閉じた人には、蒸し返さない
+   *   同じ画面を開いている間は、こちらから聞き直さない。
+   */
+  useEffect(() => {
+    if (splash !== "done" || asked.current) return;
+    asked.current = true;
+    if (typeof window === "undefined" || !window.isSecureContext) return;
+    if (!navigator.geolocation) return;
+
+    const go = () => {
+      if (!geoMutedRef.current) ensureRef.current();
+    };
+
+    const perms = navigator.permissions;
+    if (!perms?.query) {
+      // 古い Safari には許可の状態を訊けない。聞けば窓が出るので、そのまま聞く
+      go();
+      return;
+    }
+    void perms
+      .query({ name: "geolocation" as PermissionName })
+      .then((s) => {
+        // 拒否されているなら、聞いても窓は出ない。知らせのほうに任せる
+        if (s.state !== "denied") go();
+      })
+      .catch(() => go());
+  }, [splash]);
+
   /** 知らせを閉じ、位置を取りにいくのもやめる */
   const muteGeo = useCallback(() => {
     setGeoMuted(true);
@@ -1392,10 +1455,23 @@ export default function Guide() {
 
   const framed = useRef(false);
   useEffect(() => {
-    if (!ready || !data || framed.current || fix || trip) return;
+    /*
+     * 起動時に現在地を聞くようにしたので、地図が用意できる前に
+     * 位置が返ることがある。
+     *
+     * 前は「位置があるなら合わせない」としていた。ところが構内から
+     * 遠い人には現在地へ寄せない決まりがあるので、その人だけ
+     * 画角が決まらないまま残ってしまう（どこを写しているのか
+     * 分からない地図になる）。
+     *
+     * 見るのは「もう現在地へ寄せたか」。寄せたなら触らない。
+     * まだなら、まず構内ぜんぶに合わせる。そのあと位置が使えたら、
+     * その枠から現在地へ寄っていく。
+     */
+    if (!ready || !data || framed.current || centeredRef.current || trip) return;
     framed.current = true;
     fitHome(0);
-  }, [ready, data, fix, trip, fitHome]);
+  }, [ready, data, trip, fitHome]);
 
   /* ---------------- 圏内判定 ---------------- */
 
