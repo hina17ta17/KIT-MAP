@@ -45,6 +45,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminMenu } from "@/components/AdminNav";
 import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
 import { isTrustedDevice, trustDevice } from "@/lib/device";
+import { decideStep, infoState, pickAff } from "@/lib/loginStep";
 import {
   AFFILIATIONS,
   CLASS_CODES,
@@ -281,6 +282,24 @@ export default function LoginPage() {
       return;
     }
 
+    /*
+     * 読む前に、本人確認の印を実体に合わせる。
+     *
+     * 印（profiles.verified）は申請の④を通ったときに立つ。ところが
+     * そこで通信が切れた人、データベースから直に権限を付けた人、
+     * ログインの端末確認だけで済ませた人には立っていない。
+     * 認証アプリは登録されているのに、kit-agent も教職・リーダーの申請も
+     * 「本人確認がまだ」と言い続ける。しかも本人は登録し直せない。
+     *
+     * ここで直しておけば、開いた時点で揃う。
+     * まだ base/32 を入れていないときは、黙って今までどおり動く。
+     */
+    try {
+      await supabase.rpc("sync_verified");
+    } catch {
+      /* 直せなくても、下の読み込みは続ける */
+    }
+
     const read = async () =>
       (
         await supabase
@@ -425,18 +444,9 @@ export default function LoginPage() {
        *   教授として入れたのに学生として見られ、学年や名列番号を
        *   求められて先へ進めなくなっていた。
        */
-      const affNow =
-        ((p as unknown as { affiliation?: string }).affiliation || "") ||
-        (typeof meta.affiliation === "string" ? meta.affiliation : "") ||
-        "student";
-      const staffNow = (p as unknown as { staff_no?: string }).staff_no ?? "";
-      const hasClassNo = "class_no" in (p as object);
-      const hasDepts = "dept_codes" in (p as object);
-      const infoDone =
-        affNow === "student"
-          ? !!(p.grade && p.class_code && p.seat_no) && (!hasClassNo || !!p.class_no)
-          : staffNow.length === 8 &&
-            (affNow !== "teacher" || !hasDepts || (p.dept_codes ?? []).length > 0);
+      const affNow = pickAff(p as never, meta.affiliation);
+      const info = infoState(p as never, affNow);
+      const infoDone = info.done;
 
       /*
        * いま何が済んでいて、何が足りないか。
@@ -456,44 +466,19 @@ export default function LoginPage() {
         info: infoDone,
         password: pwSet,
         applied: p.role !== "pending",
-        aff: (affNow as Affiliation) ?? "student",
-        missing: infoDone
-          ? []
-          : affNow === "student"
-            ? [
-                !p.grade ? "学年" : "",
-                !p.class_code ? "学科" : "",
-                hasClassNo && !p.class_no ? "クラス" : "",
-                !p.seat_no ? "名列番号" : "",
-              ].filter((x) => x !== "")
-            : [
-                staffNow.length !== 8 ? "8桁の番号" : "",
-                affNow === "teacher" && hasDepts && (p.dept_codes ?? []).length === 0
-                  ? "担当学科"
-                  : "",
-              ].filter((x) => x !== ""),
+        aff: affNow,
+        missing: info.missing,
       });
 
-      if (!hasFactor) {
-        // まだ認証アプリが無い人は、承認済みでも登録から。
-        // 下の管理メニューは出たままなので、締め出しにはならない
-        setStep("mfa");
-      } else if (p.role === "pending" && !infoDone) {
-        // 本人確認は済んだ。次は大学の情報（順番を入れ替えたのでここ）
-        setStep("info");
-      } else if (p.role === "pending" && !pwSet) {
-        // 情報も入った。あとはパスワードを決めれば申請が出る
-        setStep("password");
-      } else if (p.role !== "pending") {
-        /*
-         * 知らない端末から入ったときは、認証アプリで確かめてもらう。
-         * 一度確かめた端末では次から求めない。毎回だと使ってもらえず、
-         * 一度きりだと、パスワードが漏れた時点でどこからでも入れてしまう。
-         */
-        setStep(isTrustedDevice(data.user.id) ? "done" : "verify");
-      } else {
-        setStep("done");
-      }
+      setStep(
+        decideStep({
+          role: p.role,
+          hasFactor,
+          infoDone,
+          pwSet,
+          trusted: isTrustedDevice(data.user.id),
+        }),
+      );
     } else {
       /*
        * 席はあるのに情報が作れなかった。
@@ -572,7 +557,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       const supabase = createClient();
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password: tempPassword(),
         options: {
@@ -584,6 +569,25 @@ export default function LoginPage() {
         },
       });
       if (error) throw error;
+
+      /*
+       * ★入れていないのに先へ進めない
+       *
+       *   そのアドレスの席がもうあるとき、この呼び出しは設定によっては
+       *   「何ごともなかったように」返る（誰の席が
+       *   あるかを外から当てられないようにするため）。
+       *   入っていないので、次の認証アプリの段では何もできない。
+       *   前はそのまま6桁の画面へ進み、押しても動かない状態になった。
+       *
+       *   席ができて入れたときだけ先へ進める。
+       */
+      if (!data.session) {
+        setMsg({
+          kind: "err",
+          text: T("このアドレスは、すでに登録されています。下のログインから入ってください。"),
+        });
+        return;
+      }
 
       await reload();
       setStep("mfa");
@@ -820,9 +824,30 @@ export default function LoginPage() {
     }
     setBusy(true);
     try {
-      const { error } = await createClient().auth.signInWithPassword({ email, password: pw });
+      const { data, error } = await createClient().auth.signInWithPassword({
+        email,
+        password: pw,
+      });
       if (error) throw error;
-      location.href = "/";
+
+      /*
+       * ★ここで地図へ飛ばしてはいけない
+       *
+       *   前は、入れたらすぐ地図へ送っていた。そのため
+       *   「知らない端末では認証アプリで確かめる」がまったく働かず、
+       *   パスワードだけでどの端末からでも入れてしまっていた。
+       *   確かめの段はこの画面にあるのに、通らずに素通りしていた。
+       *
+       *   覚えている端末なら、これまでどおりそのまま地図へ。
+       *   知らない端末や、申請の途中の人は、この画面に留めて
+       *   reload に続きを決めさせる（6桁の確認、または残りの段）。
+       */
+      const id = data.user?.id ?? "";
+      if (id && isTrustedDevice(id)) {
+        location.href = "/";
+        return;
+      }
+      await reload();
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
@@ -867,8 +892,26 @@ export default function LoginPage() {
 
       trustDevice(uid);
       setLoginCode("");
+      /*
+       * ここを通れたということは、認証アプリは確かに登録されている。
+       * 印（profiles.verified）が落ちていれば、ここで合わせておく。
+       * 申請の④を通っていない人（管理者が直に作った席など）は
+       * 印が無いままで、教職やリーダーの申請ができなかった。
+       */
+      try {
+        await createClient().rpc("sync_verified");
+      } catch {
+        /* 合わせられなくても、ログインは続く */
+      }
       setMsg({ kind: "ok", text: T("この端末を確かめました。次からは求めません。") });
-      await reload();
+      /*
+       * 確かめ終わったら地図へ。
+       * ここへ来るのは「入れているが、この端末は知らない」ときだけなので、
+       * 6桁を入れた時点でログインは終わっている。画面に留めると、
+       * 何を押せば先へ行けるのか分からない。
+       */
+      location.href = "/";
+      return;
     } catch (e) {
       setMsg({ kind: "err", text: T(translate(e)) });
     } finally {
