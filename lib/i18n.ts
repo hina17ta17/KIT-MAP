@@ -716,6 +716,8 @@ const EN: Record<string, string> = {
   "差し替えを通す": "Approve the change",
   "差し替えを待っているものはありません。": "No photo changes are waiting.",
   "通るまでは、いまの写真が出ています。": "Until it is approved, the current photo stays up.",
+  "写真の差し替えは、まだ使えません。データベースに base/33_news_photo.sql を入れると使えるようになります。":
+    "Photo replacement is not available yet — add base/33_news_photo.sql to the database to turn it on.",
 
   /* 課外活動のお気に入り */
   "お気に入りに入れる": "Add to favorites",

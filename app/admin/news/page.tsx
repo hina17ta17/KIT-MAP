@@ -27,6 +27,13 @@
  *   出ているものは、通るまで今の写真のまま出続ける。
  *   地図の入口に出る一枚なので、差し替えももう一度見てもらう。
  *   （通ったあとに黙って替えられるなら、承認の意味が無くなる）
+ *
+ * ■ 差し替えの仕組みが、まだ入っていないとき
+ *   この画面の元になる SQL（base/33_news_photo.sql）は、手で入れる。
+ *   入っていないうちに釦だけ出すと、押しても何も起きない画面になる。
+ *
+ *   news_mine が next_image を返すかどうかで、入っているかが分かる。
+ *   入っていなければ釦は出さず、何をすれば使えるようになるかを出す。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -62,6 +69,13 @@ const STATE: Record<string, { label: string; cls: string }> = {
   gone: { label: "取り下げました", cls: "bg-slate-100 text-slate-500" },
 };
 
+/**
+ * 差し替えの仕組み（base/33_news_photo.sql）が、まだ入っていないときの断り書き。
+ * 画面だけ先に出ても、データベースに関数が無ければ何も起きない。
+ */
+const NO_SWAP =
+  "写真の差し替えは、まだ使えません。データベースに base/33_news_photo.sql を入れると使えるようになります。";
+
 /** 2026-09-09 → 9月9日 */
 function md(d: string): string {
   const x = new Date(d);
@@ -92,6 +106,10 @@ export default function NewsPage() {
   const [mine, setMine] = useState<Mine[]>([]);
   /** いま写真を差し替えている一枚（送っている間だけ） */
   const [swapId, setSwapId] = useState<number | null>(null);
+  /** その一枚の下に出す断り書き（上の報せは、下まで来ると見えないため） */
+  const [swapErr, setSwapErr] = useState<{ id: number; text: string } | null>(null);
+  /** 差し替えの仕組み（33）が、まだ入っていない */
+  const [noSwap, setNoSwap] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -247,10 +265,11 @@ export default function NewsPage() {
     if (!file) return;
     setSwapId(n.id);
     setMsg(null);
+    setSwapErr(null);
     try {
       const r = await shrinkPhoto(file);
       if (!r.ok) {
-        setMsg({ kind: "err", text: r.why });
+        setSwapErr({ id: n.id, text: r.why });
         return;
       }
       const { data, error } = await createClient().rpc("news_photo", {
@@ -259,19 +278,27 @@ export default function NewsPage() {
       });
       if (error) throw error;
       const v = data as { ok: boolean; reason: string };
-      setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
       if (v.ok) {
+        setMsg({ kind: "ok", text: v.reason });
         noteEvent("system", "ニュースの写真を差し替えました", { id: n.id, state: n.state });
         await load();
+      } else {
+        /* 断られた訳は、押した一枚のすぐ下に出す */
+        setSwapErr({ id: n.id, text: v.reason });
       }
     } catch (e) {
-      setMsg({
-        kind: "err",
-        text:
-          e instanceof Error
-            ? `${e.message}（base/33_news_photo.sql をまだ入れていない場合は、先に入れてください）`
-            : String(e),
-      });
+      /*
+       * PGRST202 … データベースにその関数が無い。
+       * 33 をまだ入れていないときに、必ずこれになる。
+       * 生の英語を出しても直しようがないので、何をすればよいかを出す。
+       */
+      const code = (e as { code?: string })?.code;
+      if (code === "PGRST202") {
+        setNoSwap(true);
+        setSwapErr({ id: n.id, text: NO_SWAP });
+      } else {
+        setSwapErr({ id: n.id, text: e instanceof Error ? e.message : String(e) });
+      }
       noteError("system", "ニュースの写真を差し替えられませんでした", e);
     } finally {
       setSwapId(null);
@@ -281,6 +308,7 @@ export default function NewsPage() {
   /** 差し替えをやめる。出ているものは、いまの写真のままになる */
   const cancelSwap = async (n: Mine) => {
     setBusy(true);
+    setSwapErr(null);
     try {
       const { data, error } = await createClient().rpc("news_photo_cancel", { p_id: n.id });
       if (error) throw error;
@@ -288,7 +316,12 @@ export default function NewsPage() {
       setMsg({ kind: v.ok ? "ok" : "err", text: v.reason });
       await load();
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+      const code = (e as { code?: string })?.code;
+      if (code === "PGRST202") setNoSwap(true);
+      setSwapErr({
+        id: n.id,
+        text: code === "PGRST202" ? NO_SWAP : e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -316,6 +349,15 @@ export default function NewsPage() {
   }
 
   const canSend = image !== "" && url.trim() !== "" && from !== "" && to !== "" && to >= from;
+
+  /*
+   * 差し替えが使えるか。
+   *
+   * news_mine が next_image を返していれば、33 が入っている。
+   * 古い news_mine（29・31 まで）はその列を返さないので、key ごと無い。
+   * 一度でも「その関数が無い」と言われたときも、使えないとして扱う。
+   */
+  const swapReady = !noSwap && mine.some((n) => "next_image" in n);
 
   return (
     <Shell>
@@ -458,11 +500,17 @@ export default function NewsPage() {
             </button>
           )}
         </div>
-        {mine.length > 0 && (
-          <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-            {T("写真は、出したあとでも差し替えられます。出ているものは、通るまで今の写真のままです。")}
-          </p>
-        )}
+        {mine.length > 0 &&
+          (swapReady ? (
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+              {T("写真は、出したあとでも差し替えられます。出ているものは、通るまで今の写真のままです。")}
+            </p>
+          ) : (
+            /* 釦を出しても押せないので、代わりに何をすれば使えるかを出す */
+            <p className="mt-1 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-900">
+              {T(NO_SWAP)}
+            </p>
+          ))}
         <ul className="mt-1.5 flex flex-col gap-1.5">
           {mine.map((n) => {
             const st = STATE[n.state] ?? { label: n.state, cls: "bg-slate-100 text-slate-600" };
@@ -496,7 +544,7 @@ export default function NewsPage() {
                     写真の差し替え。取り下げたものは替えられない（出し直してもらう）。
                     待っている差し替えがあるときは、その写真を見せて、やめられるようにする。
                   */}
-                  {n.state !== "gone" && (
+                  {n.state !== "gone" && swapReady && (
                     <div className="mt-1.5">
                       {n.next_image ? (
                         <div className="flex items-center gap-1.5 rounded-lg bg-white p-1.5 ring-1 ring-amber-200">
@@ -518,11 +566,20 @@ export default function NewsPage() {
                           </button>
                         </div>
                       ) : (
-                        <label className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-50">
+                        <label
+                          htmlFor={`swap-${n.id}`}
+                          className="inline-flex cursor-pointer items-center rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95"
+                        >
+                          {/*
+                            hidden（display:none）にすると、端末によっては
+                            名札を押しても写真を選ぶ窓が開かない。
+                            見えないが「ある」状態にしておく。
+                          */}
                           <input
+                            id={`swap-${n.id}`}
                             type="file"
                             accept="image/*"
-                            className="hidden"
+                            className="sr-only"
                             onChange={(e) => {
                               void swapPhoto(n, e.target.files?.[0] ?? null);
                               e.target.value = "";
@@ -537,6 +594,13 @@ export default function NewsPage() {
                                 ? T("写真を替える")
                                 : T("写真を差し替える")}
                         </label>
+                      )}
+
+                      {/* 断られた訳は、ここに出す。上まで戻らなくても読める */}
+                      {swapErr?.id === n.id && (
+                        <p className="mt-1 rounded-lg bg-red-50 px-2 py-1.5 text-[10px] leading-relaxed text-red-800">
+                          {T(swapErr.text)}
+                        </p>
                       )}
                     </div>
                   )}
