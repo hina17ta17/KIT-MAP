@@ -29,6 +29,15 @@
  *   互いに引っ張り合う。動かすたびに吸着が押し戻すので、
  *   かくついて見えていた。流すほうを取る。
  *
+ * ■ 送る量は「溜めてから」足す
+ *   scrollLeft に 0.35 のような小数を足しても、位置は整数に丸められる。
+ *   足したぶんは毎回捨てられ、何コマ経っても一点も進まない。
+ *   iPhone と Android では、これで完全に止まって見えていた。
+ *
+ *   小数はこちらで持っておき、一点ぶん溜まったときだけ整数で足す。
+ *   1コマ 0.35点 なら、三コマに一度 1点動く。
+ *   見た目の速さは同じで、どの端末でも同じように進む。
+ *
  * ■ 触っているあいだは動かさない
  *   指で送っている最中に位置を書き換えると、端末側の慣性と
  *   取り合いになって、飛んだり戻ったりする。
@@ -58,6 +67,8 @@ export default function NewsStrip({ t: T }: { t: (ja: string) => string }) {
   const touching = useRef(false);
   /** この時刻までは、自分からは動かさない */
   const waitUntil = useRef(0);
+  /** まだ足していない、一点に満たないぶん */
+  const carry = useRef(0);
 
   useEffect(() => {
     if (!supabaseReady) return;
@@ -116,7 +127,15 @@ export default function NewsStrip({ t: T }: { t: (ja: string) => string }) {
       /* 触っているあいだは、位置に触らない（端末の慣性と取り合わない） */
       if (touching.current) return;
 
-      if (!still && Date.now() >= waitUntil.current) el.scrollLeft += SPEED;
+      if (!still && Date.now() >= waitUntil.current) {
+        /* 一点ぶん溜まったときだけ動かす。小数のままでは丸められて消える */
+        carry.current += SPEED;
+        const step = Math.floor(carry.current);
+        if (step > 0) {
+          carry.current -= step;
+          el.scrollLeft += step;
+        }
+      }
 
       /* 輪をつなぎ直す。真ん中の一組ぶんだけ動かすので、目には何も起きない */
       if (el.scrollLeft >= w * 2) el.scrollLeft -= w;
@@ -125,6 +144,24 @@ export default function NewsStrip({ t: T }: { t: (ja: string) => string }) {
     raf = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(raf);
   }, [rows.length]);
+
+  /*
+   * 指を離したことを、窓ぜんぶで受け取る。
+   *
+   * 札の上で触りはじめ、指を外へ滑らせてから離すと、
+   * 札には「離した」が届かないことがある。届かないと「触っている」
+   * ままになり、そこから二度と流れ出さない。
+   * 窓で受け取っておけば、どこで離しても取りこぼさない。
+   */
+  useEffect(() => {
+    const off = () => {
+      touching.current = false;
+      waitUntil.current = Date.now() + RESUME;
+    };
+    const kinds = ["pointerup", "pointercancel", "touchend", "touchcancel"];
+    kinds.forEach((k) => window.addEventListener(k, off));
+    return () => kinds.forEach((k) => window.removeEventListener(k, off));
+  }, []);
 
   if (rows.length === 0) return null;
 
