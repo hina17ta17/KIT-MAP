@@ -31,6 +31,10 @@
 !.env.local.example
 *.pem
 
+# エージェントの手元設定。学校のドメインを書く場所なので追跡しない。
+# 雛形は agent/settings.example.py。写して使う。
+/agent/settings.py
+
 # ---------------------------------------------------------------- 作られるもの
 /node_modules
 /.pnp
