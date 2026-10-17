@@ -47,6 +47,45 @@ const nextConfig: NextConfig = {
   // 指定しないと HMR がブロックされ、警告が出続ける。
   allowedDevOrigins: ["localhost"],
 
+  /*
+   * 守りのための見出し（HTTP ヘッダ）。
+   *
+   * ■ なぜ要るか
+   *   外から試したところ、二つ足りなかった。
+   *     ・ほかのサイトに枠として埋め込まれるのを止める指定が無い
+   *       → 透明にして重ねられると、ログイン中の管理者が
+   *         「見えない承認ボタン」を押させられる（クリックジャック）
+   *     ・中身の種類を勝手に推測させない指定が無い
+   *       → 画像のつもりのものを、本文として実行されることがある
+   *
+   * ■ 中身を細かく決める指定（CSP）は、ここでは入れていない
+   *   地図の部品・タイル・データベースへの通信を全部書き出す必要があり、
+   *   書き漏らすと地図が出なくなる。埋め込み防止（frame-ancestors）だけは
+   *   壊れる心配が無いので入れてある。
+   *
+   * ■ 現在地は止めない
+   *   Permissions-Policy で geolocation=(self) を明示している。
+   *   ここを空にすると、現在地が取れなくなる。
+   */
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          // 枠として埋め込ませない（古い言い方と新しい言い方の両方）
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          // 中身の種類を推測させない
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          // よそへ行くときに、どの画面から来たかを渡しすぎない
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // この画面だけが現在地を使える。カメラとマイクは誰にも使わせない
+          { key: "Permissions-Policy", value: "geolocation=(self), camera=(), microphone=()" },
+        ],
+      },
+    ];
+  },
+
   // 左下に出る開発用のインジケータ（N のボタン）を隠す。
   // 地図の操作の邪魔になるため。エラーは従来どおり表示される。
   devIndicators: false,
