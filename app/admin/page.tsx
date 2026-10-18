@@ -183,6 +183,38 @@ type NewsSwap = {
   swap_at: string | null;
 };
 
+/** 終わりの日を延ばす申請を待っているニュース（37） */
+type NewsPeriodReq = {
+  id: number;
+  image: string;
+  url: string;
+  title: string;
+  /** いまの期間 */
+  from_date: string;
+  to_date: string;
+  /** 出したい期間 */
+  next_from: string;
+  next_to: string;
+  author_mail: string;
+  author_name: string;
+  author_role: string;
+  period_req_at: string | null;
+};
+
+/** いま出ている・これから出るニュース（37）。管理者が取り下げるために並べる */
+type NewsShowing = {
+  id: number;
+  image: string;
+  url: string;
+  title: string;
+  from_date: string;
+  to_date: string;
+  phase: "running" | "upcoming";
+  author_mail: string;
+  author_name: string;
+  author_role: string;
+};
+
 /** 2026-09-09 → 9月9日 */
 function md(d: string): string {
   const x = new Date(d);
@@ -214,11 +246,28 @@ function md(d: string): string {
  *     新しいほうだけ見ても、何がどう変わるのか分からない。
  *     おとなしい写真で通してから中身を入れ替える、という手を
  *     止めるためにある仕組みなので、見比べられることが要る。
+ *
+ * ■ 終わりの日を延ばす申請も、ここで見る（37）
+ *   一度通れば、いつまでも出し続けられる、ということにならないように。
+ *   いまの期間と出したい期間を並べて出す。通るまでは今の期間のまま。
+ *
+ * ■ いま出ているものは、いつでも取り下げられる（37）
+ *   誰が出したものでも。取り下げると地図からすぐに消え、出した人の
+ *   画面では「終了」になる（理由も出る）。押し間違いで消さないよう、
+ *   二回たしかめてから取り下げる。
  */
 function NewsApprove({ t: T }: { t: (ja: string) => string }) {
   const [rows, setRows] = useState<NewsWait[]>([]);
   /** 写真の差し替えを待っているもの */
   const [swaps, setSwaps] = useState<NewsSwap[]>([]);
+  /** 終わりの日を延ばす申請を待っているもの */
+  const [periods, setPeriods] = useState<NewsPeriodReq[]>([]);
+  /** いま出ている・これから出るもの */
+  const [showing, setShowing] = useState<NewsShowing[]>([]);
+  /** 取り下げの、いまの段（1 … 理由を書く、2 … 最後の確認） */
+  const [askDrop, setAskDrop] = useState<{ id: number; step: 1 | 2; why: string } | null>(null);
+  /** 「いま出ているもの」を開いているか */
+  const [showLive, setShowLive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [can, setCan] = useState(false);
@@ -239,6 +288,11 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
        */
       const c = await supabase.rpc("news_swaps");
       setSwaps(c.error ? [] : ((c.data as NewsSwap[]) ?? []));
+      /* 延長の申請と、いま出ているもの。37 をまだ入れていないときは静かに見送る */
+      const d = await supabase.rpc("news_periods");
+      setPeriods(d.error ? [] : ((d.data as NewsPeriodReq[]) ?? []));
+      const e = await supabase.rpc("news_showing");
+      setShowing(e.error ? [] : ((e.data as NewsShowing[]) ?? []));
       setMsg(null);
     } catch (e) {
       setMsg(
@@ -313,6 +367,68 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
       if (error) throw error;
       const v = data as { ok: boolean; reason: string };
       setMsg(v.reason);
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 終わりの日を延ばす申請を決める。
+   * 通すと、その場で期間が入れ替わる。断ると、いまの期間のまま。
+   */
+  const decidePeriod = async (n: NewsPeriodReq, ok: boolean) => {
+    let why = "";
+    if (!ok) {
+      const v = window.prompt(
+        `「${n.title || n.url}」の延長を断ります。${String.fromCharCode(10)}理由を書いてください（出した人に、そのまま出ます）`,
+        "",
+      );
+      if (v === null) return;
+      why = v;
+    } else if (
+      !window.confirm(
+        `「${n.title || n.url}」を ${md(n.next_from)}〜${md(n.next_to)} に延ばします。よろしいですか？`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_period_decide", {
+        p_id: n.id,
+        p_ok: ok,
+        p_reason: why,
+      });
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg(v.reason);
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 取り下げる（二回たしかめたあと）。誰のものでも */
+  const takeDown = async (n: NewsShowing, why: string) => {
+    setBusy(true);
+    try {
+      const { data, error } = await createClient().rpc("news_drop", {
+        p_id: n.id,
+        p_reason: why.trim(),
+      });
+      if (error) throw error;
+      const v = data as { ok: boolean; reason: string };
+      setMsg(
+        v.ok
+          ? `「${n.title || n.url}」${T("を取り下げました。出した人の画面では「終了」になります。")}`
+          : v.reason,
+      );
+      setAskDrop(null);
       await load();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -489,6 +605,233 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+      {/* 終わりの日を延ばす申請。待っているものがあるときだけ出す */}
+      {periods.length > 0 && (
+        <div className="mt-3 border-t border-indigo-200 pt-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-indigo-900">{T("期間の延長")}</span>
+            <span className="rounded-full bg-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-900">
+              {periods.length}
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] leading-relaxed text-indigo-800">
+            {T("通るまでは、いまの期間のまま出ています。")}
+          </p>
+
+          <ul className="mt-2 flex flex-col gap-2">
+            {periods.map((n) => (
+              <li key={n.id} className="rounded-xl bg-white p-2.5 shadow-sm">
+                <div className="flex items-start gap-2.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={n.image}
+                    alt=""
+                    className="h-16 w-24 shrink-0 rounded-lg object-cover ring-1 ring-slate-200"
+                  />
+                  <div className="min-w-0 flex-1">
+                    {n.title && (
+                      <div className="truncate text-xs font-bold text-slate-900">{n.title}</div>
+                    )}
+                    <a
+                      href={n.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="mt-0.5 block truncate text-[10px] font-bold text-blue-700 underline"
+                    >
+                      {n.url}
+                    </a>
+                    {/* いまの期間と、出したい期間を並べる */}
+                    <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[10px] leading-relaxed">
+                      <span className="text-slate-400">{T("いま")}</span>
+                      <span className="text-slate-600">
+                        {md(n.from_date)} 〜 {md(n.to_date)}
+                      </span>
+                      <span className="font-bold text-indigo-700">{T("申請")}</span>
+                      <span className="font-bold text-indigo-900">
+                        {md(n.next_from)} 〜 {md(n.next_to)}
+                      </span>
+                    </div>
+                    <div className="mt-1 rounded-lg bg-slate-50 px-2 py-1 text-[10px] leading-relaxed text-slate-600">
+                      {n.author_name || T("（名前なし）")}
+                      <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-700">
+                        {ROLE_LABEL[n.author_role as Role] ?? n.author_role}
+                      </span>
+                      <br />
+                      <span className="font-mono">{n.author_mail}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2 flex gap-1.5">
+                  <button
+                    onClick={() => void decidePeriod(n, true)}
+                    disabled={busy}
+                    className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400"
+                  >
+                    {T("延長を通す")}
+                  </button>
+                  <button
+                    onClick={() => void decidePeriod(n, false)}
+                    disabled={busy}
+                    className="rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-red-600 shadow-sm transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                  >
+                    {T("断る")}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/*
+        いま出ているもの・これから出るもの。誰のものでも取り下げられる。
+        ふだんは畳んでおき、押したときだけ開く（承認の一覧を埋めないように）。
+      */}
+      {showing.length > 0 && (
+        <div className="mt-3 border-t border-indigo-200 pt-2.5">
+          <button
+            onClick={() => setShowLive((v) => !v)}
+            aria-expanded={showLive}
+            className="flex w-full items-center justify-between rounded-lg bg-white px-2.5 py-2 text-xs font-bold text-indigo-900 shadow-sm transition hover:bg-indigo-50 active:scale-[0.99]"
+          >
+            <span>
+              {T("いま出ているもの")}
+              <span className="ml-1.5 rounded-full bg-indigo-200 px-2 py-0.5 text-[10px]">{showing.length}</span>
+            </span>
+            <span className="text-indigo-400">{showLive ? "▲" : "▼"}</span>
+          </button>
+
+          {showLive && (
+            <>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-indigo-800">
+                {T("誰が出したものでも、いつでも取り下げられます。取り下げると地図からすぐに消え、出した人の画面では「終了」になります。")}
+              </p>
+              <ul className="mt-2 flex flex-col gap-2">
+                {showing.map((n) => (
+                  <li key={n.id} className="rounded-xl bg-white p-2.5 shadow-sm">
+                    <div className="flex items-start gap-2.5">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={n.image}
+                        alt=""
+                        className="h-16 w-24 shrink-0 rounded-lg object-cover ring-1 ring-slate-200"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-1.5">
+                          <span
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                              n.phase === "running"
+                                ? "bg-emerald-100 text-emerald-900"
+                                : "bg-sky-100 text-sky-900"
+                            }`}
+                          >
+                            {n.phase === "running" ? T("進行中") : T("開始前")}
+                          </span>
+                          <span className="truncate text-xs font-bold text-slate-900">
+                            {n.title || n.url}
+                          </span>
+                        </div>
+                        <a
+                          href={n.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="mt-0.5 block truncate text-[10px] font-bold text-blue-700 underline"
+                        >
+                          {n.url}
+                        </a>
+                        <div className="mt-0.5 text-[10px] text-slate-600">
+                          {md(n.from_date)} 〜 {md(n.to_date)}
+                        </div>
+                        <div className="mt-1 rounded-lg bg-slate-50 px-2 py-1 text-[10px] leading-relaxed text-slate-600">
+                          {n.author_name || T("（名前なし）")}
+                          <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-700">
+                            {ROLE_LABEL[n.author_role as Role] ?? n.author_role}
+                          </span>
+                          <br />
+                          <span className="font-mono">{n.author_mail}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {askDrop?.id !== n.id ? (
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          onClick={() => setAskDrop({ id: n.id, step: 1, why: "" })}
+                          disabled={busy}
+                          className="rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-red-600 shadow-sm ring-1 ring-red-200 transition hover:bg-red-50 active:scale-95 disabled:text-slate-300"
+                        >
+                          {T("取り下げる")}
+                        </button>
+                      </div>
+                    ) : askDrop.step === 1 ? (
+                      /* 一回目：理由を書く（出した人に、そのまま出る） */
+                      <div className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
+                        <p className="font-bold">{T("確認（1/2）")}</p>
+                        <p className="mt-0.5">
+                          {T("このニュースを取り下げます。理由を書いてください（出した人に、そのまま出ます。無くてもよい）。")}
+                        </p>
+                        <input
+                          value={askDrop.why}
+                          onChange={(e) => setAskDrop({ ...askDrop, why: e.target.value.slice(0, 300) })}
+                          autoComplete="off"
+                          placeholder={T("例：内容が古くなったため")}
+                          className="mt-1.5 w-full rounded-lg bg-white px-2 py-1.5 text-[11px] outline-none ring-1 ring-amber-200 focus:ring-2 focus:ring-amber-500"
+                        />
+                        <div className="mt-1.5 flex justify-end gap-1.5">
+                          <button
+                            onClick={() => setAskDrop(null)}
+                            disabled={busy}
+                            className="rounded-lg px-2.5 py-1 font-bold text-slate-500 transition hover:bg-white active:scale-95"
+                          >
+                            {T("やめる")}
+                          </button>
+                          <button
+                            onClick={() => setAskDrop({ ...askDrop, step: 2 })}
+                            disabled={busy}
+                            className="rounded-lg bg-amber-600 px-3 py-1 font-bold text-white transition hover:bg-amber-700 active:scale-95"
+                          >
+                            {T("次へ")}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* 二回目：最後の確認 */
+                      <div className="mt-2 rounded-lg bg-red-50 p-2 text-[10px] leading-relaxed text-red-900 ring-1 ring-red-300">
+                        <p className="font-bold">{T("最後の確認（2/2）")}</p>
+                        <p className="mt-0.5">
+                          「{n.title || n.url}」
+                          {T("を本当に取り下げますか？ 地図からすぐに消えます。また出すには、出した人が申請し、通す必要があります。")}
+                        </p>
+                        {askDrop.why.trim() !== "" && (
+                          <p className="mt-0.5 text-red-800">
+                            {T("理由")}：{askDrop.why.trim()}
+                          </p>
+                        )}
+                        <div className="mt-1.5 flex justify-end gap-1.5">
+                          <button
+                            onClick={() => setAskDrop(null)}
+                            disabled={busy}
+                            className="rounded-lg px-2.5 py-1 font-bold text-slate-500 transition hover:bg-white active:scale-95"
+                          >
+                            {T("やめる")}
+                          </button>
+                          <button
+                            onClick={() => void takeDown(n, askDrop.why)}
+                            disabled={busy}
+                            className="rounded-lg bg-red-600 px-3 py-1 font-bold text-white transition hover:bg-red-700 active:scale-95 disabled:bg-slate-300"
+                          >
+                            {busy ? T("取り下げています…") : T("取り下げる")}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </section>

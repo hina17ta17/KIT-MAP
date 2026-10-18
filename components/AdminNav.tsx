@@ -22,8 +22,7 @@ import {
   type Role,
 } from "@/lib/auth";
 import { useAdminLang, useAdminT } from "@/lib/adminLang";
-import { isAdminRole } from "@/lib/loginStep";
-import { createClient } from "@/lib/supabase/client";
+import { needsCode } from "@/lib/aal";
 
 export type AdminPageId =
   | "approve"
@@ -238,29 +237,15 @@ export function AdminHeader({ title }: { title: string }) {
  * データベースは、6桁を確かめていない管理者を学生として扱う
  * （base/36_security.sql）。そのまま管理画面を使うと、何を押しても
  * 「権限がありません」になり、何が起きているのか分からない。
- * 見出しのすぐ下で先に知らせ、6桁を入れる所へ案内する。
- *
- * 権限は自分の行（profiles.role）から読む。自分の行はいつでも読めるので、
- * 6桁の前でも本当の権限が分かる。
+ * 見出しのすぐ下で先に知らせ、6桁を入れる所へ案内する（判定は lib/aal.ts）。
  */
 function useNeedsCode(): boolean {
   const [need, setNeed] = useState(false);
   useEffect(() => {
     let alive = true;
     void (async () => {
-      try {
-        const supabase = createClient();
-        const { data: lv } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (lv?.currentLevel === "aal2") return;
-        const { data: u } = await supabase.auth.getUser();
-        const id = u.user?.id;
-        if (!id) return;
-        const { data: me } = await supabase.from("profiles").select("role").eq("id", id).single();
-        const role = (me as { role?: string } | null)?.role ?? "";
-        if (alive && isAdminRole(role)) setNeed(true);
-      } catch {
-        /* 確かめられないときは出さない。各画面の判断に任せる */
-      }
+      const v = await needsCode();
+      if (alive && v) setNeed(true);
     })();
     return () => {
       alive = false;

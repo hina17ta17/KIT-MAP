@@ -516,6 +516,86 @@ const EN: Record<string, string> = {
   "管理の操作は、6桁を確かめるまで使えません。パスワードだけで管理者の操作ができないようにしています。":
     "Admin actions are locked until you enter the 6-digit code. A password alone is not enough for admin actions.",
   "6桁を入れる": "Enter the code",
+  "延長の申請中":
+    "Extension requested",
+  "一言を直す":
+    "Edit caption",
+  "承認は要りません。保存すると、そのまま地図の入口に出ます。":
+    "No approval needed. Once saved, it shows on the map right away.",
+  "承認は要りません。":
+    "No approval needed.",
+  "期間を決めて、また出す":
+    "Set dates and show again",
+  "申請した期間":
+    "Requested dates",
+  "通ると、この期間で地図に出ます。":
+    "Once approved, it shows on the map for these dates.",
+  "通るまでは、いまの期間のまま出ます。":
+    "Until approved, it keeps the current dates.",
+  "申請をやめる":
+    "Cancel request",
+  "申請中なので、その場で変わります。":
+    "Still awaiting approval, so this changes right away.",
+  "また出すには承認が要ります。通ると、決めた期間で地図に出ます。":
+    "Showing it again needs approval. Once approved, it shows for the dates you set.",
+  "終わりの日を延ばすので、承認が要ります。通るまでは、いまの期間のまま出ます。":
+    "Extending the end date needs approval. Until then, the current dates stay.",
+  "早く終える・始まりを動かすのは、その場で変わります。":
+    "Ending early or moving the start changes right away.",
+  "最後の確認（2/2）":
+    "Final check (2/2)",
+  "確認（1/2）":
+    "Check (1/2)",
+  "この申請を取り下げます。取り下げたものは「終了」になります。":
+    "This withdraws the request. Withdrawn items become “Ended”.",
+  "このニュースを取り下げます。地図からすぐに消え、「終了」になります。":
+    "This takes the news down. It leaves the map right away and becomes “Ended”.",
+  "本当に取り下げますか？ また出すには、期間を決めて申請し、通してもらう必要があります。":
+    "Take it down? To show it again, you must request new dates and get approval.",
+  "この控えを消します。":
+    "This deletes the record.",
+  "本当に消しますか？ 消した控えは元に戻せません。":
+    "Delete it? Deleted records cannot be restored.",
+  "一言は、いつでも自分で直せます。":
+    "You can edit the caption any time.",
+  "期間は自分で変えられます。終わりの日を延ばすときだけ、承認が要ります。":
+    "You can change the dates yourself. Only extending the end date needs approval.",
+  "終わったもの（取り下げたものを含む）は、期間を決めて申請すれば、また出せます。":
+    "Ended items (including withdrawn ones) can be shown again by requesting new dates.",
+  "終了・断られたものを消す":
+    "Delete ended and declined",
+  "終了したものと断られたものの控えを、まとめて消します。":
+    "This deletes all ended and declined records.",
+  "まとめて消す":
+    "Delete all",
+  "期間の延長":
+    "Date extensions",
+  "通るまでは、いまの期間のまま出ています。":
+    "Until approved, they keep their current dates.",
+  "いま":
+    "Now",
+  "延長を通す":
+    "Approve extension",
+  "いま出ているもの":
+    "Showing now",
+  "誰が出したものでも、いつでも取り下げられます。取り下げると地図からすぐに消え、出した人の画面では「終了」になります。":
+    "You can take down anyone’s news at any time. It leaves the map right away and shows as “Ended” to the poster.",
+  "このニュースを取り下げます。理由を書いてください（出した人に、そのまま出ます。無くてもよい）。":
+    "This takes the news down. Add a reason (shown to the poster; optional).",
+  "例：内容が古くなったため":
+    "e.g. The information is out of date",
+  "を本当に取り下げますか？ 地図からすぐに消えます。また出すには、出した人が申請し、通す必要があります。":
+    " — take it down? It leaves the map right away. To show it again, the poster must request and get approval.",
+  "理由":
+    "Reason",
+  "取り下げています…":
+    "Taking down…",
+  "を取り下げました。出した人の画面では「終了」になります。":
+    " was taken down. The poster sees it as “Ended”.",
+  "訳":
+    "Reason",
+  "リーダーの操作（予定を入れる・ニュースを出す）は、認証アプリの6桁を確かめてから使えます。":
+    "Leader actions (adding events, posting news) need your 6-digit authenticator code first.",
   "6桁の数字が合いません。アプリの表示を確かめて、もう一度入れてください":
     "That code did not match. Check your app and try again.",
   "認証アプリの登録に失敗しました。もう一度お試しください":

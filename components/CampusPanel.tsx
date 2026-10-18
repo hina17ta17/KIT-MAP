@@ -31,6 +31,7 @@ import { t, type Lang } from "@/lib/i18n";
 import { dayColor, holidayName } from "@/lib/holidays";
 import { rankOf } from "@/lib/appdata";
 import NewsStrip from "./NewsStrip";
+import { needsCode } from "@/lib/aal";
 
 type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "clubs" | "apply";
 
@@ -1119,6 +1120,8 @@ type Mine = {
   role: string;
   teaching: boolean;
   teaching_applied: boolean;
+  /** 教職が通らなかった・外れた訳（38）。古いデータベースには無い */
+  teaching_reason: string;
   leader: boolean;
   leader_applied: boolean;
   leader_no: string;
@@ -1182,6 +1185,7 @@ function useMe(): { me: Mine | null | undefined; reload: () => Promise<void> } {
       role: typeof p.role === "string" ? p.role : "",
       teaching: p.teaching === true,
       teaching_applied: p.teaching_applied === true,
+      teaching_reason: typeof p.teaching_reason === "string" ? p.teaching_reason : "",
       leader: p.leader === true,
       leader_applied: p.leader_applied === true,
       leader_no: typeof p.leader_no === "string" ? p.leader_no : "",
@@ -1488,6 +1492,7 @@ function TeachingApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }
         ok={me.teaching}
         applied={me.teaching_applied}
         okText={T("教職として通っています")}
+        reason={me.teaching_reason}
       />
 
       {!me.verified ? (
@@ -1590,6 +1595,18 @@ function LeaderApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) 
     if (a?.category_id != null) setCatId(a.category_id);
   }, [actId, catId, acts]);
 
+  /* 管理の権限が付いたのに、このログインで6桁を確かめていないか */
+  const [needCode, setNeedCode] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void needsCode().then((v) => {
+      if (alive) setNeedCode(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [me.role, me.leader]);
+
   const list = catId === null ? [] : acts.filter((a) => a.category_id === catId);
   const picked = acts.find((a) => a.id === actId) ?? null;
   const trimmed = no.replace(/[\s\u3000]/g, "");
@@ -1645,7 +1662,23 @@ function LeaderApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) 
             ? `${picked.name}${T("のリーダーとして通っています")}`
             : T("リーダーとして通っています")
         }
+        reason={me.leader_reason}
       />
+
+      {/*
+        リーダーとして通ると、管理の権限（admin_l1）が付く。管理の操作は、
+        このログインで認証アプリの6桁を確かめてからでないと使えない（36）。
+        学生は覚えた端末なら6桁を省いているので、通った直後はここで知らせる。
+      */}
+      {me.leader && needCode && (
+        <div className="mt-2 rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
+          {T("リーダーの操作（予定を入れる・ニュースを出す）は、認証アプリの6桁を確かめてから使えます。")}
+          <br />
+          <a href="/login" className="mt-1.5 inline-block font-bold text-blue-700 underline">
+            {T("6桁を入れる")}
+          </a>
+        </div>
+      )}
 
       {!me.verified ? (
         <NeedVerify what={T("リーダー")} />
@@ -1752,7 +1785,18 @@ function LeaderApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) 
 }
 
 /** いまの様子の帯。教職とリーダーで同じ形にする */
-function Status({ ok, applied, okText }: { ok: boolean; applied: boolean; okText: string }) {
+function Status({
+  ok,
+  applied,
+  okText,
+  reason = "",
+}: {
+  ok: boolean;
+  applied: boolean;
+  okText: string;
+  /** 通らなかった・外れた訳。開き直しても、何を直せばよいかが分かるように */
+  reason?: string;
+}) {
   const T = useT();
   return (
     <div className="mt-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
@@ -1770,6 +1814,11 @@ function Status({ ok, applied, okText }: { ok: boolean; applied: boolean; okText
           {ok ? okText : applied ? T("申請しましたが、通っていません") : T("まだ申請していません")}
         </span>
       </div>
+      {!ok && applied && reason !== "" && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-amber-900">
+          {T("訳")}：{T(reason)}
+        </p>
+      )}
     </div>
   );
 }

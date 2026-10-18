@@ -3,6 +3,61 @@ import type { NextConfig } from "next";
 /** `next dev` で動いているか。`next build` のときは false になる */
 const DEV = process.env.NODE_ENV === "development";
 
+/** データベース（Supabase）の置き場所。画面はここへだけ問い合わせる */
+const SUPABASE = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").origin;
+  } catch {
+    return "";
+  }
+})();
+
+/** 地図の航空写真（国土地理院のタイル）。地図の部品が直接取りに行く */
+const TILES = "https://cyberjapandata.gsi.go.jp";
+
+/**
+ * 読み込んでよい先の決まり（Content-Security-Policy）。
+ *
+ * ■ 何を止めるか
+ *   万一、画面に他人のスクリプトを差し込まれても（XSS）、
+ *     ・よそのサイトからスクリプトを読み込む
+ *     ・ログインの鍵を、よそのサイトへ fetch で送り出す
+ *     ・<base> を書き換えて、読み込む先をすり替える
+ *     ・フォームの送り先を、よそのサイトにする
+ *   を、ブラウザの側で止める。
+ *
+ * ■ 許している先（これで全部）
+ *   自分のサイト・データベース（Supabase）・国土地理院のタイル。
+ *   画面の fetch は、どれも自分のサイトあて（/data・/api）。
+ *
+ * ■ 甘くしてあるところ
+ *   script-src の 'unsafe-inline' … ページを前もって作っておく形
+ *     （静的なページ）では、毎回変わる合言葉（nonce）を付けられない。
+ *     Next.js が埋め込む起動用のスクリプトのために要る。
+ *   img-src の https: … 食堂の写真は https の置き場所も入れられる（23）。
+ *     ニュースの写真は、画面からは写真そのもの（data:）しか送らない。
+ *   開発中（next dev）だけ 'unsafe-eval' を足す。書き換えの即時反映に要る。
+ */
+const CSP = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline'${DEV ? " 'unsafe-eval'" : ""}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  ["connect-src 'self'", SUPABASE, SUPABASE.replace(/^http/, "ws"), TILES].filter(Boolean).join(" "),
+  // 地図の部品は、自分のサイトに置いた worker（/maplibre）を使う
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "manifest-src 'self'",
+  // 本番（https のデータベース）では、http の読み込みを https に上げる
+  ...(SUPABASE.startsWith("https:") ? ["upgrade-insecure-requests"] : []),
+].join("; ");
+
 const nextConfig: NextConfig = {
   /*
    * 作業の根っこを、このフォルダに固定する。
@@ -58,10 +113,10 @@ const nextConfig: NextConfig = {
    *     ・中身の種類を勝手に推測させない指定が無い
    *       → 画像のつもりのものを、本文として実行されることがある
    *
-   * ■ 中身を細かく決める指定（CSP）は、ここでは入れていない
-   *   地図の部品・タイル・データベースへの通信を全部書き出す必要があり、
-   *   書き漏らすと地図が出なくなる。埋め込み防止（frame-ancestors）だけは
-   *   壊れる心配が無いので入れてある。
+   * ■ 読み込んでよい先の決まり（CSP）
+   *   上の CSP にまとめてある。地図の部品・タイル・データベースへの
+   *   通信を全部書き出してあり、書き漏らすと地図が出なくなるので、
+   *   通信先を足したときは CSP にも足すこと。
    *
    * ■ 現在地は止めない
    *   Permissions-Policy で geolocation=(self) を明示している。
@@ -74,7 +129,8 @@ const nextConfig: NextConfig = {
         headers: [
           // 枠として埋め込ませない（古い言い方と新しい言い方の両方）
           { key: "X-Frame-Options", value: "DENY" },
-          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          // 読み込んでよい先（埋め込み防止の frame-ancestors も、この中にある）
+          { key: "Content-Security-Policy", value: CSP },
           // 中身の種類を推測させない
           { key: "X-Content-Type-Options", value: "nosniff" },
           // よそへ行くときに、どの画面から来たかを渡しすぎない
