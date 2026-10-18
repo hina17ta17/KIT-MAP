@@ -22,7 +22,8 @@ import { type NextRequest } from "next/server";
 const AGENTGUARD_INGEST = process.env.AGENTGUARD_URL ?? "";
 const AGENTGUARD_VERIFY_PATH = "/.well-known/agentguard-verify.txt";
 // パスワードなどの欄は伏せて送る（攻撃の形をした値だけは、検査のためそのまま送る）
-const SECRET = /pass|pwd|token|secret|card|cvc|otp|api[-_]?key/i;
+// code（認証アプリの6桁）と mail（メールアドレス）も伏せる。外のサービスへ送らなくてよいもの
+const SECRET = /pass|pwd|token|secret|card|cvc|otp|code|mail|api[-_]?key/i;
 const ATTACK = /['"\x60]\s*(or|and)\s|['"\x60]\s*(--|#)|<\s*script|\bunion\s+select\b|;\s*(drop|delete|insert|update)\s/i;
 const mask = (v: unknown, k = ""): unknown =>
   Array.isArray(v) ? v.map((x) => mask(x, k))

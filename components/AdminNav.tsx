@@ -12,6 +12,7 @@
  */
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import {
   canManage,
   canManageAll,
@@ -21,6 +22,8 @@ import {
   type Role,
 } from "@/lib/auth";
 import { useAdminLang, useAdminT } from "@/lib/adminLang";
+import { isAdminRole } from "@/lib/loginStep";
+import { createClient } from "@/lib/supabase/client";
 
 export type AdminPageId =
   | "approve"
@@ -190,26 +193,80 @@ const ENTRIES: Entry[] = [
 export function AdminHeader({ title }: { title: string }) {
   const T = useAdminT();
   const [lang, setLang] = useAdminLang();
+  const needCode = useNeedsCode();
   return (
-    <div className="mb-4 flex items-start justify-between gap-3">
-      <h1 className="text-lg font-bold text-slate-900">{title}</h1>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <button
-          onClick={() => setLang(lang === "ja" ? "en" : "ja")}
-          title={lang === "ja" ? "English" : "日本語"}
-          className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
-        >
-          {lang === "ja" ? "A" : "あ"}
-        </button>
-        <Link
-          href="/"
-          className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
-        >
-          {T("地図へ")}
-        </Link>
+    <>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <h1 className="text-lg font-bold text-slate-900">{title}</h1>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            onClick={() => setLang(lang === "ja" ? "en" : "ja")}
+            title={lang === "ja" ? "English" : "日本語"}
+            className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200 active:scale-95"
+          >
+            {lang === "ja" ? "A" : "あ"}
+          </button>
+          <Link
+            href="/"
+            className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
+          >
+            {T("地図へ")}
+          </Link>
+        </div>
       </div>
-    </div>
+      {needCode && (
+        <div className="mb-4 rounded-2xl bg-amber-50 p-4 text-sm text-amber-900 ring-1 ring-amber-200">
+          <p className="font-bold">{T("このログインでは、まだ認証アプリの6桁を確かめていません")}</p>
+          <p className="mt-1 text-xs leading-relaxed">
+            {T("管理の操作は、6桁を確かめるまで使えません。パスワードだけで管理者の操作ができないようにしています。")}
+          </p>
+          <Link
+            href="/login"
+            className="mt-3 inline-block rounded-full bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700 active:scale-95"
+          >
+            {T("6桁を入れる")}
+          </Link>
+        </div>
+      )}
+    </>
   );
+}
+
+/**
+ * 管理の権限を持つのに、このログインで6桁を確かめていないか。
+ *
+ * データベースは、6桁を確かめていない管理者を学生として扱う
+ * （base/36_security.sql）。そのまま管理画面を使うと、何を押しても
+ * 「権限がありません」になり、何が起きているのか分からない。
+ * 見出しのすぐ下で先に知らせ、6桁を入れる所へ案内する。
+ *
+ * 権限は自分の行（profiles.role）から読む。自分の行はいつでも読めるので、
+ * 6桁の前でも本当の権限が分かる。
+ */
+function useNeedsCode(): boolean {
+  const [need, setNeed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const { data: lv } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (lv?.currentLevel === "aal2") return;
+        const { data: u } = await supabase.auth.getUser();
+        const id = u.user?.id;
+        if (!id) return;
+        const { data: me } = await supabase.from("profiles").select("role").eq("id", id).single();
+        const role = (me as { role?: string } | null)?.role ?? "";
+        if (alive && isAdminRole(role)) setNeed(true);
+      } catch {
+        /* 確かめられないときは出さない。各画面の判断に任せる */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return need;
 }
 
 /**

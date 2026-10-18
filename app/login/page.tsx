@@ -45,7 +45,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminMenu } from "@/components/AdminNav";
 import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
 import { isTrustedDevice, trustDevice } from "@/lib/device";
-import { decideStep, infoState, pickAff } from "@/lib/loginStep";
+import { decideStep, infoState, isAdminRole, pickAff } from "@/lib/loginStep";
 import {
   AFFILIATIONS,
   CLASS_CODES,
@@ -470,6 +470,18 @@ export default function LoginPage() {
         missing: info.missing,
       });
 
+      /*
+       * このログインで6桁を確かめたか。
+       * 管理者は、確かめていなければ覚えた端末でも確かめてもらう（36）。
+       */
+      let aal2 = false;
+      try {
+        const { data: lv } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        aal2 = lv?.currentLevel === "aal2";
+      } catch {
+        aal2 = false;
+      }
+
       setStep(
         decideStep({
           role: p.role,
@@ -477,6 +489,7 @@ export default function LoginPage() {
           infoDone,
           pwSet,
           trusted: isTrustedDevice(data.user.id),
+          aal2,
         }),
       );
     } else {
@@ -647,15 +660,30 @@ export default function LoginPage() {
        * ここを通れた＝この端末の認証アプリが、この席と結び付いた。
        * 申請の最後の関門で、通れば認証完了とする。
        *
-       * 相手はメールアドレスではなく席のIDで指す。アドレスは画面の
-       * 入力欄から来るので、書き換えられていると別の人の行を直してしまう。
+       * ★ 本人確認の印は、画面からは立てない。
+       *   前は画面が自分で verified = true を書いていた。それだと、
+       *   画面を通らずに同じ書き込みをすれば、認証アプリを登録しないまま
+       *   印が立ち、自動の承認まで進めてしまう。
+       *   sync_verified は、認証アプリが本当に登録されているかを
+       *   データベースの側（auth.mfa_factors）で見てから、自分の印を立てる。
+       *   （画面から直接書く道は、36 でふさいである）
        */
       const { data: u } = await supabase.auth.getUser();
-      const { error: e3 } = await supabase
-        .from("profiles")
-        .update({ verified: true })
-        .eq("id", u.user?.id ?? "");
-      if (e3) throw e3;
+      const { error: e3 } = await supabase.rpc("sync_verified");
+      if (e3) {
+        /*
+         * base/32 をまだ入れていないデータベースには sync_verified が無い
+         * （PGRST202）。そのときだけ、前と同じく直接書く。
+         * 36 は 32 が無いと流れないので、直接書く道がふさがったあとに
+         * ここへ来ることはない。
+         */
+        if (e3.code !== "PGRST202") throw e3;
+        const { error: e4 } = await supabase
+          .from("profiles")
+          .update({ verified: true })
+          .eq("id", u.user?.id ?? "");
+        if (e4) throw e4;
+      }
 
       setCode("");
       // いま確かめたので、この端末は覚えてよい
@@ -843,9 +871,24 @@ export default function LoginPage() {
        *   reload に続きを決めさせる（6桁の確認、または残りの段）。
        */
       const id = data.user?.id ?? "";
+      /*
+       * ★ 管理の権限を持つ人には、この近道を使わない。
+       *   覚えた端末でも、このログインで6桁を確かめるまでは
+       *   データベースが管理者として扱わない（36）。近道で地図へ
+       *   送ると、管理画面が「権限がありません」になるだけになる。
+       *   reload が、6桁の確認の段へ連れていく。
+       */
       if (id && isTrustedDevice(id)) {
-        location.href = "/";
-        return;
+        const { data: me } = await createClient()
+          .from("profiles")
+          .select("role")
+          .eq("id", id)
+          .single();
+        const role = (me as { role?: string } | null)?.role ?? "";
+        if (!isAdminRole(role)) {
+          location.href = "/";
+          return;
+        }
       }
       await reload();
     } catch (e) {
@@ -1026,11 +1069,28 @@ export default function LoginPage() {
           <b>{me.email}</b> {T("でログイン中")}
         </p>
 
+        {/*
+          管理の権限を持つ人は、覚えた端末でもここへ来る（ログインのたびに6桁）。
+          「はじめての端末」と出すと、覚えたはずなのにと迷わせるので、言い方を分ける。
+        */}
         <div className="mt-4 rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
-          <p className="text-xs font-bold text-amber-900">{T("この端末ははじめてです")}</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-amber-900">
-            {T("Microsoft Authenticator に出ている6桁を入れてください。次からは求めません。")}
-          </p>
+          {isAdminRole(me.role) ? (
+            <>
+              <p className="text-xs font-bold text-amber-900">
+                {T("管理の権限があるので、ログインのたびに6桁を確かめます")}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-amber-900">
+                {T("Microsoft Authenticator に出ている6桁を入れてください。ログインし直すまでは求めません。")}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-bold text-amber-900">{T("この端末ははじめてです")}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-amber-900">
+                {T("Microsoft Authenticator に出ている6桁を入れてください。次からは求めません。")}
+              </p>
+            </>
+          )}
         </div>
 
         <input

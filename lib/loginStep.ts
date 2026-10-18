@@ -89,7 +89,23 @@ export type StepInput = {
   pwSet: boolean;
   /** この端末で、前に本人確認を済ませているか */
   trusted: boolean;
+  /**
+   * このログインで、認証アプリの6桁を確かめたか（aal2）。
+   *
+   * データベースは、6桁を確かめていない管理者を学生として扱う
+   * （base/36_security.sql）。確かめないまま管理画面へ行かせると、
+   * 何を押しても「権限がありません」になる。
+   */
+  aal2: boolean;
 };
+
+/** 管理の権限。これを持つ人は、ログインのたびに6桁を確かめる */
+const ADMIN_ROLES = new Set(["admin_l0", "admin_l1", "admin_l2", "admin_l21", "admin_l22", "admin_l3"]);
+
+/** 管理の権限を持っているか */
+export function isAdminRole(role: string): boolean {
+  return ADMIN_ROLES.has(role);
+}
 
 /**
  * 次にどの段を出すか。
@@ -109,7 +125,21 @@ export function decideStep(i: StepInput): Step {
    * 毎回だと使ってもらえず、一度きりだと、パスワードが漏れた時点で
    * どこからでも入れてしまう。その間を取っている。
    */
-  if (i.role !== "pending") return i.trusted ? "done" : "verify";
+  if (i.role !== "pending") {
+    /*
+     * 管理の権限を持つ人は、覚えた端末でも、このログインで6桁を
+     * 確かめるまでは先へ進めない。
+     *
+     * パスワードだけで管理者の操作ができると、パスワードを盗まれた
+     * ときに二要素が何も守らない。データベース（36）も同じ決まりで
+     * 見ているので、ここで省くと管理画面が使えなくなるだけになる。
+     *
+     * 一度確かめれば、ログインが続くあいだ（トークンを更新しても）保たれる。
+     * 求められるのは、ログインし直したときだけ。
+     */
+    if (isAdminRole(i.role) && !i.aal2) return "verify";
+    return i.trusted ? "done" : "verify";
+  }
   /* 承認待ちだが、出すものは全部出した。あとは待つだけ */
   return "done";
 }

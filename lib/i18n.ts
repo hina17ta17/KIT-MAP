@@ -511,6 +511,11 @@ const EN: Record<string, string> = {
   "メールアドレスかパスワードが違います": "Wrong email or password",
   "パスワードの条件を満たしていません": "Password does not meet the requirement",
   "6桁の数字を入れてください": "Enter the 6-digit code",
+  "このログインでは、まだ認証アプリの6桁を確かめていません":
+    "You have not entered your authenticator code in this sign-in yet",
+  "管理の操作は、6桁を確かめるまで使えません。パスワードだけで管理者の操作ができないようにしています。":
+    "Admin actions are locked until you enter the 6-digit code. A password alone is not enough for admin actions.",
+  "6桁を入れる": "Enter the code",
   "6桁の数字が合いません。アプリの表示を確かめて、もう一度入れてください":
     "That code did not match. Check your app and try again.",
   "認証アプリの登録に失敗しました。もう一度お試しください":
@@ -576,6 +581,10 @@ const EN: Record<string, string> = {
     "Enter the 6-digit code from Microsoft Authenticator. We will not ask again on this device.",
   "この端末を確かめました。次からは求めません。":
     "This device is verified. We will not ask again here.",
+  "管理の権限があるので、ログインのたびに6桁を確かめます":
+    "You have admin rights, so we check your 6-digit code at every sign-in",
+  "Microsoft Authenticator に出ている6桁を入れてください。ログインし直すまでは求めません。":
+    "Enter the 6-digit code from Microsoft Authenticator. We will not ask again until you sign in again.",
   // メールで確かめていた頃の言い換えは、まとめて外してある。
   // このアプリはメールを一通も送らない。本人確認は認証アプリ、
   // パスワードを忘れた人は管理者が supabase/set_password.sql で決め直す。
