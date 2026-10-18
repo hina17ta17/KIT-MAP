@@ -724,6 +724,28 @@ const EN: Record<string, string> = {
     "Filtering by year, department, class and standing needs base/34_agent_find.sql in the database.",
   "席が消えた人は、学年や学科では出てきません（アドレスでは探せます）。":
     "People whose account is gone cannot be filtered by year or department (you can still search their address).",
+  /* ニュースの段と、期間の変更 */
+  申請中: "Pending",
+  開始前: "Scheduled",
+  進行中: "Running",
+  終了: "Ended",
+  取り下げ: "Withdrawn",
+  今までのもの: "Past posts",
+  "期間を変える": "Change dates",
+  "期間を延ばして、また出す": "Extend and run again",
+  "期間は、自分でいつでも変えられます。": "You can change the dates yourself at any time.",
+  "いま出ているもの・申請中のものはありません。": "Nothing is running or pending right now.",
+  "終わったものも、期間を延ばせば、申請し直さずにまた出せます。":
+    "Ended posts can run again — just extend the dates. No need to apply again.",
+  "取り下げ・断られたものを消す": "Delete withdrawn and declined",
+  "いつからいつまで出すかを決めてください。": "Choose the start and end dates.",
+  "期間の変更は、まだ使えません。データベースに base/35_news_period.sql を入れると使えるようになります。":
+    "Changing dates is not available yet — add base/35_news_period.sql to the database to turn it on.",
+  "期間を変えました。いま地図に出ています。": "Dates changed. It is on the map now.",
+  "期間を変えました。始まりの日から地図に出ます。": "Dates changed. It will appear on the map from the start date.",
+  "期間を変えました（終わりの日が過ぎているので、地図には出ません）。":
+    "Dates changed (the end date has passed, so it will not be on the map).",
+  "期間を変えました。このまま承認を待ちます。": "Dates changed. Still waiting for approval.",
   "写真の差し替え": "Photo changes",
   "いまの写真": "Now",
   "新しい写真": "New",
