@@ -297,7 +297,7 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
     } catch (e) {
       setMsg(
         e instanceof Error
-          ? `${e.message}（base/29_news.sql をまだ入れていない場合は、先に入れてください）`
+          ? `${e.message}（base/04_news.sql をまだ入れていない場合は、先に入れてください）`
           : String(e),
       );
     }
@@ -1119,7 +1119,7 @@ export default function AdminPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? e.message + "（base/06_admin.sql をまだ入れ直していない場合は、先に入れてください）"
+            ? e.message + "（base/01_core.sql をまだ入れ直していない場合は、先に入れてください）"
             : String(e),
       });
     } finally {
@@ -1149,7 +1149,7 @@ export default function AdminPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/17_seats.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/01_core.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1214,7 +1214,7 @@ export default function AdminPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/17_seats.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/01_core.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1793,7 +1793,7 @@ export default function AdminPage() {
                     {!st.has_profile && (
                       <p className="mt-1 rounded-lg bg-white px-2 py-1 text-[10px] leading-relaxed text-red-800">
                         {T("この席には情報がありません。本人はログインできますが、承認の一覧には出てきません。")}
-                        {T("90_tools.sql の ⑦ を実行すると、承認待ちとして戻せます。")}
+                        {T("91_tools.sql の ⑦ を実行すると、承認待ちとして戻せます。")}
                       </p>
                     )}
                   </div>

@@ -25,7 +25,7 @@
  *
  * ■ 一言は、出ている間でも自分で直せる（承認は要らない）
  *   打ち間違いを直すたびに承認を待たせるほどのものではない。
- *   直すとそのまま地図の入口に出る（base/37_news_rules.sql）。
+ *   直すとそのまま地図の入口に出る（base/04_news.sql）。
  *
  * ■ 期間は自分で変えられる。終わりの日を延ばすときだけ承認が要る
  *   早く終える・始まりを動かすのは、その場で変わる。
@@ -131,20 +131,20 @@ function phaseOf(n: Mine): Phase {
 /** 延長の申請を出していて、まだ決まっていないか */
 const pendingPeriod = (n: Mine) => !!n.next_to;
 
-/** 期間の変更の仕組み（base/35_news_period.sql）が、まだ入っていないとき */
+/** 期間の変更の仕組み（base/04_news.sql）が、まだ入っていないとき */
 const NO_PERIOD =
-  "期間の変更は、まだ使えません。データベースに base/35_news_period.sql を入れると使えるようになります。";
+  "期間の変更は、まだ使えません。データベースに base/04_news.sql を入れると使えるようになります。";
 
-/** 一言の修正・延長の申請（base/37_news_rules.sql）が、まだ入っていないとき */
+/** 一言の修正・延長の申請（base/04_news.sql）が、まだ入っていないとき */
 const NO_RULES =
-  "この操作は、まだ使えません。データベースに base/37_news_rules.sql を入れると使えるようになります。";
+  "この操作は、まだ使えません。データベースに base/04_news.sql を入れると使えるようになります。";
 
 /**
- * 差し替えの仕組み（base/33_news_photo.sql）が、まだ入っていないときの断り書き。
+ * 差し替えの仕組み（base/04_news.sql）が、まだ入っていないときの断り書き。
  * 画面だけ先に出ても、データベースに関数が無ければ何も起きない。
  */
 const NO_SWAP =
-  "写真の差し替えは、まだ使えません。データベースに base/33_news_photo.sql を入れると使えるようになります。";
+  "写真の差し替えは、まだ使えません。データベースに base/04_news.sql を入れると使えるようになります。";
 
 /** 2026-09-09 → 9月9日 */
 function md(d: string): string {
@@ -305,7 +305,7 @@ export default function NewsPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/29_news.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/04_news.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
       noteError("system", "ニュースを申請できませんでした", e);

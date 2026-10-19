@@ -561,7 +561,7 @@ export default function SchedulePage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/03_timetable.sql を入れ直していない場合は、先に入れてください）`
+            ? `${e.message}（base/02_campus.sql を入れ直していない場合は、先に入れてください）`
             : String(e),
       });
     } finally {

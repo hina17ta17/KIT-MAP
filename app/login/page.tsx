@@ -1843,7 +1843,7 @@ function ResetMine({ t: T }: { t: (ja: string) => string }) {
     } catch (e) {
       setMsg(
         e instanceof Error
-          ? `${e.message}（base/25_reset_mine.sql をまだ入れていない場合は、管理者にお知らせください）`
+          ? `${e.message}（base/01_core.sql をまだ入れていない場合は、管理者にお知らせください）`
           : String(e),
       );
     } finally {

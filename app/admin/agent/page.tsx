@@ -197,7 +197,7 @@ export default function AgentPage() {
     } catch (e) {
       setMsg(
         e instanceof Error
-          ? `${e.message}（base/27_agent_status.sql をまだ入れていない場合は、先に入れてください）`
+          ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
           : String(e),
       );
     }
@@ -347,7 +347,7 @@ export default function AgentPage() {
         <p className="mt-2 rounded-xl bg-red-50 p-3 text-[11px] leading-relaxed text-red-800">
           <b>{T("申請が溜まっているのに、しばらく何もしていません。")}</b>
           <br />
-          {T("base/14_auto_assign.sql を入れているか、名簿とドメインが入っているかをお確かめください。")}
+          {T("base/03_roster.sql を入れているか、名簿とドメインが入っているかをお確かめください。")}
           {T("それでも動かないときは、下の欄から手で承認できます。")}
         </p>
       )}
@@ -385,7 +385,7 @@ export default function AgentPage() {
       */}
       {noFind ? (
         <p className="mt-2 rounded-xl bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-900">
-          {T("学年・学科・クラス・身分での絞りこみは、データベースに base/34_agent_find.sql を入れると使えるようになります。")}
+          {T("学年・学科・クラス・身分での絞りこみは、データベースに base/03_roster.sql を入れると使えるようになります。")}
         </p>
       ) : (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

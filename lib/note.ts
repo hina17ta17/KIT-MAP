@@ -22,7 +22,7 @@
 
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 
-/** 履歴の分類。19_history.sql の area とそろえてある */
+/** 履歴の分類。05_feedback_history.sql の 05-3 の area とそろえてある */
 export type NoteArea =
   | "rooms"
   | "campus"

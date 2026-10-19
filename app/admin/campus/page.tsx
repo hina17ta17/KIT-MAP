@@ -507,7 +507,7 @@ export default function CampusPage() {
           kind: "err",
           text:
             e instanceof Error
-              ? `${e.message}（base/12_roster_import.sql を入れ直していない場合は、先に入れてください）`
+              ? `${e.message}（base/03_roster.sql を入れ直していない場合は、先に入れてください）`
               : String(e),
         });
       } finally {
@@ -643,7 +643,7 @@ export default function CampusPage() {
       return {
         rows: pick ? rows.filter((x) => pick.includes(String(x.kind ?? "other") as PeopleKind)) : rows,
         how: 2,
-        note: "課外活動リーダーの欄（Q列・R列）は、base/26_leader_cols.sql を入れると出ます。",
+        note: "課外活動リーダーの欄（Q列・R列）は、base/03_roster.sql を入れると出ます。",
       };
     } catch {
       /* 次を試す */
@@ -670,7 +670,7 @@ export default function CampusPage() {
     return {
       rows,
       how: 3,
-      note: "身分ごとに訊く古いやり方で集めました。base/24_people_all.sql を入れると、一度で確かに集められます。",
+      note: "身分ごとに訊く古いやり方で集めました。base/03_roster.sql を入れると、一度で確かに集められます。",
     };
   };
 
@@ -766,7 +766,7 @@ export default function CampusPage() {
             : String(e);
       setMsg({
         kind: "err",
-        text: `${raw}｜base/15_people.sql と base/24_people_all.sql が入っているかをお確かめください。`,
+        text: `${raw}｜base/03_roster.sql が入っているかをお確かめください。`,
       });
       noteError("people", "ログインしている人を書き出せませんでした", e);
     } finally {
@@ -813,7 +813,7 @@ export default function CampusPage() {
           kind: "err",
           text:
             e instanceof Error
-              ? `${e.message}（base/15_people.sql をまだ入れていない場合は、先に入れてください）`
+              ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
               : String(e),
         });
       } finally {
@@ -951,7 +951,7 @@ export default function CampusPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/12_roster_import.sql を入れ直していない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql を入れ直していない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1193,7 +1193,7 @@ export default function CampusPage() {
         kind: "err",
         text:
           (e instanceof Error ? e.message : String(e)) +
-          "（base/20_leader.sql をまだ入れていない場合は、先に入れてください）",
+          "（base/03_roster.sql をまだ入れていない場合は、先に入れてください）",
       });
       setLeadRows([]);
       setLeadTotal(0);
@@ -1278,7 +1278,7 @@ export default function CampusPage() {
           kind: "err",
           text:
             e instanceof Error
-              ? `${e.message}（base/28_number8.sql をまだ入れていない場合は、先に入れてください）`
+              ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
               : String(e),
         });
       } finally {
@@ -1308,7 +1308,7 @@ export default function CampusPage() {
    * ■ できるのはレベル2.2 と管理者だけ
    *   欄そのものを 2.1 には出していないが、ここでも見ている。
    *   画面の出し分けは、押せるかどうかを決めるものではない。
-   *   本当に止めているのはデータベース側（base/30_club_add.sql）。
+   *   本当に止めているのはデータベース側（base/02_campus.sql）。
    */
   const addActivity = async () => {
     if (!canManage(role)) {
@@ -1645,7 +1645,7 @@ export default function CampusPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/12_roster_import.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
       noteError("roster", `名簿を取り込めませんでした（${fileName}／${rows.length} 行）`, e);
@@ -1692,7 +1692,7 @@ export default function CampusPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/12_roster_import.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1774,7 +1774,7 @@ export default function CampusPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/13_domains.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1788,7 +1788,7 @@ export default function CampusPage() {
     /*
      * domains が読めていなくても、ここで黙って返さない。
      *
-     * 13_domains.sql を流す前は get_domains が無いので domains は空になる。
+     * 03_roster.sql の 03-3 を流す前は get_domains が無いので domains は空になる。
      * そこで返してしまうと、ボタンは押せるのに何も起きない——という
      * いちばん困る形になる（実際にそうなっていた）。
      * 空のまま進めて、データベース側の断りを画面に出す。
@@ -1852,7 +1852,7 @@ export default function CampusPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/13_domains.sql を入れ直していない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql を入れ直していない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -2494,7 +2494,7 @@ export default function CampusPage() {
                 この画面じたいは 2.1 も開けるが、団体を増やす欄は出さない。
                 増やしたものは消すのが難しい（リーダーも予定もぶら下がる）ので、
                 人の権限に触れられるのと同じ顔ぶれに合わせてある。
-                データベース側も base/30_club_add.sql で同じ所に締めてある。
+                データベース側も base/02_campus.sql で同じ所に締めてある。
             */}
             {canManage(role) && (
             <div className="mt-2 rounded-xl bg-emerald-50 p-2.5">

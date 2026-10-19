@@ -809,8 +809,8 @@ const EN: Record<string, string> = {
   "どの身分も": "Any standing",
   "この絞りこみに当たるものはありません。": "Nothing matches these filters.",
   "絞りを外すと、ぜんぶ出ます。": "Clear the filters to see everything.",
-  "学年・学科・クラス・身分での絞りこみは、データベースに base/34_agent_find.sql を入れると使えるようになります。":
-    "Filtering by year, department, class and standing needs base/34_agent_find.sql in the database.",
+  "学年・学科・クラス・身分での絞りこみは、データベースに base/03_roster.sql を入れると使えるようになります。":
+    "Filtering by year, department, class and standing needs base/03_roster.sql in the database.",
   "席が消えた人は、学年や学科では出てきません（アドレスでは探せます）。":
     "People whose account is gone cannot be filtered by year or department (you can still search their address).",
   /* ニュースの段と、期間の変更 */
@@ -828,8 +828,8 @@ const EN: Record<string, string> = {
     "Ended posts can run again — just extend the dates. No need to apply again.",
   "取り下げ・断られたものを消す": "Delete withdrawn and declined",
   "いつからいつまで出すかを決めてください。": "Choose the start and end dates.",
-  "期間の変更は、まだ使えません。データベースに base/35_news_period.sql を入れると使えるようになります。":
-    "Changing dates is not available yet — add base/35_news_period.sql to the database to turn it on.",
+  "期間の変更は、まだ使えません。データベースに base/04_news.sql を入れると使えるようになります。":
+    "Changing dates is not available yet — add base/04_news.sql to the database to turn it on.",
   "期間を変えました。いま地図に出ています。": "Dates changed. It is on the map now.",
   "期間を変えました。始まりの日から地図に出ます。": "Dates changed. It will appear on the map from the start date.",
   "期間を変えました（終わりの日が過ぎているので、地図には出ません）。":
@@ -841,8 +841,8 @@ const EN: Record<string, string> = {
   "差し替えを通す": "Approve the change",
   "差し替えを待っているものはありません。": "No photo changes are waiting.",
   "通るまでは、いまの写真が出ています。": "Until it is approved, the current photo stays up.",
-  "写真の差し替えは、まだ使えません。データベースに base/33_news_photo.sql を入れると使えるようになります。":
-    "Photo replacement is not available yet — add base/33_news_photo.sql to the database to turn it on.",
+  "写真の差し替えは、まだ使えません。データベースに base/04_news.sql を入れると使えるようになります。":
+    "Photo replacement is not available yet — add base/04_news.sql to the database to turn it on.",
 
   /* 課外活動のお気に入り */
   "お気に入りに入れる": "Add to favorites",

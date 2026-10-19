@@ -40,7 +40,7 @@ export type Role =
  * ■ 入っていないときは「通す」
  *   入れ忘れたときに全員を弾くと、いま使えている人までログインできなくなる。
  *   ここは画面の親切であって、守っているのはデータベース側の
- *   check_email_domain（01_base.sql）。あちらは必ず効くので、
+ *   check_email_domain（01_core.sql の 01-1）。あちらは必ず効くので、
  *   ここが空でも大学以外のアドレスは通らない。
  */
 export const ALLOWED_DOMAINS: string[] = (process.env.NEXT_PUBLIC_ALLOWED_DOMAINS ?? "")

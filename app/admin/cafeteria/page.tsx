@@ -325,7 +325,7 @@ export default function CafeteriaAdminPage() {
     if (error) {
       setMsg({
         kind: "err",
-        text: `${error.message}（base/04_cafeteria.sql を入れ直していない場合は、先に入れてください）`,
+        text: `${error.message}（base/02_campus.sql を入れ直していない場合は、先に入れてください）`,
       });
       return;
     }

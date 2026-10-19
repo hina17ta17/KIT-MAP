@@ -1457,7 +1457,7 @@ function TeachingApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }
     setBusy(true);
     await run(async () => {
       const { data, error } = await createClient().rpc("apply_teaching");
-      if (error) throw new Error(`${error.message}（base/18_teaching.sql をまだ入れていない場合は、先に入れてください）`);
+      if (error) throw new Error(`${error.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`);
       return data as AgentAnswer;
     });
     await onDone();
@@ -1619,7 +1619,7 @@ function LeaderApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) 
         p_activity_id: actId,
       });
       if (error)
-        throw new Error(`${error.message}（base/20_leader.sql をまだ入れていない場合は、先に入れてください）`);
+        throw new Error(`${error.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`);
       return data as AgentAnswer;
     });
     await onDone();

@@ -54,7 +54,7 @@ type Row = {
 /**
  * 六つの分類。
  *
- * id は 19_history.sql の area とそろえてある。
+ * id は 05_feedback_history.sql の 05-3 の area とそろえてある。
  * ここを変えるときは、あちらの引き金の掛け方も一緒に変える。
  */
 const AREAS: { id: string; label: string; sub: string; icon: string }[] = [
@@ -226,7 +226,7 @@ export default function HistoryPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/19_history.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/05_feedback_history.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {

@@ -42,7 +42,7 @@
  * ■ 何回まで試せるか
  *
  *   同じアドレスで5回まちがえると、15分は何も受け付けない
- *   （数えているのは base/16_password_reset.sql）。
+ *   （数えているのは base/01_core.sql）。
  *   6桁は100万通りあるが、数えないと機械にはいつか当てられる。
  */
 
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
   const { data: gate, error: gateErr } = await admin.rpc("pw_reset_gate", { p_email: email });
   if (gateErr) {
     return bad(
-      `${gateErr.message}（base/16_password_reset.sql をまだ入れていない場合は、先に入れてください）`,
+      `${gateErr.message}（base/01_core.sql をまだ入れていない場合は、先に入れてください）`,
       500,
     );
   }

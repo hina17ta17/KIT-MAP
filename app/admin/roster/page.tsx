@@ -493,7 +493,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/18_teaching.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -591,7 +591,7 @@ export default function RosterPage() {
           kind: "err",
           text:
             e instanceof Error
-              ? `${e.message}（base/12_roster_import.sql を入れ直していない場合は、先に入れてください）`
+              ? `${e.message}（base/03_roster.sql を入れ直していない場合は、先に入れてください）`
               : String(e),
         });
       } finally {
@@ -667,7 +667,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/20_leader.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -741,7 +741,7 @@ export default function RosterPage() {
           kind: "err",
           text:
             e instanceof Error
-              ? `${e.message}（base/15_people.sql をまだ入れていない場合は、先に入れてください）`
+              ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
               : String(e),
         });
       } finally {
@@ -879,7 +879,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/12_roster_import.sql を入れ直していない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql を入れ直していない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1038,7 +1038,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/12_roster_import.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1084,7 +1084,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/12_roster_import.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1166,7 +1166,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/13_domains.sql をまだ入れていない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql をまだ入れていない場合は、先に入れてください）`
             : String(e),
       });
     } finally {
@@ -1180,7 +1180,7 @@ export default function RosterPage() {
     /*
      * domains が読めていなくても、ここで黙って返さない。
      *
-     * 13_domains.sql を流す前は get_domains が無いので domains は空になる。
+     * 03_roster.sql の 03-3 を流す前は get_domains が無いので domains は空になる。
      * そこで返してしまうと、ボタンは押せるのに何も起きない——という
      * いちばん困る形になる（実際にそうなっていた）。
      * 空のまま進めて、データベース側の断りを画面に出す。
@@ -1244,7 +1244,7 @@ export default function RosterPage() {
         kind: "err",
         text:
           e instanceof Error
-            ? `${e.message}（base/13_domains.sql を入れ直していない場合は、先に入れてください）`
+            ? `${e.message}（base/03_roster.sql を入れ直していない場合は、先に入れてください）`
             : String(e),
       });
     } finally {

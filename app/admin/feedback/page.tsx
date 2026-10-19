@@ -90,7 +90,7 @@ export default function FeedbackPage() {
       /*
        * 並べる列は、どの版のデータベースにもあるものだけにする。
        *
-       * 前は reported という列も並べていた。それは 05_feedback.sql で
+       * 前は reported という列も並べていた。それは 05_feedback_history.sql の 05-1 で
        * 足すもので、入っていない間は——PostgREST は知らない列が
        * 一つでもあると問い合わせ全部を断るので——感想が一件も
        * 出てこなかった（届いていたのに、画面には空と出ていた）。
@@ -204,7 +204,7 @@ export default function FeedbackPage() {
 
     const { data, error } = await createClient().rpc("feedback_purge", { p_ids: ids });
     if (error) {
-      setMsg(`${error.message}（base/05_feedback.sql をまだ入れていない場合は、先に入れてください）`);
+      setMsg(`${error.message}（base/05_feedback_history.sql をまだ入れていない場合は、先に入れてください）`);
       return;
     }
     setRows((prev) => prev.filter((r) => !picked.has(r.id)));
@@ -230,7 +230,7 @@ export default function FeedbackPage() {
     const ids = read.map((r) => r.id);
     const { data, error } = await createClient().rpc("feedback_purge", { p_ids: ids });
     if (error) {
-      setMsg(`${error.message}（base/05_feedback.sql をまだ入れていない場合は、先に入れてください）`);
+      setMsg(`${error.message}（base/05_feedback_history.sql をまだ入れていない場合は、先に入れてください）`);
       return;
     }
     setRows((prev) => prev.filter((r) => !r.handled));
