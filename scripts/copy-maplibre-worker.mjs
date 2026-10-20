@@ -52,6 +52,8 @@ const from = path.join(root, "node_modules", "maplibre-gl", "dist");
 const to = path.join(root, "public", "maplibre");
 
 /** 写すもの。worker は shared を読むので、二つで一組 */
+// 6.15 からは worker が一つで完結し、shared は空のファイルになった。
+// 前の版に戻したときにも動くよう、二つとも写しておく
 const FILES = ["maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"];
 
 if (!fs.existsSync(from)) {

@@ -512,14 +512,17 @@ export default function RosterPage() {
    *
    * 権限だけでは決まらない（教職として通っている教授かどうか）ので、
    * 画面で数えずに、決める側に訊く。
+   *
+   * ログインしていないうちは訊かない。訊いても断られる（401）だけで、
+   * ブラウザにエラーが残る。ログインが分かってから（role が入ってから）訊く。
    */
   useEffect(() => {
-    if (!supabaseReady) return;
+    if (!supabaseReady || !role) return;
     void (async () => {
       const { data } = await createClient().rpc("can_see_teaching");
       setTCan(data === true);
     })();
-  }, []);
+  }, [role]);
 
   /* ---------------- 名簿の中を、一人ずつ見る ---------------- */
 

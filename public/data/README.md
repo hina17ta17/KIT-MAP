@@ -35,7 +35,7 @@ CDN から配信する。作図ツール（`/`）で書き出したファイル�
 }
 ```
 
-用途：圏内／圏外の判定（`turf.booleanPointInPolygon`）。
+用途：圏内／圏外の判定（敷地のへりまでの距離。`lib/geo.ts` の `metersToRing` と、`components/Guide.tsx` の `inCampus`）。
 
 ## buildings.geojson（建物・屋外設備）
 
