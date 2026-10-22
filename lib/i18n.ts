@@ -1035,6 +1035,50 @@ const EN: Record<string, string> = {
   学生の名簿: "Student roster",
   教職員の名簿: "Staff roster",
   教職の欄: "Teaching column",
+
+  /* サイトの緊急停止（components/SiteGate.tsx・承認・権限の管理のいちばん下） */
+  ただいまメンテナンス中です: "Under maintenance",
+  "KIT map は、いま一時的に止めています。しばらくしてから、もう一度開いてください。":
+    "KIT map is temporarily unavailable. Please try again later.",
+  "確かめています…": "Checking…",
+  もう一度読み込む: "Reload",
+  "ログアウトして、管理者として入る": "Log out and sign in as an administrator",
+  管理者の方はこちら: "Administrators sign in here",
+  サイトを止めています: "The site is stopped",
+  "いまサイトを止めています（緊急停止）": "The site is stopped (emergency stop)",
+  "管理者のほかは、開いても「メンテナンス中」と出ます。再開は「承認・権限の管理」のいちばん下から。":
+    "Everyone except administrators sees a maintenance page. Resume the site at the bottom of Approvals & roles.",
+  "サイトを止めます。": "The site will be stopped.",
+  "管理者のほかは、どの画面を開いても「メンテナンス中」と出て、先へ進めなくなります。":
+    "Everyone except administrators will see a maintenance page on every screen and cannot continue.",
+  "いま開いている人も、1分ほどで止まります。":
+    "People who already have the site open will be stopped within about a minute.",
+  "よろしいですか？": "Is that all right?",
+  "サイトを再開します。": "The site will be resumed.",
+  "すべての人が、ふだんどおり使えるようになります。": "Everyone will be able to use the site as usual.",
+  "サイトを止めました。もう一度押すと再開します。": "The site has been stopped. Press again to resume it.",
+  "サイトを再開しました。": "The site has been resumed.",
+  "データベースに緊急停止の関数がまだありません。base の 01〜05 を順に貼ってから押してください。":
+    "The emergency stop is not in the database yet. Run base 01–05 in order, then try again.",
+  サイトの緊急停止: "Emergency stop",
+  様子が分かりません: "Unknown",
+  止めています: "Stopped",
+  動いています: "Running",
+  "押すと、管理者のほかは、サイトを開いても「メンテナンス中」と出て、先へ進めなくなります。データベースも、管理者のほかの読み書きを断ります。":
+    "When pressed, everyone except administrators sees a maintenance page and cannot continue. The database also refuses their reads and writes.",
+  "止めているあいだも、管理者はふだんどおり使えます。もう一度押すと元に戻ります。":
+    "Administrators can keep using the site while it is stopped. Press again to restore it.",
+  止めた時刻: "Stopped at",
+  "いまの様子を読めませんでした。データベースに base/01_core.sql の 01-9 が入っているか確かめてください。":
+    "Could not read the current status. Check that section 01-9 of base/01_core.sql is in the database.",
+  サイトを再開する: "Resume the site",
+  サイトを止める: "Stop the site",
+  "ただいまメンテナンス中です。いまは管理者だけがログインできます。":
+    "The site is under maintenance. Only administrators can log in right now.",
+  "いまは管理者だけがログインできます。しばらくしてから、もう一度開いてください。":
+    "Only administrators can log in right now. Please try again later.",
+  "新しいパスワードにしました。ただいまメンテナンス中のため、いまは管理者だけがログインできます。":
+    "Your password has been changed. The site is under maintenance, so only administrators can log in right now.",
 };
 
 /** 建物の名前のうち、号館ではないもの */

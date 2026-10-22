@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { SessionEpoch } from "@/components/SessionEpoch";
 import ErrorNote from "@/components/ErrorNote";
+import { SiteGate } from "@/components/SiteGate";
 
 export const metadata: Metadata = {
   // タブに出る名前。案内画面が入口なのでこれだけにする
@@ -35,7 +36,8 @@ export default function RootLayout({
         <SessionEpoch />
         {/* 画面で起きたエラーを、そのままの言葉で履歴に残す */}
         <ErrorNote />
-        {children}
+        {/* サイトを止めているあいだ（緊急停止）、管理者以外にはメンテナンス中の画面を出す */}
+        <SiteGate>{children}</SiteGate>
       </body>
     </html>
   );

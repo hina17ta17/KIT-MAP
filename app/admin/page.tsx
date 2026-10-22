@@ -40,7 +40,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
+import { useSiteGate } from "@/components/SiteGate";
 import { useAdminT } from "@/lib/adminLang";
+import { noteError, noteEvent } from "@/lib/note";
 import {
   AFFILIATIONS,
   AFFILIATION_LABEL,
@@ -2408,7 +2410,142 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/*
+        サイトの緊急停止。いちばん下に置く。
+
+        押せるのは管理者（いちばん上の権限）だけなので、この欄も管理者にしか出さない。
+        2.2 はこの画面を使えるが、ここは見えない。
+      */}
+      {myRole === "admin_l3" && <SiteStop t={T} />}
     </Shell>
+  );
+}
+
+/* ---------------- サイトの緊急停止 ---------------- */
+
+/**
+ * サイトを止める・再開する。
+ *
+ * 押すと、管理者（admin_l3）のほかは、どの画面を開いても「メンテナンス中」になり、
+ * 先へ進めなくなる。データベースも、管理者のほかの問い合わせを入口で断る
+ * （base/01_core.sql の 01-9）。止めているあいだも、管理者はふだんどおり使える。
+ * もう一度押すと元に戻る。
+ *
+ * 守っているのはデータベースの set_site_stop。ここは出し分けと、押す口だけ。
+ *
+ * 押したときに一度だけ訊く。急いで止めたいときに使うものなので、
+ * パスワードの入れ直しまでは求めない（6桁を確かめたログインであることは、
+ * データベースのほうが求める）。
+ *
+ * 押す前の様子に合わせて「止める」か「再開する」かを送る。
+ * 「切り替えて」と送らないのは、二度押したときに元へ戻ってしまわないため。
+ */
+function SiteStop({ t: T }: { t: (ja: string) => string }) {
+  const { state, recheck } = useSiteGate();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const stopped = state?.stopped === true;
+
+  const toggle = async () => {
+    const next = !stopped;
+    const ask = next
+      ? [
+          T("サイトを止めます。"),
+          "",
+          T("管理者のほかは、どの画面を開いても「メンテナンス中」と出て、先へ進めなくなります。"),
+          T("いま開いている人も、1分ほどで止まります。"),
+          "",
+          T("よろしいですか？"),
+        ]
+      : [
+          T("サイトを再開します。"),
+          "",
+          T("すべての人が、ふだんどおり使えるようになります。"),
+          "",
+          T("よろしいですか？"),
+        ];
+    if (!window.confirm(ask.join(BR))) return;
+
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await createClient().rpc("set_site_stop", { p_stop: next });
+      if (error) throw error;
+      await recheck();
+      noteEvent("system", next ? "サイトを止めました（緊急停止）" : "サイトを再開しました（緊急停止を解いた）");
+      setMsg({
+        kind: "ok",
+        text: next
+          ? T("サイトを止めました。もう一度押すと再開します。")
+          : T("サイトを再開しました。"),
+      });
+    } catch (e) {
+      const err = (e ?? {}) as { code?: string; message?: string };
+      noteError("system", next ? "サイトを止められませんでした" : "サイトを再開できませんでした", e);
+      setMsg({
+        kind: "err",
+        text:
+          err.code === "PGRST202"
+            ? T("データベースに緊急停止の関数がまだありません。base の 01〜05 を順に貼ってから押してください。")
+            : (err.message ?? String(e)),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-10 rounded-2xl border-2 border-red-300 bg-red-50/60 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-bold text-red-900">{T("サイトの緊急停止")}</div>
+        <span
+          className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+            state === null
+              ? "bg-slate-200 text-slate-600"
+              : stopped
+                ? "bg-red-600 text-white"
+                : "bg-emerald-100 text-emerald-800"
+          }`}
+        >
+          {state === null ? T("様子が分かりません") : stopped ? T("止めています") : T("動いています")}
+        </span>
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-red-900/80">
+        {T("押すと、管理者のほかは、サイトを開いても「メンテナンス中」と出て、先へ進めなくなります。データベースも、管理者のほかの読み書きを断ります。")}
+        <br />
+        {T("止めているあいだも、管理者はふだんどおり使えます。もう一度押すと元に戻ります。")}
+      </p>
+      {stopped && state?.since && (
+        <p className="mt-2 text-[11px] font-bold text-red-900">
+          {T("止めた時刻")}：{whenShort(state.since)}
+          {state.by ? `（${state.by}）` : ""}
+        </p>
+      )}
+      {state === null && (
+        <p className="mt-2 text-[11px] leading-relaxed text-amber-800">
+          {T("いまの様子を読めませんでした。データベースに base/01_core.sql の 01-9 が入っているか確かめてください。")}
+        </p>
+      )}
+      <button
+        onClick={() => void toggle()}
+        disabled={busy}
+        className={`mt-3 w-full rounded-xl px-4 py-3 text-sm font-bold text-white transition active:scale-95 disabled:bg-slate-300 ${
+          stopped ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+        }`}
+      >
+        {busy ? T("処理中…") : stopped ? T("サイトを再開する") : T("サイトを止める")}
+      </button>
+      {msg && (
+        <p
+          className={`mt-3 rounded-xl p-3 text-xs leading-relaxed ${
+            msg.kind === "ok" ? "bg-emerald-50 text-emerald-900" : "bg-red-100 text-red-800"
+          }`}
+        >
+          {msg.text}
+        </p>
+      )}
+    </section>
   );
 }
 

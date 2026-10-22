@@ -23,6 +23,7 @@ import {
 } from "@/lib/auth";
 import { useAdminLang, useAdminT } from "@/lib/adminLang";
 import { needsCode } from "@/lib/aal";
+import { useSiteGate } from "@/components/SiteGate";
 
 export type AdminPageId =
   | "approve"
@@ -193,8 +194,22 @@ export function AdminHeader({ title }: { title: string }) {
   const T = useAdminT();
   const [lang, setLang] = useAdminLang();
   const needCode = useNeedsCode();
+  const { state: site } = useSiteGate();
   return (
     <>
+      {/*
+        サイトを止めているあいだ（緊急停止）。止めたことを忘れないよう、
+        どの管理の画面でもいちばん上に出す。止めているあいだにこの画面まで
+        来られるのは管理者だけなので、見えるのも管理者だけ。
+      */}
+      {site?.stopped && site.pass && (
+        <div className="mb-4 rounded-2xl bg-red-50 p-4 text-sm text-red-900 ring-1 ring-red-200">
+          <p className="font-bold">{T("いまサイトを止めています（緊急停止）")}</p>
+          <p className="mt-1 text-xs leading-relaxed">
+            {T("管理者のほかは、開いても「メンテナンス中」と出ます。再開は「承認・権限の管理」のいちばん下から。")}
+          </p>
+        </div>
+      )}
       <div className="mb-4 flex items-start justify-between gap-3">
         <h1 className="text-lg font-bold text-slate-900">{title}</h1>
         <div className="flex shrink-0 items-center gap-1.5">

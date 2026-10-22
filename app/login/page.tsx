@@ -43,6 +43,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminMenu } from "@/components/AdminNav";
+import { readSiteGate, useSiteGate } from "@/components/SiteGate";
 import { LANG_KEY, t as tr, type Lang } from "@/lib/i18n";
 import { isTrustedDevice, trustDevice } from "@/lib/device";
 import { decideStep, infoState, isAdminRole, pickAff } from "@/lib/loginStep";
@@ -193,6 +194,13 @@ export default function LoginPage() {
   }, []);
 
   const [mode, setMode] = useState<"login" | "signup">("login");
+  /**
+   * サイトを止めているか（緊急停止）。止めているあいだ、この画面は
+   * 管理者が入るためだけに開けてある（components/SiteGate.tsx）。
+   * 申請は出さず、ログインだけを出す。
+   */
+  const site = useSiteGate().state;
+  const siteStopped = site?.stopped === true && !site.pass;
   /**
    * パスワードを忘れた人の欄を開いているか。
    *
@@ -844,6 +852,25 @@ export default function LoginPage() {
 
   /* ---------------- ログイン ---------------- */
 
+  /**
+   * 入った直後に、サイトを止めていないかを見る（緊急停止）。
+   *
+   * 止めているあいだ、管理者のほかはデータベースに断られる。そのまま進めると、
+   * 自分の情報を読めずに「この席の情報が見つかりません」と出て、
+   * 消されたのかと思わせてしまう。管理者でなければその場でログアウトさせ、
+   * true を返す（呼んだ側が理由を出す）。
+   */
+  const refusedByStop = async (): Promise<boolean> => {
+    const gate = await readSiteGate();
+    if (!gate?.stopped || gate.pass) return false;
+    try {
+      await createClient().auth.signOut();
+    } catch {
+      // 出られなくても、データベースは断るので先へは進めない
+    }
+    return true;
+  };
+
   const signIn = async () => {
     setMsg(null);
     if (!isAllowedEmail(email)) {
@@ -857,6 +884,12 @@ export default function LoginPage() {
         password: pw,
       });
       if (error) throw error;
+
+      if (await refusedByStop()) {
+        setPw("");
+        setMsg({ kind: "err", text: T("ただいまメンテナンス中です。いまは管理者だけがログインできます。") });
+        return;
+      }
 
       /*
        * ★ここで地図へ飛ばしてはいけない
@@ -1027,6 +1060,13 @@ export default function LoginPage() {
       if (error) {
         // 入れ直しは済んでいる。あとは打ってもらえばよい
         setMsg({ kind: "ok", text: T("新しいパスワードにしました。ログインしてください。") });
+        return;
+      }
+      if (await refusedByStop()) {
+        setMsg({
+          kind: "err",
+          text: T("新しいパスワードにしました。ただいまメンテナンス中のため、いまは管理者だけがログインできます。"),
+        });
         return;
       }
       await reload();
@@ -1232,27 +1272,40 @@ export default function LoginPage() {
         </div>
       )}
 
-      <div className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1">
-        {(["login", "signup"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => {
-              setMode(m);
-              setMsg(null);
-              // 行き来したときに、途中の段が残らないように
-              setSignupStep(1);
-              setPw("");
-            }}
-            className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
-              mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-            }`}
-          >
-            {m === "login" ? T("ログイン") : T("利用を申請")}
-          </button>
-        ))}
-      </div>
+      {/*
+        サイトを止めているあいだ（緊急停止）。入れるのは管理者だけなので、
+        申請の口は閉じ、ログインだけを出す。
+      */}
+      {siteStopped ? (
+        <div className="mb-3 mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-3">
+          <div className="text-xs font-bold text-amber-900">{T("ただいまメンテナンス中です")}</div>
+          <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+            {T("いまは管理者だけがログインできます。しばらくしてから、もう一度開いてください。")}
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 flex gap-1 rounded-xl bg-slate-100 p-1">
+          {(["login", "signup"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => {
+                setMode(m);
+                setMsg(null);
+                // 行き来したときに、途中の段が残らないように
+                setSignupStep(1);
+                setPw("");
+              }}
+              className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
+                mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+              }`}
+            >
+              {m === "login" ? T("ログイン") : T("利用を申請")}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {mode === "login" ? (
+      {mode === "login" || siteStopped ? (
         <>
           <input
             value={email}
