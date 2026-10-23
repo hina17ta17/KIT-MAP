@@ -1016,8 +1016,9 @@ export default function AdminPage() {
    * 取り違えると戻せなかったため。いまは印を付けて消す（下の resetRoles）。
    *
    * データベース側の関数（reset_everyone / reset_everything /
-   * reset_by_affiliation）は消していない。画面からは呼ばないが、
-   * どうしようもなくなったときに SQL から使える道は残しておく。
+   * reset_by_affiliation）は消していないが、画面からは呼ばないので、
+   * ログインした人からは呼べないように閉じた（base/01_core.sql の 01-2）。
+   * パスワードを求めない消し方が、盗まれたログインから使われないようにするため。
    */
 
   /**
