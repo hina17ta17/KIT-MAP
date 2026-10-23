@@ -13,14 +13,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  canManage,
-  canManageAll,
-  canManageCafeteria,
-  canReadFeedback,
-  canReadRoster,
-  type Role,
-} from "@/lib/auth";
+import { canManageAll, type Role } from "@/lib/auth";
+import { ADMIN_ACCESS } from "@/lib/adminAccess";
 import { useAdminLang, useAdminT } from "@/lib/adminLang";
 import { needsCode } from "@/lib/aal";
 import { useSiteGate } from "@/components/SiteGate";
@@ -62,7 +56,7 @@ const ENTRIES: Entry[] = [
     icon: "🤖",
     label: "kit-agent の様子",
     sub: "働いているか、誰を通して誰をはじいたか",
-    allowed: canManageAll,
+    allowed: ADMIN_ACCESS.agent,
   },
   /*
    * ニュース。kit-agent と 承認・権限 のあいだ。
@@ -77,8 +71,7 @@ const ENTRIES: Entry[] = [
     icon: "📰",
     label: "ニュースを入れる",
     sub: "写真と開く先を決めて申請する",
-    allowed: (r) =>
-      r === "admin_l0" || r === "admin_l1" || r === "admin_l2" || canManageAll(r),
+    allowed: ADMIN_ACCESS.news,
   },
   {
     id: "approve",
@@ -86,7 +79,7 @@ const ENTRIES: Entry[] = [
     icon: "✓",
     label: "承認・権限の管理",
     sub: "利用申請の承認と、権限の変更",
-    allowed: canManage,
+    allowed: ADMIN_ACCESS.approve,
   },
   {
     id: "roster",
@@ -100,7 +93,7 @@ const ENTRIES: Entry[] = [
      * 教授（レベル2）は学生の名簿だけ見られるので、ここは
      * canReadRoster にしてある。
      */
-    allowed: canReadRoster,
+    allowed: ADMIN_ACCESS.roster,
   },
   {
     id: "campus",
@@ -108,7 +101,7 @@ const ENTRIES: Entry[] = [
     icon: "🏫",
     label: "大学の情報登録",
     sub: "教室・学科・ドメイン・ログインしている人",
-    allowed: canManageAll,
+    allowed: ADMIN_ACCESS.campus,
   },
   {
     id: "schedule",
@@ -116,7 +109,7 @@ const ENTRIES: Entry[] = [
     icon: "📘",
     label: "予定の登録",
     sub: "授業・イベント・課外活動",
-    allowed: (r) => r === "admin_l1" || r === "admin_l2" || canManageAll(r),
+    allowed: ADMIN_ACCESS.schedule,
   },
   {
     id: "plan",
@@ -125,7 +118,7 @@ const ENTRIES: Entry[] = [
     label: "予定の確認",
     sub: "登録されている授業を、日ごとに見る",
     // 予定を入れられる人と、教授。入れたものを確かめる欄なので同じ顔ぶれ
-    allowed: (r) => r === "admin_l1" || r === "admin_l2" || canManageAll(r),
+    allowed: ADMIN_ACCESS.plan,
   },
   {
     id: "cafeteria",
@@ -133,7 +126,7 @@ const ENTRIES: Entry[] = [
     icon: "🍚",
     label: "食堂のメニュー",
     sub: "その日の提供状況と品名",
-    allowed: canManageCafeteria,
+    allowed: ADMIN_ACCESS.cafeteria,
   },
   {
     id: "feedback",
@@ -141,7 +134,7 @@ const ENTRIES: Entry[] = [
     icon: "✉",
     label: "みんなの感想",
     sub: "使っている人から届いた声。名前は分かりません",
-    allowed: canReadFeedback,
+    allowed: ADMIN_ACCESS.feedback,
   },
   /*
    * 履歴。感想のすぐ下に置く。
@@ -156,7 +149,7 @@ const ENTRIES: Entry[] = [
     icon: "🕘",
     label: "履歴",
     sub: "いつ・誰が・何をしたか。エラーも残ります",
-    allowed: canManageAll,
+    allowed: ADMIN_ACCESS.history,
   },
   /*
    * 作図ツールは、手元でだけ動かす道具。
