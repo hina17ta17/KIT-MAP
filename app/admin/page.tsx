@@ -895,6 +895,14 @@ function whenShort(iso: string): string {
 export default function AdminPage() {
   const T = useAdminT();
   const [myRole, setMyRole] = useState<Role | null>(null);
+  /**
+   * このログインで認証アプリの6桁を確かめたか（aal2）。
+   *
+   * 緊急停止の欄は、管理者がこれを済ませたときだけ出す。データベースも
+   * 6桁の前の管理者には押させない。パスワードだけを盗まれた人に、
+   * 押せないボタンを見せる理由が無い。
+   */
+  const [codeOk, setCodeOk] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -964,6 +972,12 @@ export default function AdminPage() {
     const { data: me } = await supabase.from("profiles").select("role").eq("id", u.user.id).single();
     const role = (me?.role as Role) ?? null;
     setMyRole(role);
+    try {
+      const { data: lv } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      setCodeOk(lv?.currentLevel === "aal2");
+    } catch {
+      setCodeOk(false);
+    }
 
     if (canManage(role)) {
       /*
@@ -2415,9 +2429,10 @@ export default function AdminPage() {
         サイトの緊急停止。いちばん下に置く。
 
         押せるのは管理者（いちばん上の権限）だけなので、この欄も管理者にしか出さない。
-        2.2 はこの画面を使えるが、ここは見えない。
+        2.2 はこの画面を使えるが、ここは見えない。管理者でも、このログインで
+        6桁を確かめるまでは出さない（見出しの下に、6桁を入れる案内が出ている）。
       */}
-      {myRole === "admin_l3" && <SiteStop t={T} />}
+      {myRole === "admin_l3" && codeOk && <SiteStop t={T} />}
     </Shell>
   );
 }
