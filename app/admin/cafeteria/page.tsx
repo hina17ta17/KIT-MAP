@@ -19,6 +19,7 @@ import { useAdminT } from "@/lib/adminLang";
 import MultiDatePicker from "@/components/MultiDatePicker";
 import { ROLE_LABEL, canManageAll, canManageCafeteria, type Role } from "@/lib/auth";
 import { dayColor, holidayName } from "@/lib/holidays";
+import { soon } from "@/lib/soon";
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -115,11 +116,28 @@ export default function CafeteriaAdminPage() {
   /** まとめて入れる欄を開いているか */
   const [bulkOpen, setBulkOpen] = useState(false);
 
+  /** その日の登録済みを読む（下の読み込みが使うので、先に置く） */
+  const loadDay = useCallback(async (d: Date) => {
+    const supabase = createClient();
+    const [a, b] = await Promise.all([
+      supabase.from("counter_days").select("item_id, state").eq("on_date", ymd(d)),
+      supabase.from("menu_days").select("item_id, name, price, image").eq("on_date", ymd(d)),
+    ]);
+    setStates(new Map(((a.data as { item_id: number; state: string }[]) ?? []).map((r) => [r.item_id, r.state])));
+    setMenus(
+      new Map(
+        (
+          (b.data as { item_id: number; name: string; price: number | null; image: string }[]) ?? []
+        ).map((r) => [
+          r.item_id,
+          { name: r.name, price: r.price, image: r.image ?? "" },
+        ]),
+      ),
+    );
+  }, []);
+
   useEffect(() => {
-    if (!supabaseReady) {
-      setLoading(false);
-      return;
-    }
+    if (!supabaseReady) return soon(() => setLoading(false));
     void (async () => {
       const supabase = createClient();
       const { data: u } = await supabase.auth.getUser();
@@ -154,36 +172,18 @@ export default function CafeteriaAdminPage() {
       await loadDay(new Date());
       setLoading(false);
     })();
-  }, []);
-
-  /** その日の登録済みを読む */
-  const loadDay = useCallback(async (d: Date) => {
-    const supabase = createClient();
-    const [a, b] = await Promise.all([
-      supabase.from("counter_days").select("item_id, state").eq("on_date", ymd(d)),
-      supabase.from("menu_days").select("item_id, name, price, image").eq("on_date", ymd(d)),
-    ]);
-    setStates(new Map(((a.data as { item_id: number; state: string }[]) ?? []).map((r) => [r.item_id, r.state])));
-    setMenus(
-      new Map(
-        (
-          (b.data as { item_id: number; name: string; price: number | null; image: string }[]) ?? []
-        ).map((r) => [
-          r.item_id,
-          { name: r.name, price: r.price, image: r.image ?? "" },
-        ]),
-      ),
-    );
-  }, []);
+  }, [loadDay]);
 
   /* 項目を選んだら、いまの中身を入力欄に写す */
   useEffect(() => {
     if (!target) return;
     const m = menus.get(target.id);
-    setName(m?.name ?? "");
-    setPrice(m?.price != null ? String(m.price) : "");
-    setImage(m?.image ?? "");
-    setMsg(null);
+    return soon(() => {
+      setName(m?.name ?? "");
+      setPrice(m?.price != null ? String(m.price) : "");
+      setImage(m?.image ?? "");
+      setMsg(null);
+    });
   }, [target, menus]);
 
   const counters = useMemo(() => items.filter((i) => i.kind === "counter"), [items]);

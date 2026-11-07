@@ -33,6 +33,7 @@ import {
 } from "@/lib/auth";
 import { LANG_KEY, floorLabelIn, placeName, t, type Lang } from "@/lib/i18n";
 import { buildGraph, findBestPath, nearestNode } from "@/lib/route";
+import { soon } from "@/lib/soon";
 import CampusPanel from "./CampusPanel";
 import MapOverlay, { type LabelHit } from "./MapOverlay";
 import { PerfHud } from "./PerfHud";
@@ -251,6 +252,13 @@ export default function Guide() {
   const boxRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
+  /**
+   * 名前を重ねる部品（MapOverlay）に渡す地図。
+   *
+   * mapRef は描いている最中に読めない（読むと、描き直しのたびに違う値になり得る）。
+   * 用意ができた合図と一緒に、状態として渡す。
+   */
+  const [mapObj, setMapObj] = useState<MlMap | null>(null);
 
   const [data, setData] = useState<AppData | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -332,9 +340,8 @@ export default function Guide() {
   /** 表示の好み（名前の色・付け替え・夜の見え方）。この端末にだけ覚える */
   const [custom, setCustom] = useState<Custom>(EMPTY_CUSTOM);
   const [customOpen, setCustomOpen] = useState(false);
-  useEffect(() => {
-    setCustom(loadCustom());
-  }, []);
+  // 端末の覚えは描き終わってから読む（初めの描画はサーバーと同じ既定の見え方にそろえる）
+  useEffect(() => soon(() => setCustom(loadCustom())), []);
   const updateCustom = useCallback((next: Custom) => {
     setCustom(next);
     saveCustom(next);
@@ -420,8 +427,7 @@ export default function Guide() {
         },
       });
     } catch (err) {
-      setFatal(err instanceof Error ? err.message : String(err));
-      return;
+      return soon(() => setFatal(err instanceof Error ? err.message : String(err)));
     }
 
     // 下の建物一覧に隠れないよう、地図の操作系は右上寄りに置く。
@@ -463,7 +469,10 @@ export default function Guide() {
      *
      *   setReady(true) は何度呼んでも同じなので、来た順に任せる。
      */
-    const nowReady = () => setReady(true);
+    const nowReady = () => {
+      setReady(true);
+      setMapObj(map);
+    };
     map.on("load", nowReady);
     map.on("styledata", nowReady);
     if (map.isStyleLoaded()) nowReady();
@@ -893,6 +902,8 @@ export default function Guide() {
       pixelOff?.();
       map.remove();
       mapRef.current = null;
+      // 消した地図を、名前を重ねる部品が使い続けないように
+      setMapObj(null);
     };
   }, [mapKey]);
 
@@ -932,16 +943,20 @@ export default function Guide() {
   }, []);
 
   /* お気に入りと言葉は端末に覚えさせる。ログインしなくても使えるようにするため */
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(FAV_KEY);
-      if (raw) setFavs(JSON.parse(raw) as string[]);
-      const l = localStorage.getItem(LANG_KEY);
-      if (l === "en" || l === "ja") setLang(l);
-    } catch {
-      // 壊れていたら無いものとして始める
-    }
-  }, []);
+  useEffect(
+    () =>
+      soon(() => {
+        try {
+          const raw = localStorage.getItem(FAV_KEY);
+          if (raw) setFavs(JSON.parse(raw) as string[]);
+          const l = localStorage.getItem(LANG_KEY);
+          if (l === "en" || l === "ja") setLang(l);
+        } catch {
+          // 壊れていたら無いものとして始める
+        }
+      }),
+    [],
+  );
 
   /** 日本語と英語を入れ替える */
   const toggleLang = useCallback(() => {
@@ -1148,6 +1163,16 @@ export default function Guide() {
    *    位置がまだ無いときは前の監視を止めて必ずやり直す
    */
   /**
+   * 現在地を使わないと決めたか。
+   *
+   * 拒否のままだと知らせが出続け、地図の左上を占め続ける。
+   * 「使わない」と決めた人には二度と出さない。
+   * 現在地のボタンを押せば、また試せる。
+   * （下の startWatch が使うので、それより前に置く）
+   */
+  const [geoMuted, setGeoMuted] = useState(false);
+
+  /**
    * 現在地をやめる。
    *
    * 追従を止めて、位置も向きも消す。
@@ -1166,7 +1191,7 @@ export default function Guide() {
     setHeading(null);
     setGeoState("idle");
     // 次に押したときは、また現在地へ寄せてよい
-    centered.current = false;
+    centeredRef.current = false;
   }, []);
 
   const startWatch = useCallback(() => {
@@ -1275,14 +1300,6 @@ export default function Guide() {
     startWatch();
   }, [fix, geoState, startWatch]);
 
-  /**
-   * 現在地を使わないと決めたか。
-   *
-   * 拒否のままだと知らせが出続け、地図の左上を占め続ける。
-   * 「使わない」と決めた人には二度と出さない。
-   * 現在地のボタンを押せば、また試せる。
-   */
-  const [geoMuted, setGeoMuted] = useState(false);
   /** 直し方を開いているか。既定は畳む（開いたままだと地図が隠れる） */
   const [geoHelp, setGeoHelp] = useState(false);
   /**
@@ -1308,7 +1325,10 @@ export default function Guide() {
     setGeoHelp((v) => !v);
   }, []);
   const geoMutedRef = useRef(false);
-  geoMutedRef.current = geoMuted;
+  // 書き込みは効果の中で行う（描いている最中に ref を触らない）
+  useEffect(() => {
+    geoMutedRef.current = geoMuted;
+  }, [geoMuted]);
 
   /**
    * 最新の ensureWatch を持ち回す。
@@ -1407,8 +1427,8 @@ export default function Guide() {
      以前ここにもう一つ同じ処理があり、駅を含む広い枠に一度合わせてから
      すぐ組み直していた。二重なので消した。 */
 
-  /** 現在地へ一度だけ寄せたかの記録。寄せる処理は圏内判定のあとに置いてある */
-  const centered = centeredRef;
+  /* 現在地へ一度だけ寄せたかの記録は centeredRef（上に置いてある）。
+     寄せる処理は圏内判定のあとに置いてある */
 
   /**
    * 起動したら、構内の建物がひととおり入るところまで引く。
@@ -1543,12 +1563,12 @@ export default function Guide() {
    * 端に張り付いたまま戻れなくなる。
    */
   useEffect(() => {
-    if (!fix || centered.current) return;
+    if (!fix || centeredRef.current) return;
     // 敷地がまだ読めていないうちは、遠いかどうかを決められない。次の位置で見直す
     if (distFromCampus == null || tooFar) return;
-    centered.current = true;
+    centeredRef.current = true;
     mapRef.current?.easeTo({ center: [fix.pos[0], fix.pos[1]], zoom: 18 });
-  }, [fix, distFromCampus, tooFar, centered]);
+  }, [fix, distFromCampus, tooFar]);
 
   /**
    * 地図を動かせる範囲を、敷地から 1km までに閉じる。
@@ -2090,9 +2110,11 @@ export default function Guide() {
   const hitRef = useRef<LabelHit[]>([]);
   const tapLabelRef = useRef<(id: string, label: string, ring: Position[]) => void>(() => {});
 
-  /* 押されたときに見る値を、毎回の描画で入れ直す */
-  fitHomeRef.current = () => fitHome(500);
-  tapLabelRef.current = tapLabel;
+  /* 押されたときに見る値を、描き終わるたびに入れ直す（描いている最中に ref を触らない） */
+  useEffect(() => {
+    fitHomeRef.current = () => fitHome(500);
+    tapLabelRef.current = tapLabel;
+  });
 
   /* ---------------- 表示 ---------------- */
 
@@ -2216,7 +2238,7 @@ export default function Guide() {
       <PerfHud />
 
       <MapOverlay
-        map={mapRef.current}
+        map={mapObj}
         ready={ready}
         data={data}
         route={route}

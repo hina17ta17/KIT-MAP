@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { soon } from "@/lib/soon";
 
 type Stat = {
   fps: number;
@@ -41,7 +42,7 @@ export function PerfHud() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!new URLSearchParams(window.location.search).has("perf")) return;
-    setOn(true);
+    const stopOn = soon(() => setOn(true));
 
     const gaps: number[] = [];
     let last = performance.now();
@@ -88,6 +89,7 @@ export function PerfHud() {
     }, 1000);
 
     return () => {
+      stopOn();
       cancelAnimationFrame(raf);
       window.clearInterval(timer);
       po?.disconnect();

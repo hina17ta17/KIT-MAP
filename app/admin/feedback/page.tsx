@@ -33,6 +33,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { canManageAll, canReadFeedback, type Role } from "@/lib/auth";
+import { soon } from "@/lib/soon";
 
 type Row = {
   id: number;
@@ -109,9 +110,7 @@ export default function FeedbackPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
   const fresh = useMemo(() => rows.filter((r) => !r.handled), [rows]);
   const read = useMemo(() => rows.filter((r) => r.handled), [rows]);

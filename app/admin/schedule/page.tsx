@@ -26,6 +26,7 @@ import {
 } from "@/lib/auth";
 import MultiDatePicker, { niceDate, todayYmd } from "@/components/MultiDatePicker";
 import { dayColor, holidayName } from "@/lib/holidays";
+import { soon } from "@/lib/soon";
 
 type Kind = "class" | "event" | "activity";
 
@@ -306,10 +307,7 @@ export default function SchedulePage() {
   /* ---------------- 読み込み ---------------- */
 
   useEffect(() => {
-    if (!supabaseReady) {
-      setLoading(false);
-      return;
-    }
+    if (!supabaseReady) return soon(() => setLoading(false));
     void (async () => {
       const supabase = createClient();
       const { data: u } = await supabase.auth.getUser();
@@ -440,10 +438,7 @@ export default function SchedulePage() {
   const deptKey = deptIds.join(",");
   useEffect(() => {
     const ids = deptKey ? deptKey.split(",").map(Number) : [];
-    if (ids.length === 0) {
-      setCourses([]);
-      return;
-    }
+    if (ids.length === 0) return soon(() => setCourses([]));
     void (async () => {
       const supabase = createClient();
       /*
@@ -701,9 +696,10 @@ export default function SchedulePage() {
   }, [booked, slots]);
 
   /* 時間帯を変えたら、その時間に使えない教室は外す */
-  useEffect(() => {
-    setRoomIds((prev) => prev.filter((id) => !takenRooms.has(id)));
-  }, [takenRooms]);
+  useEffect(
+    () => soon(() => setRoomIds((prev) => prev.filter((id) => !takenRooms.has(id)))),
+    [takenRooms],
+  );
 
   /**
    * 実際に見ている日。
@@ -946,9 +942,7 @@ export default function SchedulePage() {
     setBooked((data as unknown as Booked[]) ?? []);
   }, [shownDate]);
 
-  useEffect(() => {
-    void loadBooked();
-  }, [loadBooked, bookedTick]);
+  useEffect(() => soon(loadBooked), [loadBooked, bookedTick]);
 
   const removeBooked = useCallback(
     async (b: Booked) => {

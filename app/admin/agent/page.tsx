@@ -53,6 +53,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { canManageAll, type Role } from "@/lib/auth";
+import { soon } from "@/lib/soon";
 
 type Status = {
   state: "working" | "idle" | "stuck";
@@ -145,10 +146,7 @@ export default function AgentPage() {
   const filtering = f.grade > 0 || f.code !== "" || f.no > 0 || f.aff !== "" || f.q !== "";
 
   useEffect(() => {
-    if (!supabaseReady) {
-      setReady(true);
-      return;
-    }
+    if (!supabaseReady) return soon(() => setReady(true));
     void (async () => {
       const supabase = createClient();
       const { data: u } = await supabase.auth.getUser();

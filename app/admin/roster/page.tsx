@@ -45,6 +45,7 @@ import {
   type Role,
 } from "@/lib/auth";
 import { readXlsx, type Row } from "@/lib/xlsx";
+import { soon } from "@/lib/soon";
 
 /**
  * xlsx の列。A列から順に。
@@ -457,9 +458,7 @@ export default function RosterPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
   /* ---------------- 教職の名簿 ---------------- */
 
@@ -680,7 +679,7 @@ export default function RosterPage() {
 
   useEffect(() => {
     if (!lOpen) return;
-    void loadLeaders(lPick?.id ?? null);
+    return soon(() => loadLeaders(lPick?.id ?? null));
   }, [lOpen, lPick, loadLeaders]);
 
   /**

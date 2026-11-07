@@ -100,7 +100,10 @@ const nextConfig: NextConfig = {
 
   // 開発中にスマホ実機など LAN 上の端末から開けるようにする。
   // 指定しないと HMR がブロックされ、警告が出続ける。
-  allowedDevOrigins: ["localhost"],
+  // 手元の住所は環境変数 DEV_ALLOWED_ORIGINS（カンマ区切り）から読む（公開版には住所を書かない）。
+  // 無ければ localhost だけ。
+  allowedDevOrigins: process.env.DEV_ALLOWED_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean)
+    ?? ["localhost"],
 
   /*
    * 守りのための見出し（HTTP ヘッダ）。

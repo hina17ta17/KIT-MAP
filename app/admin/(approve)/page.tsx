@@ -56,6 +56,7 @@ import {
   type Affiliation,
   type Role,
 } from "@/lib/auth";
+import { soon } from "@/lib/soon";
 
 type Row = {
   id: string;
@@ -305,9 +306,7 @@ function NewsApprove({ t: T }: { t: (ja: string) => string }) {
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
   const decide = async (n: NewsWait, ok: boolean) => {
     let why = "";
@@ -1004,9 +1003,7 @@ export default function AdminPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
 
   /*

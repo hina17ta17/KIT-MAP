@@ -81,12 +81,14 @@ export default function Error({
         >
           設定を捨てて開き直す
         </button>
-        <a
-          href="/"
+        {/* 読み込み直して戻る。画面の中だけで移ると、壊れた状態を持ち越すことがあるため */}
+        <button
+          type="button"
+          onClick={() => window.location.assign("/")}
           className="mt-2 block w-full rounded-xl px-4 py-2 text-center text-xs font-semibold text-slate-500 hover:bg-slate-100"
         >
           地図へ戻る
-        </a>
+        </button>
 
         <button
           onClick={() => setDetail((v) => !v)}

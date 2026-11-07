@@ -18,6 +18,7 @@ import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { type Role, canManageAll } from "@/lib/auth";
 import { guessFloor, floorLabel, type BuildingProps } from "@/lib/features";
+import { soon } from "@/lib/soon";
 
 type Row = {
   id: number;
@@ -94,9 +95,7 @@ export default function RoomsPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
   const canEdit = canManageAll(role);
 

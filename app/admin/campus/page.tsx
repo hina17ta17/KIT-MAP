@@ -61,6 +61,7 @@ import {
   type Sending,
 } from "@/lib/roster";
 import { buildXlsx, type Sheet } from "@/lib/xlsxOut";
+import { soon } from "@/lib/soon";
 
 /* 確認の文を組み立てるときの改行。書き換えの途中で消えないよう、変数にしてある */
 const BR = String.fromCharCode(10);
@@ -433,9 +434,7 @@ export default function CampusPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
   /* ---------------- 名簿の中を、一人ずつ見る ---------------- */
 

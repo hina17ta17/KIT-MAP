@@ -32,6 +32,7 @@ import { dayColor, holidayName } from "@/lib/holidays";
 import { rankOf } from "@/lib/appdata";
 import NewsStrip from "./NewsStrip";
 import { needsCode } from "@/lib/aal";
+import { soon } from "@/lib/soon";
 
 type Step = "calendar" | "home" | "cafeteria" | "timetable" | "free" | "clubs" | "apply";
 
@@ -476,7 +477,7 @@ function Cafeteria({ date }: { date: Date }) {
 
   useEffect(() => {
     const d = ymd(date);
-    setLoading(true);
+    const stop = soon(() => setLoading(true));
     void (async () => {
       const supabase = createClient();
       const [a, b, c] = await Promise.all([
@@ -497,6 +498,7 @@ function Cafeteria({ date }: { date: Date }) {
       );
       setLoading(false);
     })();
+    return stop;
   }, [date]);
 
   if (loading) return <Note>{T("読み込み中…")}</Note>;
@@ -783,10 +785,7 @@ function ByDepartment({ date, periodId }: { date: Date; periodId: number }) {
 
   // 限か日か学科が変わったら取り直す
   useEffect(() => {
-    if (!dept) {
-      setRows(null);
-      return;
-    }
+    if (!dept) return soon(() => setRows(null));
     void (async () => {
       let q = createClient()
         .from("timetable")
@@ -974,10 +973,7 @@ function ByActivity({ date }: { date: Date }) {
   }, []);
 
   useEffect(() => {
-    if (!act) {
-      setRows(null);
-      return;
-    }
+    if (!act) return soon(() => setRows(null));
     void (async () => {
       const { data } = await createClient()
         .from("timetable")
@@ -1194,9 +1190,7 @@ function useMe(): { me: Mine | null | undefined; reload: () => Promise<void> } {
     });
   }, []);
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  useEffect(() => soon(reload), [reload]);
 
   return { me, reload };
 }
@@ -1583,16 +1577,20 @@ function LeaderApply({ me, onDone }: { me: Mine; onDone: () => Promise<void> }) 
   }, []);
 
   // 前に出した申請があれば、その番号と団体を入れておく（打ち直さなくて済む）
-  useEffect(() => {
-    if (me.leader_no) setNo(me.leader_no);
-    if (me.leader_activity_id !== null) setActId(me.leader_activity_id);
-  }, [me.leader_no, me.leader_activity_id]);
+  useEffect(
+    () =>
+      soon(() => {
+        if (me.leader_no) setNo(me.leader_no);
+        if (me.leader_activity_id !== null) setActId(me.leader_activity_id);
+      }),
+    [me.leader_no, me.leader_activity_id],
+  );
 
   // 団体が決まっているなら、その分類を開いておく
   useEffect(() => {
     if (actId === null || catId !== null) return;
-    const a = acts.find((x) => x.id === actId);
-    if (a?.category_id != null) setCatId(a.category_id);
+    const cat = acts.find((x) => x.id === actId)?.category_id;
+    if (cat != null) return soon(() => setCatId(cat));
   }, [actId, catId, acts]);
 
   /* 管理の権限が付いたのに、このログインで6桁を確かめていないか */
@@ -2034,9 +2032,7 @@ function Clubs({ date }: { date: Date }) {
   /** お気に入りにした団体の番号 */
   const [favs, setFavs] = useState<number[]>([]);
 
-  useEffect(() => {
-    setFavs(loadClubFavs());
-  }, []);
+  useEffect(() => soon(() => setFavs(loadClubFavs())), []);
 
   const toggleFav = useCallback((id: number) => {
     setFavs((prev) => {
@@ -2085,12 +2081,9 @@ function Clubs({ date }: { date: Date }) {
   );
 
   useEffect(() => {
-    if (!pick || !supabaseReady) {
-      setRows(null);
-      return;
-    }
+    if (!pick || !supabaseReady) return soon(() => setRows(null));
     let alive = true;
-    setBusy(true);
+    const stop = soon(() => setBusy(true));
     void (async () => {
       /*
        * 選んだ日から、ひと月ぶん先までを見る。
@@ -2119,6 +2112,7 @@ function Clubs({ date }: { date: Date }) {
     })();
     return () => {
       alive = false;
+      stop();
     };
   }, [pick, date]);
 
@@ -2333,11 +2327,14 @@ function FreeRooms({ date, periods }: { date: Date; periods: Period[] }) {
    * 押したときだと、その場ではまだ前の時限のままなので、
    * 一つ前の時限のぶんを読んでしまう。
    */
-  useEffect(() => {
-    setAll(null);
-    if (periodId === null) return;
-    void load();
-  }, [date, periodId, load]);
+  useEffect(
+    () =>
+      soon(() => {
+        setAll(null);
+        if (periodId !== null) void load();
+      }),
+    [date, periodId, load],
+  );
 
   const hits = useMemo(() => {
     if (!all || periodId === null) return null;

@@ -30,6 +30,7 @@ import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { canViewPlans, type Role } from "@/lib/auth";
 import { dayColor, holidayName } from "@/lib/holidays";
+import { soon } from "@/lib/soon";
 
 type Period = { id: number; label: string; starts_at: string; ends_at: string };
 
@@ -99,10 +100,7 @@ export default function PlanPage() {
   const [marks, setMarks] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
-    if (!supabaseReady) {
-      setLoading(false);
-      return;
-    }
+    if (!supabaseReady) return soon(() => setLoading(false));
     void (async () => {
       const supabase = createClient();
       const { data: u } = await supabase.auth.getUser();
@@ -151,9 +149,7 @@ export default function PlanPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadMarks(cursor.y, cursor.m);
-  }, [cursor, loadMarks]);
+  useEffect(() => soon(() => loadMarks(cursor.y, cursor.m)), [cursor, loadMarks]);
 
   /** 押した日の予定を読む */
   const loadDay = useCallback(async (d: string) => {
@@ -179,9 +175,7 @@ export default function PlanPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadDay(day);
-  }, [day, loadDay]);
+  useEffect(() => soon(() => loadDay(day)), [day, loadDay]);
 
   /** その月の升目。頭の空きぶんだけ null を置く */
   const cells = useMemo(() => {

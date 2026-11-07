@@ -61,6 +61,7 @@ import { useAdminT } from "@/lib/adminLang";
 import { type Role } from "@/lib/auth";
 import { shrinkPhoto } from "@/lib/photo";
 import { noteError, noteEvent } from "@/lib/note";
+import { soon } from "@/lib/soon";
 
 type Mine = {
   id: number;
@@ -225,9 +226,7 @@ export default function NewsPage() {
     setReady(true);
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => soon(load), [load]);
 
   /** 一つの操作を送って、返事を一枚の下に出す */
   const runRow = async (

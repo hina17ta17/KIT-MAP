@@ -19,6 +19,7 @@
  */
 import { type NextRequest } from "next/server";
 
+// 送り先。環境変数 AGENTGUARD_URL があればそれを使う（公開版の置き場には住所を書かない）
 const AGENTGUARD_INGEST = process.env.AGENTGUARD_URL ?? "";
 const AGENTGUARD_VERIFY_PATH = "/.well-known/agentguard-verify.txt";
 // パスワードなどの欄は伏せて送る（攻撃の形をした値だけは、検査のためそのまま送る）
@@ -94,7 +95,7 @@ export async function agentguard(request: NextRequest): Promise<Response | null>
     return new Response("Not Found", { status: 404 });
   }
   const key = process.env.AGENTGUARD_KEY || SAVED_KEY;
-  if (!key) return null;
+  if (!key || !AGENTGUARD_INGEST) return null;
   if (url.pathname === AGENTGUARD_VERIFY_PATH) {
     // このサイトの持ち主かの確認：鍵そのものは見せず、毎回ちがう問題への答えだけを返す
     const secret = await hmac(new TextEncoder().encode(key), "agentguard-verify");

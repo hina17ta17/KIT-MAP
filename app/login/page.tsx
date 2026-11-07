@@ -67,6 +67,7 @@ import {
   type Affiliation,
   type Role,
 } from "@/lib/auth";
+import { soon } from "@/lib/soon";
 
 /**
  * 席を作ったあとの段。
@@ -165,13 +166,17 @@ export default function LoginPage() {
    * 英語にしている人が、ログインだけ日本語に戻るのは分かりにくいため。
    */
   const [lang, setLang] = useState<Lang>("ja");
-  useEffect(() => {
-    try {
-      if (window.localStorage.getItem(LANG_KEY) === "en") setLang("en");
-    } catch {
-      // 読めなくても日本語で動く
-    }
-  }, []);
+  useEffect(
+    () =>
+      soon(() => {
+        try {
+          if (window.localStorage.getItem(LANG_KEY) === "en") setLang("en");
+        } catch {
+          // 読めなくても日本語で動く
+        }
+      }),
+    [],
+  );
   const T = useCallback((ja: string) => tr(lang, ja), [lang]);
 
   /**
@@ -528,9 +533,7 @@ export default function LoginPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  useEffect(() => soon(reload), [reload]);
 
   /* ---------------- ①〜③ 記入 → 席を作って本人確認へ ---------------- */
 

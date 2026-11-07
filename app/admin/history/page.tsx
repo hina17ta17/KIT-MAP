@@ -31,6 +31,7 @@ import { createClient, supabaseReady } from "@/lib/supabase/client";
 import { AdminHeader, AdminMenu } from "@/components/AdminNav";
 import { useAdminT } from "@/lib/adminLang";
 import { canManageAll, type Role } from "@/lib/auth";
+import { soon } from "@/lib/soon";
 
 /** 履歴の一行 */
 type Row = {
@@ -184,10 +185,7 @@ export default function HistoryPage() {
   const [open, setOpen] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!supabaseReady) {
-      setLoading(false);
-      return;
-    }
+    if (!supabaseReady) return soon(() => setLoading(false));
     void (async () => {
       const supabase = createClient();
       const { data: u } = await supabase.auth.getUser();
@@ -236,7 +234,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     if (area === null) return;
-    void load(area);
+    return soon(() => load(area));
   }, [area, load]);
 
   /** 消したものを戻す */

@@ -440,18 +440,20 @@ function MapOverlayInner({
     };
   }, [map, view, tick, fix, tooFar]);
 
-  /* 押されたときに見る値を、毎回の描画で入れ直す */
-  hitRef.current =
-    view?.buildings.map(({ f, at, text, box }) => ({
-      id: f.properties.tempId,
-      // 画面に出ている名前をそのまま渡す。付け替えたのに案内の欄だけ
-      // もとの名前が出ると、同じ場所だと分からなくなる
-      label: text,
-      ring: f.geometry.coordinates[0],
-      at,
-      w: box.w,
-      h: box.h,
-    })) ?? [];
+  /* 押されたときに見る値を、描き終わるたびに入れ直す（描いている最中に ref を触らない） */
+  useEffect(() => {
+    hitRef.current =
+      view?.buildings.map(({ f, at, text, box }) => ({
+        id: f.properties.tempId,
+        // 画面に出ている名前をそのまま渡す。付け替えたのに案内の欄だけ
+        // もとの名前が出ると、同じ場所だと分からなくなる
+        label: text,
+        ring: f.geometry.coordinates[0],
+        at,
+        w: box.w,
+        h: box.h,
+      })) ?? [];
+  }, [view, hitRef]);
 
   if (!view) return null;
 
