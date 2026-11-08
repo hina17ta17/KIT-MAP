@@ -1,6 +1,6 @@
 <p align="center">
-  <a href="https://hina17ta17.github.io/map-senden/">
-    <img src="assets/readme/promo-site.jpg" width="760" alt="KIT map の紹介サイト。「どこ？」から始まる会話を、減らします。">
+  <a href="https://kit-map.vercel.app/">
+    <img src="assets/readme/first-screen.jpg" width="560" alt="KIT map を開いたときの画面。タイトルのあとに、構内全体の地図と現在地が出る">
   </a>
 </p>
 
@@ -11,8 +11,10 @@
   「23号館の302、どこ？」に、地図で答えます。
 </p>
 
+<h2 align="center">Hackit 2026</h2>
 <p align="center">
-  🏆 <b>Hackit 2026 最優秀賞</b>　／　🎮 <b>Hackit 2026 PLAY賞</b>
+  🏆 <b>最優秀賞</b>　　🎮 <b>PLAY賞</b><br>
+  <sub>テーマ「突破」― 大学の課題を解決するために開発を行った</sub>
 </p>
 
 <p align="center">
@@ -32,6 +34,7 @@
 ## 🏆 受賞
 
 **2026年8月3日、Hackit 2026** で、KIT map は次の 2 つの賞をいただきました。
+大会のテーマは **「突破」**。「23号館の302、どこ？」のようにキャンパスの中で迷ってしまう、という大学の課題を解決するために開発しました。
 8月1日から3日間で作ったものです（下の「開発の歩み」）。
 
 - 🏆 **最優秀賞**
@@ -96,6 +99,12 @@
 </p>
 
 ## 紹介サイトとCM
+
+<p align="center">
+  <a href="https://hina17ta17.github.io/map-senden/">
+    <img src="assets/readme/promo-site.jpg" width="640" alt="KIT map の紹介サイト。「どこ？」から始まる会話を、減らします。">
+  </a>
+</p>
 
 **https://hina17ta17.github.io/map-senden/**
 
