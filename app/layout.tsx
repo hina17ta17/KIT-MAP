@@ -3,6 +3,7 @@ import "./globals.css";
 import { SessionEpoch } from "@/components/SessionEpoch";
 import ErrorNote from "@/components/ErrorNote";
 import { SiteGate } from "@/components/SiteGate";
+import { SiteAnalytics } from "@/components/SiteAnalytics";
 
 export const metadata: Metadata = {
   // タブに出る名前。案内画面が入口なのでこれだけにする
@@ -38,6 +39,8 @@ export default function RootLayout({
         <ErrorNote />
         {/* サイトを止めているあいだ（緊急停止）、管理者以外にはメンテナンス中の画面を出す */}
         <SiteGate>{children}</SiteGate>
+        {/* アクセス解析。バーセルの上でだけ（手元には受け口が無い） */}
+        {process.env.VERCEL ? <SiteAnalytics /> : null}
       </body>
     </html>
   );

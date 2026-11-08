@@ -136,7 +136,10 @@ export const config = {
      *
      * もとは地図データと画像も外していたが、検査はそこにも要る。
      * 代わりに、重いセッションの更新のほうを上の SKIP_SESSION で外した。
+     *
+     * /_vercel/ はバーセルそのものの受け口（アクセス解析の数え口など）で、
+     * こちらのコードは無い。ページを開くたびに届くので、検査とセッションの更新から外す。
      */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|_vercel/|favicon.ico).*)",
   ],
 };
