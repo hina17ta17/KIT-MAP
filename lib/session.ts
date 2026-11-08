@@ -45,30 +45,63 @@ function storedEpoch(): number {
 }
 
 /**
+ * このブラウザに、ログインの控えが残っているか。
+ *
+ * 控えは Supabase のクッキー（`sb-…-auth-token`。長いと `.0` `.1` に分かれる）。
+ * 古い形でブラウザの保存場所に置いた控えも、念のため見る。
+ */
+export function hasSavedLogin(): boolean {
+  const NAME = /^sb-[^=;]*-auth-token(\.\d+)?$/;
+  try {
+    if (document.cookie.split(";").some((c) => NAME.test(c.split("=")[0].trim()))) return true;
+  } catch {
+    // 読めないときは、次の場所を見る
+  }
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      if (NAME.test(window.localStorage.key(i) ?? "")) return true;
+    }
+  } catch {
+    // 読めない設定のブラウザ
+  }
+  return false;
+}
+
+/**
  * 版がずれていれば控えを捨てる。合っていれば何もしない。
  *
- * 戻り値は「捨てたか」。捨てたときは画面を読み込み直す側で使う。
+ * 戻り値は「画面を読み込み直すべきか」。
+ * 読み込み直すのは、ログインの控えを実際に捨てられたときだけ。
+ * 初めて開いた人には捨てるものが無いので、版を覚えるだけにする
+ * （前は初めての人も毎回2回読み込んでいて、アクセス解析の数も2倍になっていた）。
  */
 export async function enforceEpoch(): Promise<boolean> {
   if (typeof window === "undefined") return false;
   if (storedEpoch() === SESSION_EPOCH) return false;
 
-  try {
-    const { createClient, supabaseReady } = await import("@/lib/supabase/client");
-    if (supabaseReady) {
-      // 既定で全部の端末が対象になる。控えが既に切れていても失敗にしない
-      await createClient().auth.signOut();
+  const hadLogin = hasSavedLogin();
+  if (hadLogin) {
+    try {
+      const { createClient, supabaseReady } = await import("@/lib/supabase/client");
+      if (supabaseReady) {
+        // 既定で全部の端末が対象になる。控えが既に切れていても失敗にしない
+        await createClient().auth.signOut();
+      }
+    } catch {
+      // 繋がらなくても先へ進む（下で、控えが残ったかを見る）
     }
-  } catch {
-    // 繋がらなくても、こちらの控えは捨てる
   }
+  const left = hasSavedLogin();
 
   try {
     window.localStorage.removeItem(TRUSTED_KEY);
-    window.localStorage.setItem(EPOCH_KEY, String(SESSION_EPOCH));
+    // 控えを捨てられなかった（繋がらない など）ときは、版を覚えない。次に開いたときにもう一度捨てる
+    if (!left) window.localStorage.setItem(EPOCH_KEY, String(SESSION_EPOCH));
   } catch {
-    // 書けない設定のブラウザでは、毎回ログアウトになる。
+    // 書けない設定のブラウザでは、ログインしていると毎回ログアウトになる。
     // 入れないよりはよい
   }
-  return true;
+  // 控えが消えたときだけ読み込み直す。消せなかったときに読み込み直すと、
+  // 同じことを繰り返して読み込みが止まらなくなるため
+  return hadLogin && !left;
 }
