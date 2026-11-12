@@ -2063,11 +2063,17 @@ export default function Guide() {
       const hit: SearchHit = { buildingId: id, title: label, sub: "", score: 0 };
 
       /*
-       * 現在地が取れているなら、押した建物までそのまま案内する。
+       * 構内にいて現在地が取れているなら、押した建物までそのまま案内する。
        * 自分がどこにいるか分かっている以上、出発地を選ばせるのは
-       * 一手間よけいなだけ。二つ押させる形は、現在地が無いときに残す。
+       * 一手間よけいなだけ。
+       *
+       * 構内の外にいるときは、現在地が無いときと同じく二つ押させる
+       * （一つ目が出発地、二つ目が目的地）。外にいる人を現在地から案内しようとすると、
+       * 近くに道が無いので門（金沢工業大学前バス停）からの案内に勝手に切り替わり、
+       * 押した人が思っている出発地と違ってしまうため。
+       * 構内か分からないとき（敷地をまだ読めていない など）は、前と同じく現在地から。
        */
-      if (fix && !pickedFrom) {
+      if (fix && inCampus !== false && !pickedFrom) {
         setTrip({ origin: { kind: "me" }, dest: hit });
         setOrigin({ kind: "me" });
         setDest(hit);
@@ -2098,7 +2104,7 @@ export default function Guide() {
       setPickedFrom(null);
       setFocusId(id);
     },
-    [pickedFrom, fix, focusBuilding],
+    [pickedFrom, fix, inCampus, focusBuilding],
   );
 
   /**
