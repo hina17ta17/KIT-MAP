@@ -124,9 +124,9 @@ describe("本物の地図データで", () => {
   const g = buildGraph(data);
   const ids = [...g.pos.keys()];
 
-  it("README に書いた数（歩ける点 4,177・つながり 4,414）と同じ", () => {
-    expect(data.checkpoints.features).toHaveLength(4177);
-    expect(data.links).toHaveLength(4414);
+  it("README に書いた数（歩ける点 4,803・つながり 5,066）と同じ", () => {
+    expect(data.checkpoints.features).toHaveLength(4803);
+    expect(data.links).toHaveLength(5066);
   });
 
   it("すべての点が、つながりだけでひと続きになっている", () => {

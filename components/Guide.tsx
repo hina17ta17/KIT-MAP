@@ -3303,7 +3303,7 @@ function inRing(poly: Position[], at: Position): boolean {
  * 出しっぱなしにすると、遠くの名前が構内の名前と場所を取り合ってしまう。
  * 建物の一覧にはいつでも出す。
  */
-const ZOOM_ONLY_NAMES = new Set(["野々市工大前駅", "バス停"]);
+const ZOOM_ONLY_NAMES = new Set(["野々市工大前駅", "工業大学東バス停", "扇が丘東バス停"]);
 /** この縮尺より寄ったら、上の名前も出す */
 const ZOOM_ONLY_AT = 17.5;
 
