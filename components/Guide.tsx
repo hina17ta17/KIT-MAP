@@ -2373,20 +2373,24 @@ export default function Guide() {
       {/*
         左上に縦に積む。重なりが起きないよう1つの列にまとめる。
 
-        ★ここは、ふつうに押せるままにしてある
+        ★指を受けるのはボタンの枠だけ。それ以外は地図へ素通しにする
 
-          前は列ぜんぶを素通し（pointer-events-none）にしていた。
-          二本指でつまむとき、片方がここに乗ると地図に届かず、
-          拡大縮小が効かなくなるためだった。
-          ただ、それをすると左のボタンが一つも押せなくなる。
+          列の箱は、いちばん幅の広い行（現在地と ±10m などの札）に合わせて
+          広がる。前は、その箱ぜんぶが指を受けていた。だから
+            ・ボタンとボタンのすき間（8px）
+            ・★・☰・あ の右にできる空き（最大で 16rem まで）
+          を触っても、ボタンは反応せず、地図も動かなかった。
+          「左上は反応しない」「ボタンを少し外すと何も起きない」の原因。
 
-          いまは地図の側で受け止めている。指が二本以上のときだけ、
-          画面のどこに乗っていても地図の指として数えるようにした
-          （地図を作る所の「二本目の指が…」を見てほしい）。
-          だから、ここは押せるままでよい。
+          いまは箱を素通し（pointer-events-none）にして、ボタンだけ
+          指を受ける（[&_button]:pointer-events-auto）。ボタンの枠を
+          押せばボタン、それ以外を押せば地図が受け取る。
+          札（±10m・圏外など）と出発地の帯の文字も、読むだけなので素通し。
 
-          出発地の帯だけは素通しにしてある。読むためのもので、
-          押す先が「やめる」しか無いため。
+          前に一度「列ぜんぶを素通し」にして、ボタンまで押せなくなったことがある。
+          あれはボタンに pointer-events-auto を戻していなかったため。
+          二本指でつまむとき、片方がボタンに乗る場合は、地図の側で
+          受け止めている（地図を作る所の「二本目の指が…」）。
       */}
       {/*
         左の列の重なり順は 7。
@@ -2403,13 +2407,13 @@ export default function Guide() {
           一覧は開いても画面の 58% までなので、この列の上のほうに
           ある現在地・案内・お気に入りは、開いたままでも押せる。
       */}
-      <div className="absolute left-4 top-4 z-[7] flex w-fit max-w-[16rem] flex-col items-start gap-2">
+      <div className="pointer-events-none absolute left-4 top-4 z-[7] flex w-fit max-w-[16rem] flex-col items-start gap-2 [&_button]:pointer-events-auto [&_button]:touch-manipulation">
         {/* 現在地と、その状態を横に並べる。
             状態を下の段に置くと、地図が見える面積を余計に削るため */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={startWatch}
-            className="flex shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white active:scale-95"
+            className="flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white active:scale-95"
           >
             <span
               className={`inline-block h-2.5 w-2.5 rounded-full ${
@@ -2466,7 +2470,7 @@ export default function Guide() {
 
         <button
           onClick={() => setPanel(true)}
-          className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-slate-800 active:scale-95"
+          className="min-h-11 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-slate-800 active:scale-95"
         >
           {T("案内")}
         </button>
