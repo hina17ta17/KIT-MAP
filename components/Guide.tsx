@@ -160,6 +160,23 @@ const FAV_KEY = "kitmap.favorites";
 const TAP_NEAR = 30;
 
 /**
+ * 指で「押した」とみなす、ぶれの上限と、押している長さの上限。
+ *
+ * ブラウザは、指が 14px ほど滑ると「押した」ことにしない（click を出さない）。
+ * スマホで親指を使うと、押しただけのつもりでも 10〜20px は滑る。
+ * そのため、ボタンや地図の名前を押しても何も起きないことがあった。
+ *
+ * ここでは自分で数え、この範囲なら押したことにする。
+ * これより大きく動かしたら、地図を動かす操作として扱う。
+ */
+/** 左上のボタン：離すまでのぶれと長さ */
+const BTN_SLOP = 24;
+const BTN_HOLD = 800;
+/** 地図の名前：離すまでのぶれと長さ。地図を少しだけ動かす操作と取り違えないよう、ボタンより狭く短く */
+const MAP_SLOP = 20;
+const MAP_HOLD = 450;
+
+/**
  * 名前の四角から、どれだけ外まで押したとみなすか（画面の点）。
  *
  * 指の腹は太い。文字のふちぴったりを狙わせると外れるので、
@@ -535,7 +552,65 @@ export default function Guide() {
       if (best) tapLabelRef.current(best.id, best.label, best.ring);
     };
 
-    map.on("click", (ev) => pickLabel(ev.point.x, ev.point.y));
+    /*
+     * 指で押したときは、自分で数える（上の MAP_SLOP の説明を参照）。
+     *
+     * 一本の指が MAP_SLOP 以内の動きで、MAP_HOLD 以内に離れたら「押した」。
+     * 地図はその間に少しだけついて動くが、指の下の場所は変わらないので、
+     * 離した点で名前を探せば、押したつもりの名前に当たる。
+     * 二本目の指が触れたら、つまむ操作なので数えない。
+     *
+     * ブラウザも click を出すことがある（滑りが小さいとき）。
+     * 自分で数えた直後の click は捨てて、二回押したことにしない。
+     */
+    let tapStart: { x: number; y: number; t: number; far: number } | null = null;
+    let ownTapAt = -1e9;
+    const tapBox = map.getCanvasContainer();
+    tapBox.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length !== 1) {
+          tapStart = null;
+          return;
+        }
+        const t0 = e.touches[0];
+        tapStart = { x: t0.clientX, y: t0.clientY, t: e.timeStamp, far: 0 };
+      },
+      { passive: true },
+    );
+    tapBox.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!tapStart) return;
+        if (e.touches.length !== 1) {
+          tapStart = null;
+          return;
+        }
+        const t1 = e.touches[0];
+        tapStart.far = Math.max(tapStart.far, Math.hypot(t1.clientX - tapStart.x, t1.clientY - tapStart.y));
+      },
+      { passive: true },
+    );
+    tapBox.addEventListener(
+      "touchend",
+      (e) => {
+        const st = tapStart;
+        tapStart = null;
+        if (!st || e.touches.length !== 0) return;
+        if (st.far > MAP_SLOP || e.timeStamp - st.t > MAP_HOLD) return;
+        const t2 = e.changedTouches[0];
+        const r = map.getContainer().getBoundingClientRect();
+        ownTapAt = performance.now();
+        pickLabel(t2.clientX - r.left, t2.clientY - r.top);
+      },
+      { passive: true },
+    );
+
+    map.on("click", (ev) => {
+      // 指で押したものは上で数え済み。マウスで押したときだけ、ここで数える
+      if (performance.now() - ownTapAt < 700) return;
+      pickLabel(ev.point.x, ev.point.y);
+    });
 
     /**
      * 描画面の大きさを測り直す。
@@ -2116,6 +2191,60 @@ export default function Guide() {
   const hitRef = useRef<LabelHit[]>([]);
   const tapLabelRef = useRef<(id: string, label: string, ring: Position[]) => void>(() => {});
 
+  /*
+   * 左上のボタンを指で押したとき（上の BTN_SLOP の説明を参照）。
+   *
+   * 指を置いたボタンの上で、BTN_SLOP 以内のぶれ・BTN_HOLD 以内に離したら、
+   * ブラウザを待たずにそのボタンを押す。ブラウザが後から出す click は捨てる
+   * （二回押して、開いたものがすぐ閉じる、といったことにしない）。
+   * マウスとキーボードは、ふつうの click のまま。
+   */
+  /*
+   * 指の合図（touch）で数える。pointer の合図は、指が少し滑るとブラウザが
+   * 「動かす操作」と取って pointercancel で打ち切り、離した合図が来ないため。
+   * touch の合図は、そうなっても最後まで届く。
+   */
+  const btnTap = useRef<{ x: number; y: number; t: number; far: number; btn: HTMLButtonElement } | null>(null);
+  const btnTapped = useRef<{ btn: HTMLButtonElement; at: number } | null>(null);
+  const onColTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const btn = (e.target as Element).closest("button");
+    const t0 = e.touches[0];
+    btnTap.current = btn && e.touches.length === 1 ? { x: t0.clientX, y: t0.clientY, t: e.timeStamp, far: 0, btn } : null;
+  };
+  const onColTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    const st = btnTap.current;
+    if (!st) return;
+    // 二本目の指が触れた＝つまむ操作。押したことにはしない
+    if (e.touches.length !== 1) {
+      btnTap.current = null;
+      return;
+    }
+    const t1 = e.touches[0];
+    st.far = Math.max(st.far, Math.hypot(t1.clientX - st.x, t1.clientY - st.y));
+  };
+  const onColTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    const st = btnTap.current;
+    btnTap.current = null;
+    if (!st || e.touches.length !== 0 || st.btn.disabled) return;
+    const t2 = e.changedTouches[0];
+    const far = Math.max(st.far, Math.hypot(t2.clientX - st.x, t2.clientY - st.y));
+    if (far > BTN_SLOP || e.timeStamp - st.t > BTN_HOLD) return;
+    btnTapped.current = { btn: st.btn, at: performance.now() };
+    st.btn.click();
+  };
+  const onColTouchCancel = () => {
+    btnTap.current = null;
+  };
+  const onColClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    const done = btnTapped.current;
+    if (!done || !e.nativeEvent.isTrusted) return;
+    if (performance.now() - done.at < 800 && done.btn.contains(e.target as Node)) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    btnTapped.current = null;
+  };
+
   /* 押されたときに見る値を、描き終わるたびに入れ直す（描いている最中に ref を触らない） */
   useEffect(() => {
     fitHomeRef.current = () => fitHome(500);
@@ -2387,6 +2516,11 @@ export default function Guide() {
           押せばボタン、それ以外を押せば地図が受け取る。
           札（±10m・圏外など）と出発地の帯の文字も、読むだけなので素通し。
 
+          指で押すときは、少し滑っても押したことにする（BTN_SLOP）。
+          そのためボタンは touch-none にして、指の動きをブラウザに取られないようにしてある。
+          app/globals.css が button に touch-action: manipulation を付けていて、
+          そちらが勝ってしまうので、ここは ! で上書きしている（touch-none!）。
+
           前に一度「列ぜんぶを素通し」にして、ボタンまで押せなくなったことがある。
           あれはボタンに pointer-events-auto を戻していなかったため。
           二本指でつまむとき、片方がボタンに乗る場合は、地図の側で
@@ -2407,7 +2541,14 @@ export default function Guide() {
           一覧は開いても画面の 58% までなので、この列の上のほうに
           ある現在地・案内・お気に入りは、開いたままでも押せる。
       */}
-      <div className="pointer-events-none absolute left-4 top-4 z-[7] flex w-fit max-w-[16rem] flex-col items-start gap-2 [&_button]:pointer-events-auto [&_button]:touch-manipulation">
+      <div
+        className="pointer-events-none absolute left-4 top-4 z-[7] flex w-fit max-w-[16rem] flex-col items-start gap-2 [&_button]:pointer-events-auto [&_button]:touch-none!"
+        onTouchStart={onColTouchStart}
+        onTouchMove={onColTouchMove}
+        onTouchEnd={onColTouchEnd}
+        onTouchCancel={onColTouchCancel}
+        onClickCapture={onColClickCapture}
+      >
         {/* 現在地と、その状態を横に並べる。
             状態を下の段に置くと、地図が見える面積を余計に削るため */}
         <div className="flex items-center gap-1.5">
